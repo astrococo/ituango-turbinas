@@ -69,6 +69,13 @@ import {
   factorConversionHidrometria,
   rendimientoGenerador,
   textoHoraColombia,
+  programaDespacho,
+  resumenEnergiaDespacho,
+  estadoHoraDespacho,
+  ETIQUETA_ESTADO_HORA,
+  bandaReglaOperativa,
+  estadoReglaOperativa,
+  ETIQUETA_ESTADO_REGLA,
 } from "./modelo.js";
 import {
   BotonCSV,
@@ -447,6 +454,8 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
   const [qEntrada, setQEntrada] = useState(300);
   const [sensQ, setSensQ] = useState(75);
   const [bandaPct, setBandaPct] = useState(5);
+  const [programa, setPrograma] = useState("xm"); // xm | rt | plano: potencia con que se simula el nivel
+  const [qAyer, setQAyer] = useState(null); // promedio regulado del día anterior (m³/s), regla operativa
   const [unidadesDisp, setUnidadesDisp] = useState(UNIDADES_DISPONIBLES_HOY);
   const [filas, setFilas] = useState(() => HORAS_DIA.map(filaDespachoVacia));
   const [texto, setTexto] = useState("");
@@ -472,56 +481,73 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
     setMsgCarga({ ok: true, txt: `${leidas.length} horas cargadas, ${conRT} con Promedio RT.${nota} ${r.fecha ? ` Fecha del despacho: ${r.fecha}.` : ""} Las unidades, el caudal de entrada por hora y el nivel medido no se tocaron.`, avisos: r.avisos });
   }
 
+  const fcInicio = factorConversionHidrometria(nivelInicial, `${fecha} 00:00`);
   const calc = useMemo(() => {
     const b = bandaPct / 100;
+    const progXM = programaDespacho(filas, "xm");
+    const hayRT = filas.some((f) => f.rt != null);
+    const progRT = hayRT ? programaDespacho(filas, "rt") : null;
+    const progPlano = programaDespacho(filas, "plano", { qObjetivo: qAyer, fc: fcInicio });
+    const progs = { xm: progXM, rt: progRT, plano: progPlano };
+    const modo = progs[programa] ? programa : "xm";
+    const prog = progs[modo];
     const esc = (pot, qin) => simularDespachoHorario({
       nivelInicial, qEntrada: qin, cond: condDescarga, gammaMax,
-      horas: filas.map((f) => {
-        const P = pot(f);
+      horas: filas.map((f, i) => {
+        const P = pot[i];
         return { potenciaMW: P, unidades: f.unidades != null ? f.unidades : unidadesMinimasParaPotencia(P, unidadesDisp), qEntrada: f.qEntrada == null ? undefined : f.qEntrada + (qin - qEntrada) };
       }),
     });
-    const xm = esc((f) => f.despacho, qEntrada);
-    const inf = esc((f) => f.despacho * (1 - b), qEntrada);
-    const sup = esc((f) => f.despacho * (1 + b), qEntrada);
-    const hayRT = filas.some((f) => f.rt != null);
-    const rt = hayRT ? esc((f) => (f.rt != null ? f.rt : f.despacho), qEntrada) : null;
-    const qMenos = esc((f) => f.despacho, qEntrada - sensQ);
-    const qMas = esc((f) => f.despacho, qEntrada + sensQ);
+    const escala = (k) => prog.potencias.map((p) => p * k);
+    const principal = esc(prog.potencias, qEntrada);
+    const inf = esc(escala(1 - b), qEntrada);
+    const sup = esc(escala(1 + b), qEntrada);
+    const qMenos = esc(prog.potencias, qEntrada - sensQ);
+    const qMas = esc(prog.potencias, qEntrada + sensQ);
+    const comparar = Object.fromEntries(Object.entries(progs).filter(([k, v]) => v && k !== modo).map(([k, v]) => [k, esc(v.potencias, qEntrada)]));
     const grafica = Array.from({ length: 25 }, (_, i) => ({
-      hora: i, despacho: xm.serie[i].nivel, bandaInf: inf.serie[i].nivel, bandaSup: sup.serie[i].nivel,
-      rt: rt ? rt.serie[i].nivel : null, qMenos: qMenos.serie[i].nivel, qMas: qMas.serie[i].nivel,
+      hora: i, principal: principal.serie[i].nivel, bandaInf: inf.serie[i].nivel, bandaSup: sup.serie[i].nivel,
+      xm: comparar.xm ? comparar.xm.serie[i].nivel : null, rt: comparar.rt ? comparar.rt.serie[i].nivel : null, plano: comparar.plano ? comparar.plano.serie[i].nivel : null,
+      qMenos: qMenos.serie[i].nivel, qMas: qMas.serie[i].nivel,
       medido: i < 24 ? filas[i].nivelMedido : null,
     }));
-    const conRT = filas.filter((f) => f.rt != null);
-    const fueraBanda = conRT.filter((f) => f.rt < f.despacho * (1 - b) - 1e-9 || f.rt > f.despacho * (1 + b) + 1e-9);
-    const refMedido = rt || xm;
-    const errMedido = filas.filter((f) => f.nivelMedido != null).map((f) => refMedido.serie[f.hora].nivel - f.nivelMedido);
-    return {
-      xm, inf, sup, rt, qMenos, qMas, grafica,
-      energiaXM: filas.reduce((s, f) => s + f.despacho, 0),
-      energiaRT: conRT.reduce((s, f) => s + f.rt, 0), energiaXMconRT: conRT.reduce((s, f) => s + f.despacho, 0), horasRT: conRT.length,
-      fueraBanda, errMedido,
+    const errMedido = filas.filter((f) => f.nivelMedido != null).map((f) => principal.serie[f.hora].nivel - f.nivelMedido);
+    // Regla operativa: caudal regulado de Hidrometría (P / F.C.) con el nivel al inicio de cada hora
+    const banda = bandaReglaOperativa(qAyer);
+    const fcH = (i) => factorConversionHidrometria(principal.detalle[i].Hinicio, `${fecha} ${String(i).padStart(2, "0")}:00`);
+    const qReg = (p, i) => (p == null ? null : p / fcH(i));
+    const promedio = (vals) => { const v = vals.filter((x) => x != null); return v.length ? { q: v.reduce((a2, x) => a2 + x, 0) / v.length, horas: v.length } : null; };
+    const regla = {
+      banda,
+      xm: promedio(filas.map((f, i) => qReg(f.despacho, i))),
+      rt: promedio(filas.map((f, i) => qReg(f.rt, i))),
+      principal: promedio(prog.potencias.map((p, i) => qReg(p, i))),
+      porHora: filas.map((f, i) => ({ xm: qReg(f.despacho, i), rt: qReg(f.rt, i), principal: qReg(prog.potencias[i], i) })),
     };
-  }, [filas, nivelInicial, qEntrada, sensQ, bandaPct, unidadesDisp, condDescarga, gammaMax]);
+    return { modo, prog, progs, principal, inf, sup, qMenos, qMas, comparar, grafica, errMedido, regla, energia: resumenEnergiaDespacho(filas), estados: filas.map((f) => estadoHoraDespacho(f.despacho, f.rt, bandaPct)) };
+  }, [filas, nivelInicial, qEntrada, sensQ, bandaPct, unidadesDisp, condDescarga, gammaMax, programa, qAyer, fcInicio, fecha]);
 
-  const det = calc.xm.detalle;
+  const det = calc.principal.detalle;
   const noAlcanzables = det.filter((d) => d.potenciaMW > 0 && !d.alcanzable && !d.enMinimoEnsayado);
   const bajoMinimo = det.filter((d) => d.enMinimoEnsayado);
   const reducidas = det.filter((d) => d.unidadesReducidas && !d.enMinimoEnsayado);
-  const vacio = filas.every((f) => !(f.despacho > 0));
-  const fcHora = (d) => factorConversionHidrometria(d.Hinicio, `${fecha} ${String(d.hora).padStart(2, "0")}:00`);
+  const vacio = filas.every((f) => !(f.despacho > 0) && !(f.rt > 0)) && calc.modo !== "plano";
   const sobreDisponibles = filas.filter((f) => f.unidades != null && f.unidades > unidadesDisp);
   const fmt = (v, d = 1) => fx(v, d);
   const celda = { padding: "3px 6px", borderBottom: `1px solid ${T.lineSoft}`, whiteSpace: "nowrap" };
   const entradaCelda = { width: 72, padding: "3px 4px", fontSize: 12 };
+  const NOMBRE_PROGRAMA = { xm: "Despacho XM", rt: "Promedio RT (y XM donde falta)", plano: "Plano por regla operativa" };
+  const colorEstado = { sin_dato_xm: T.inkMuted, sin_dato_rt: T.inkMuted, por_debajo: T.amber, dentro: T.teal, por_encima: T.amber };
+  const colorRegla = { cumple: T.teal, por_encima: T.red, por_debajo: T.red, excepcion: T.amber, sin_base: T.inkMuted };
+  const estadoReglaDe = (x) => (x ? estadoReglaOperativa(x.q, calc.regla.banda) : "sin_base");
   const csv = det.map((d, i) => ({
-    hora: d.hora, despacho_xm_mw: d.potenciaMW, promedio_rt_mw: filas[i].rt, unidades: d.unidades,
+    hora: d.hora, despacho_xm_mw: filas[i].despacho, promedio_rt_mw: filas[i].rt, estado_hora: ETIQUETA_ESTADO_HORA[calc.estados[i]],
+    programa_simulado: NOMBRE_PROGRAMA[calc.modo], potencia_programa_mw: +d.potenciaMW.toFixed(2), unidades: d.unidades,
     p_bornes_unidad_mw: +d.pBornesUnidad.toFixed(2), p_eje_unidad_mw: +d.pEjeUnidad.toFixed(2), apertura_grados: +d.gamma.toFixed(3),
-    eta_pct: d.eta != null ? +d.eta.toFixed(2) : null, q_turbinado_m3s: +d.qTurbinado.toFixed(2),
-    q_hidrometria_m3s: d.potenciaMW > 0 ? +(d.potenciaMW / fcHora(d)).toFixed(2) : 0, q_entrada_m3s: d.qEntrada,
-    nivel_fin_despacho: +d.Hfin.toFixed(4), nivel_fin_banda_inf: +calc.inf.serie[i + 1].nivel.toFixed(4), nivel_fin_banda_sup: +calc.sup.serie[i + 1].nivel.toFixed(4),
-    nivel_fin_rt: calc.rt ? +calc.rt.serie[i + 1].nivel.toFixed(4) : null, nivel_medido_inicio_hora: filas[i].nivelMedido,
+    eta_pct: d.eta != null ? +d.eta.toFixed(2) : null, q_turbinado_modelo_m3s: +d.qTurbinado.toFixed(2),
+    q_regulado_hidrometria_m3s: calc.regla.porHora[i].principal != null ? +calc.regla.porHora[i].principal.toFixed(2) : null, q_entrada_m3s: d.qEntrada,
+    nivel_fin: +d.Hfin.toFixed(4), nivel_fin_banda_inf: +calc.inf.serie[i + 1].nivel.toFixed(4), nivel_fin_banda_sup: +calc.sup.serie[i + 1].nivel.toFixed(4),
+    nivel_medido_inicio_hora: filas[i].nivelMedido,
   }));
   const resumen = { padding: "10px 12px", background: T.panelSoft, borderRadius: 8, fontSize: 12.5, fontFamily: FONT_BODY, color: T.inkMuted, lineHeight: 1.6 };
 
@@ -532,7 +558,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 14, marginBottom: 12 }}>
         <div>
-          <Etiqueta T={T} tip="Día del despacho. Define qué factor de conversión de Hidrometría aplica en la columna Q Hidrometría (1,62 hasta el 29-oct-2026 14:30; desde entonces depende del nivel). Se toma del texto pegado si lo trae.">Fecha del despacho</Etiqueta>
+          <Etiqueta T={T} tip="Día del despacho. Define qué factor de conversión de Hidrometría aplica en la columna Q Hidrometría (1,62 hasta el 29-oct-2026 14:35; desde entonces depende del nivel). Se toma del texto pegado si lo trae.">Fecha del despacho</Etiqueta>
           <input type="date" value={fecha} onChange={(e) => e.target.value && setFecha(e.target.value)} className="itu-num-input" />
         </div>
         <div>
@@ -550,6 +576,25 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
         <div>
           <Etiqueta T={T} tip="Banda de tolerancia alrededor del despacho XM (por defecto ±5 %).">Banda ± (%)</Etiqueta>
           <InputNumeroLibre step={0.5} min={0} max={50} value={bandaPct} onChange={(n) => setBandaPct(Math.max(0, Math.min(50, n)))} className="itu-num-input" />
+        </div>
+        <div>
+          <Etiqueta T={T} tip="Promedio diario del caudal regulado de AYER según Hidrometría (Q_regulado = potencia / F.C. + descarga intermedia, que se toma 0). Con él se calcula la banda de la regla operativa de hoy (±4,70 %, Res. ANLA 1891) y el programa plano. En la app de Hidrometría aparece como 'Promedio ayer'.">Q regulado promedio de ayer (m³/s)</Etiqueta>
+          <InputOpcional step={0.1} value={qAyer} placeholder="p. ej. 500" onChange={(v) => setQAyer(v != null && v > 0 ? v : null)} style={{ width: "100%" }} />
+        </div>
+        <div>
+          <Etiqueta T={T} tip="Con qué potencia se simula el nivel. Despacho XM: el programa de XM (una hora sin dato repite la anterior). Promedio RT: lo generado donde ya hay dato y XM en el resto. Plano por regla operativa: caudal regulado constante igual al promedio de ayer, que es como opera hoy Ituango por la Res. 1891.">Programa para el nivel</Etiqueta>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {[["xm", "XM"], ["rt", "RT"], ["plano", "Plano"]].map(([v, l]) => {
+              const disponible = v === "xm" || (v === "rt" && filas.some((f) => f.rt != null)) || (v === "plano" && qAyer > 0);
+              return (
+                <button key={v} onClick={() => disponible && setPrograma(v)} disabled={!disponible} title={disponible ? "" : v === "rt" ? "Falta el Promedio RT" : "Falta el Q regulado promedio de ayer"} style={{
+                  flex: "1 1 40px", padding: "7px 4px", fontSize: 12, fontFamily: FONT_BODY, fontWeight: 600, opacity: disponible ? 1 : 0.5,
+                  border: `1px solid ${calc.modo === v ? T.teal : T.line}`, borderRadius: 4, cursor: disponible ? "pointer" : "not-allowed",
+                  background: calc.modo === v ? T.panelSoft : "transparent", color: calc.modo === v ? T.teal : T.inkMuted,
+                }}>{l}</button>
+              );
+            })}
+          </div>
         </div>
         <div>
           <Etiqueta T={T} tip="Unidades disponibles hoy. Las horas sin número de unidades propio usan el mínimo que entrega la potencia sin pasar de 307 MW por unidad, sin superar este número.">Unidades disponibles</Etiqueta>
@@ -581,17 +626,32 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
         )}
       </div>
 
-      {vacio && <div style={{ ...resumen, marginBottom: 12, color: T.ink }}>Pegue el resumen horario de XM (o escriba el despacho en la tabla) para calcular. Sin despacho, el nivel solo refleja el caudal de entrada.</div>}
+      {vacio && <div style={{ ...resumen, marginBottom: 12, color: T.ink }}>Pegue el resumen horario de XM (o escriba el despacho en la tabla), o use el programa plano con el Q regulado de ayer. Sin potencia, el nivel solo refleja el caudal de entrada.</div>}
       <div style={{ ...resumen, marginBottom: 12 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: T.teal }}>
-          Nivel a las 24 h con el despacho XM: {fx(calc.xm.Hfinal, 3)} msnm ({calc.xm.deltaH >= 0 ? "+" : ""}{fx(calc.xm.deltaH * 100, 1)} cm)
+          Nivel a las 24 h ({NOMBRE_PROGRAMA[calc.modo]}): {fx(calc.principal.Hfinal, 3)} msnm ({calc.principal.deltaH >= 0 ? "+" : ""}{fx(calc.principal.deltaH * 100, 1)} cm)
         </div>
-        <div>Banda ±{bandaPct} %: {fx(calc.sup.Hfinal, 3)} a {fx(calc.inf.Hfinal, 3)} msnm · caudal de entrada ±{sensQ} m³/s: {fx(calc.qMenos.Hfinal, 3)} a {fx(calc.qMas.Hfinal, 3)} msnm
-          {calc.rt && <> · con Promedio RT ({calc.horasRT} h) y despacho en el resto: {fx(calc.rt.Hfinal, 3)} msnm</>}</div>
-        <div>Energía programada: {fx(calc.energiaXM, 0)} MWh · caudal turbinado medio {fx(calc.xm.qTurbMedio, 1)} m³/s (Hidrometría con su F.C. por nivel: {fx(det.reduce((t, d) => t + (d.potenciaMW > 0 ? d.potenciaMW / fcHora(d) : 0), 0) / 24, 1)} m³/s) frente a {qEntrada} m³/s de entrada pronosticada
-          {calc.horasRT > 0 && <> · en las {calc.horasRT} h con RT: {fx(calc.energiaRT, 0)} MWh generados frente a {fx(calc.energiaXMconRT, 0)} programados ({fx((calc.energiaRT / calc.energiaXMconRT - 1) * 100, 2)} %), {calc.fueraBanda.length} h fuera de banda{calc.fueraBanda.length > 0 && ` (${calc.fueraBanda.map((f) => f.hora).join(", ")})`}</>}</div>
-        {calc.errMedido.length > 0 && <div>Frente al nivel medido ({calc.errMedido.length} h): diferencia máxima {fx(Math.max(...calc.errMedido.map(Math.abs)) * 100, 1)} cm{calc.rt ? " (escenario con RT)" : ""}.</div>}
-        <div style={{ fontSize: 11.5, color: T.inkFaint }}>Almenara: {etiquetaCondicionDescarga(condDescarga)} (panel Condición de descarga; el caudal del río en D4' incluye lo turbinado).</div>
+        <div>Banda ±{bandaPct} % de ese programa: {fx(calc.sup.Hfinal, 3)} a {fx(calc.inf.Hfinal, 3)} msnm · caudal de entrada ±{sensQ} m³/s: {fx(calc.qMenos.Hfinal, 3)} a {fx(calc.qMas.Hfinal, 3)} msnm
+          {Object.entries(calc.comparar).map(([k, v]) => <span key={k}> · {NOMBRE_PROGRAMA[k]}: {fx(v.Hfinal, 3)} msnm</span>)}</div>
+        <div>Caudal turbinado medio (modelo): {fx(calc.principal.qTurbMedio, 1)} m³/s frente a {fx(qEntrada, 0)} m³/s de entrada pronosticada{calc.prog.rellenadas.length > 0 && <> · horas sin dato propio (se repite la anterior): {calc.prog.rellenadas.join(", ")}</>}.</div>
+        <div>
+          <b style={{ color: T.ink }}>Energía RT vs despacho XM</b> (banda ±{bandaPct} %): XM {fx(calc.energia.xm, 0)} MWh en {calc.energia.hXM} h con dato · RT {fx(calc.energia.rt, 0)} MWh en {calc.energia.hRT} h
+          {calc.energia.hComun > 0 && <> · en las {calc.energia.hComun} h con ambos: {fx(calc.energia.rtComun, 0)} frente a {fx(calc.energia.xmComun, 0)} MWh ({calc.energia.difComunPct >= 0 ? "+" : ""}{fx(calc.energia.difComunPct, 1)} %)</>}.
+          {" "}{["por_debajo", "dentro", "por_encima", "sin_dato_xm"].map((k) => { const n = calc.estados.filter((x) => x === k).length; return n ? `${ETIQUETA_ESTADO_HORA[k]}: ${n} h. ` : ""; })}
+        </div>
+        {calc.regla.banda ? (
+          <div>
+            <b style={{ color: T.ink }}>Regla operativa (Res. 1891):</b> banda de hoy {fx(calc.regla.banda.min, 1)} a {fx(calc.regla.banda.max, 1)} m³/s (promedio de ayer {fx(qAyer, 1)} ± 4,70 %; con el F.C. de las 00:00, {fx(calc.regla.banda.min * fcInicio, 0)} a {fx(calc.regla.banda.max * fcInicio, 0)} MW).
+            {[["xm", "Despacho XM"], ["rt", "Promedio RT hasta ahora"], ["principal", `Programa simulado (${NOMBRE_PROGRAMA[calc.modo]})`]].map(([k, l]) => {
+              const x = calc.regla[k]; if (!x) return null;
+              const est = estadoReglaDe(x);
+              return <div key={k}>· {l}: promedio {fx(x.q, 1)} m³/s en {x.horas} h → <b style={{ color: colorRegla[est] }}>{ETIQUETA_ESTADO_REGLA[est]}</b></div>;
+            })}
+            <div style={{ fontSize: 11.5, color: T.inkFaint }}>El cumplimiento se define con el promedio regulado final del día; lo horario es seguimiento. Con vertimiento la validación se suspende.</div>
+          </div>
+        ) : <div style={{ fontSize: 11.5, color: T.inkFaint }}>Escriba el Q regulado promedio de ayer para ver la regla operativa (Res. 1891) y el programa plano.</div>}
+        {calc.errMedido.length > 0 && <div>Frente al nivel medido ({calc.errMedido.length} h): diferencia máxima {fx(Math.max(...calc.errMedido.map(Math.abs)) * 100, 1)} cm.</div>}
+        <div style={{ fontSize: 11.5, color: T.inkFaint }}>Almenara: {etiquetaCondicionDescarga(condDescarga)} (panel Condición de descarga; el caudal del río en D4' incluye lo turbinado). F.C. de Hidrometría a {fx(nivelInicial, 2)} msnm: {fx(fcInicio, 3)}.</div>
         {noAlcanzables.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {noAlcanzables.map((d) => d.hora).join(", ")}: la potencia no se alcanza con esas unidades, el techo de apertura {etiquetaTecho} (se elige en "Rango de apertura" del Buscador) y {P_MAXIMO_ESPERADO_MW} MW por unidad. Aumenta las unidades de esa hora o revisa el techo; el nivel se calcula con la potencia máxima alcanzable.</div>}
         {reducidas.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {reducidas.map((d) => `${d.hora} (${d.unidadesPedidas}→${d.unidades} ud.)`).join(", ")}: con las unidades pedidas, cada una quedaría por debajo de la apertura mínima ensayada ({fx(GAMMAS_HILL[0], 2)}°); se calculó con la cantidad de unidades que turbina menos agua.</div>}
         {bajoMinimo.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {bajoMinimo.map((d) => d.hora).join(", ")}: la potencia es menor que la de una unidad en la apertura mínima ensayada ({fx(GAMMAS_HILL[0], 2)}°); se tomó el caudal de esa apertura mínima con una unidad.</div>}
@@ -608,10 +668,12 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
           <Legend wrapperStyle={{ fontSize: 11.5, fontFamily: FONT_BODY }} />
           <Line dataKey="qMas" name={`Entrada +${sensQ} m³/s`} stroke={T.inkFaint} strokeDasharray="2 3" strokeWidth={1.4} dot={false} isAnimationActive={false} />
           <Line dataKey="qMenos" name={`Entrada −${sensQ} m³/s`} stroke={T.inkFaint} strokeDasharray="2 3" strokeWidth={1.4} dot={false} isAnimationActive={false} />
-          <Line dataKey="bandaInf" name={`Banda −${bandaPct} %`} stroke={T.tealSoft} strokeDasharray="6 3" strokeWidth={1.4} dot={false} isAnimationActive={false} />
-          <Line dataKey="bandaSup" name={`Banda +${bandaPct} %`} stroke={T.tealSoft} strokeDasharray="6 3" strokeWidth={1.4} dot={false} isAnimationActive={false} />
-          {calc.rt && <Line dataKey="rt" name="Promedio RT" stroke={T.amber} strokeWidth={2} dot={false} isAnimationActive={false} />}
-          <Line dataKey="despacho" name="Despacho XM" stroke={T.teal} strokeWidth={2.6} dot={false} isAnimationActive={false} />
+          <Line dataKey="bandaInf" name={`Programa −${bandaPct} %`} stroke={T.tealSoft} strokeDasharray="6 3" strokeWidth={1.4} dot={false} isAnimationActive={false} />
+          <Line dataKey="bandaSup" name={`Programa +${bandaPct} %`} stroke={T.tealSoft} strokeDasharray="6 3" strokeWidth={1.4} dot={false} isAnimationActive={false} />
+          {calc.comparar.xm && <Line dataKey="xm" name="Despacho XM" stroke={T.cyan} strokeWidth={1.6} dot={false} isAnimationActive={false} />}
+          {calc.comparar.rt && <Line dataKey="rt" name="Promedio RT" stroke={T.amber} strokeWidth={1.8} dot={false} isAnimationActive={false} />}
+          {calc.comparar.plano && <Line dataKey="plano" name="Plano por regla" stroke={T.inkMuted} strokeWidth={1.6} dot={false} isAnimationActive={false} />}
+          <Line dataKey="principal" name={NOMBRE_PROGRAMA[calc.modo]} stroke={T.teal} strokeWidth={2.6} dot={false} isAnimationActive={false} />
           <Line dataKey="medido" name="Nivel medido" stroke={T.ink} strokeWidth={0} dot={{ r: 3.5, fill: T.ink }} connectNulls={false} isAnimationActive={false} legendType="circle" />
         </LineChart>
       </ResponsiveContainer>
@@ -621,7 +683,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: FONT_BODY, color: T.ink }}>
           <thead>
             <tr style={{ color: T.inkFaint, textAlign: "left" }}>
-              {["Hora", "Despacho XM (MW)", `Banda ±${bandaPct} %`, "Promedio RT (MW)", "Desv.", "Unidades", "MW/unidad", "Apertura", "η (%)", "Q turbinado", "Q Hidrometría", "Q entrada", "Nivel fin", "Nivel medido (hh:00)"].map((h) => (
+              {["Hora", "Despacho XM (MW)", `Banda ±${bandaPct} %`, "Promedio RT (MW)", "Desv.", "Estado", "Programa (MW)", "Unidades", "MW/unidad", "Apertura", "η (%)", "Q turbinado (modelo)", "Q regulado (Hidrometría)", "Q entrada", "Nivel fin", "Nivel medido (hh:00)"].map((h) => (
                 <th key={h} style={{ ...celda, borderBottom: `1px solid ${T.line}`, fontWeight: 600 }}>{h}</th>
               ))}
             </tr>
@@ -629,23 +691,28 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
           <tbody>
             {det.map((d, i) => {
               const f = filas[i];
-              const lo = f.despacho * (1 - bandaPct / 100), hi = f.despacho * (1 + bandaPct / 100);
-              const fuera = f.rt != null && (f.rt < lo - 1e-9 || f.rt > hi + 1e-9);
-              const auto = unidadesMinimasParaPotencia(f.despacho, unidadesDisp);
+              const lo = f.despacho != null ? f.despacho * (1 - bandaPct / 100) : null, hi = f.despacho != null ? f.despacho * (1 + bandaPct / 100) : null;
+              const est = calc.estados[i];
+              const fuera = est === "por_debajo" || est === "por_encima";
+              const auto = unidadesMinimasParaPotencia(d.potenciaMW, unidadesDisp);
+              const qr = calc.regla.porHora[i].principal;
+              const fueraRegla = calc.regla.banda && qr != null && (qr < calc.regla.banda.min - 1e-9 || qr > calc.regla.banda.max + 1e-9);
               const alerta = (d.potenciaMW > 0 && !d.alcanzable) || (f.unidades != null && f.unidades > unidadesDisp);
               return (
                 <tr key={i}>
                   <td style={celda}>{String(i).padStart(2, "0")}:00</td>
-                  <td style={celda}><InputNumeroLibre step={10} min={0} value={f.despacho} onChange={(n) => editar(i, "despacho", Math.max(0, n))} className="itu-num-input" style={entradaCelda} /></td>
-                  <td style={{ ...celda, color: T.inkFaint }}>{fx(lo, 1)}-{fx(hi, 1)}</td>
+                  <td style={celda}><InputOpcional step={10} value={f.despacho} placeholder="sin dato" onChange={(v) => editar(i, "despacho", v == null ? null : Math.max(0, v))} style={entradaCelda} /></td>
+                  <td style={{ ...celda, color: T.inkMuted }}>{lo != null ? `${fx(lo, 1)}-${fx(hi, 1)}` : "—"}</td>
                   <td style={celda}><InputOpcional step={1} value={f.rt} placeholder="—" onChange={(v) => editar(i, "rt", v == null ? null : Math.max(0, v))} style={entradaCelda} /></td>
-                  <td style={{ ...celda, color: fuera ? T.red : T.inkMuted, fontWeight: fuera ? 700 : 400 }}>{f.rt != null && f.despacho > 0 ? `${fx((f.rt / f.despacho - 1) * 100, 1)} %` : ""}</td>
+                  <td style={{ ...celda, color: fuera ? T.amber : T.inkMuted, fontWeight: fuera ? 700 : 400 }}>{f.rt != null && f.despacho > 0 ? `${f.rt >= f.despacho ? "+" : ""}${fx((f.rt / f.despacho - 1) * 100, 1)} %` : ""}</td>
+                  <td style={{ ...celda, color: colorEstado[est], fontWeight: 600 }}>{ETIQUETA_ESTADO_HORA[est]}</td>
+                  <td style={{ ...celda, color: calc.prog.rellenadas.includes(i) ? T.amber : T.ink }}>{fmt(d.potenciaMW, 1)}{calc.prog.rellenadas.includes(i) ? " *" : ""}</td>
                   <td style={celda}><InputOpcional step={1} value={f.unidades} placeholder={String(auto)} onChange={(v) => editar(i, "unidades", v == null ? null : Math.max(0, Math.min(N_TURBINAS_MAX, Math.round(v))))} style={{ ...entradaCelda, width: 52 }} /></td>
                   <td style={celda}>{d.unidades > 0 ? fmt(d.pBornesUnidad) : "—"}</td>
                   <td style={celda}>{d.qTurbinado > 0 ? `${fx(pctFromDeg(d.gamma), 1)} % (${fx(d.gamma, 2)}°)` : "—"}</td>
                   <td style={celda}>{fmt(d.eta, 2)}</td>
                   <td style={celda}>{fmt(d.qTurbinado)}</td>
-                  <td style={{ ...celda, color: T.inkMuted }}>{d.potenciaMW > 0 ? fmt(d.potenciaMW / fcHora(d)) : "—"}</td>
+                  <td style={{ ...celda, color: fueraRegla ? T.red : T.inkMuted, fontWeight: fueraRegla ? 700 : 400 }}>{qr != null && d.potenciaMW > 0 ? fmt(qr) : "—"}</td>
                   <td style={celda}><InputOpcional step={1} value={f.qEntrada} placeholder={String(qEntrada)} onChange={(v) => editar(i, "qEntrada", v == null ? null : Math.max(0, v))} style={entradaCelda} /></td>
                   <td style={{ ...celda, fontWeight: 600 }}>{fx(d.Hfin, 3)}</td>
                   <td style={celda}><InputOpcional step={0.01} value={f.nivelMedido} placeholder="—" onChange={(v) => editar(i, "nivelMedido", v)} style={{ ...entradaCelda, width: 84 }} /></td>
@@ -656,7 +723,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
           </tbody>
         </table>
         <div style={{ fontSize: 11.5, color: T.inkFaint, fontFamily: FONT_BODY, marginTop: 6, lineHeight: 1.5 }}>
-          Despacho, Promedio RT y MW/unidad: potencia en bornes. Unidades vacías = mínimo que entrega la potencia (número en gris). Q entrada vacío = caudal pronosticado general. Q Hidrometría: potencia / F.C. de Hidrometría vigente en la fecha del despacho (1,62 hasta el 29-oct-2026 14:30; desde entonces 0,0119·nivel − 3,178, con el nivel al inicio de la hora). Nivel fin: con el despacho XM. † hora que no se puede cumplir o con más unidades que las disponibles.
+          Despacho, Promedio RT, Programa y MW/unidad: potencia en bornes. Estado: comparación del Promedio RT con el despacho de XM ± banda, como en la app de Hidrometría; "Sin dato XM" no se evalúa ni se toma como cero. Programa: potencia con que se simula el nivel (* = hora sin dato propio, repite la anterior). Unidades vacías = mínimo que entrega la potencia (número en gris). Q turbinado: caudal del modelo de la colina. Q regulado: potencia / F.C. de Hidrometría con el nivel al inicio de la hora (1,62 hasta el 29-oct-2026 14:35; desde entonces 0,0119·nivel − 3,178 entre 390 y 420 msnm, y 1,80 sin nivel válido); en rojo, fuera de la banda de la regla operativa. † hora que no se puede cumplir o con más unidades que las disponibles.
         </div>
       </div>
     </div>
@@ -1719,7 +1786,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
       </div>
 
       <div style={cardStyle}>
-        <ChartHeader titulo="F.C. — Factor Potencia/Caudal vs. nivel del embalse" subtitulo={`F.C. = potencia en bornes / caudal turbinado (MW por m³/s), por unidad. Modelo a la apertura máxima del rango elegido (${etiquetaRango(rangoOptimo)}) con ${nTurbActivasExploracion} unidad(es) y la condición de descarga elegida; Hidrometría: 1,62 fijo hasta el 29-oct-2026 14:30 y desde entonces 0,0119·nivel − 3,178.`} T={T}
+        <ChartHeader titulo="F.C. — Factor Potencia/Caudal vs. nivel del embalse" subtitulo={`F.C. = potencia en bornes / caudal turbinado (MW por m³/s), por unidad. Modelo a la apertura máxima del rango elegido (${etiquetaRango(rangoOptimo)}) con ${nTurbActivasExploracion} unidad(es) y la condición de descarga elegida; Hidrometría: 1,62 fijo hasta el 29-oct-2026 14:35 y desde entonces 0,0119·nivel − 3,178 (390-420 msnm; fuera de ese rango, 1,80).`} T={T}
           tip="A mayor nivel del embalse, mayor salto neto: con el mismo caudal se obtiene más potencia (F.C. más alto), o sea que para la misma potencia se necesita menos caudal. El F.C. del modelo depende también de la carga y del nivel de la almenara (caudal del río y unidades en servicio); el de Hidrometría solo del nivel. Con 2-3 unidades entre 200 y 290 MW por unidad y el río bajo, los dos coinciden dentro de ±2 % entre 400 y 420 msnm (±1 % cerca de 408-412 msnm). Con 4 unidades y el río alto, la almenara sube y la fórmula da un F.C. 2-4 % mayor que el modelo, es decir, reporta 2-4 % menos caudal."
           accion={<BotonCSV data={diagramaFC} filename="fc_vs_nivel_embalse.csv" T={T} />} />
         <ResponsiveContainer width="100%" height={260}>

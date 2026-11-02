@@ -13,7 +13,7 @@ Fecha: 2-nov-2026. Revisión de cada pestaña, campo y resultado. Un revisor ind
 | ✅ Corregido | Aviso de 307 MW en la exploración | Con unidades en las dos almenaras, el aviso usaba la potencia promedio. Ahora usa la de la unidad más cargada. |
 | ✅ Corregido | Unidades mínimas en el despacho | 307 MW es un límite en el eje, que equivale a unos 303,6 MW en bornes. La tolerancia para dar una potencia por "alcanzable" bajó de 1 % a 0,1 %. |
 | ✅ Corregido | Despacho bajo el mínimo ensayado | Antes la hora quedaba con caudal cero. Ahora se reparte entre menos unidades. Si ni una alcanza, se usa el caudal de la apertura mínima y se marca. |
-| ✅ Nuevo | Factor de conversión de Hidrometría | 1,62 hasta el 29-oct-2026 14:30; desde entonces 0,0119·nivel − 3,178, según la fecha de cada dato. Con 2-3 unidades y el río bajo coincide con el modelo dentro de ±2 % entre 400 y 420 msnm. Con 4 unidades y el río alto da un F.C. 2-4 % mayor. |
+| ✅ Nuevo | Factor de conversión de Hidrometría | Igual que en la app de Hidrometría: 1,62 hasta el 29-oct-2026 14:35; desde entonces 0,0119·nivel − 3,178 con el nivel del radar, entre 390 y 420 msnm (fuera de ese rango o sin nivel, 1,80). Se aplica según la fecha de cada dato. Con 2-3 unidades y el río bajo coincide con el modelo dentro de ±2 % entre 400 y 420 msnm. Con 4 unidades y el río alto, el F.C. de la fórmula es 2-4 % mayor que el del modelo. |
 | ✅ Nuevo | Operación medida (LoggerNet) | Generación y caudal por unidad cada minuto, y nivel del radar cada 5 min. Se verifica que el caudal de Hidrometría sea potencia / F.C. Los caudales Winter-Kennedy se leen pero no se usan hasta que estén calibrados. |
 | ⚠️ Atención | Tablas de almenara fuera de lo simulado | Con el río bajo 500 m³/s, o con 3-4 unidades y el río entre 500 y 1000 m³/s, el nivel de la almenara se estima a partir de la propia tabla. Conviene que la Asesoría simule esos casos. |
 | ⚠️ Atención | Caudal de entrada al embalse | Es la entrada que más pesa en el despacho: 10 m³/s sostenidos 24 h equivalen a unos 2,5 cm de nivel. La app lo recibe como pronóstico del usuario. |
@@ -45,3 +45,13 @@ Fecha: 2-nov-2026. Revisión de cada pestaña, campo y resultado. Un revisor ind
 | ✅ Corregido | Despacho con poca potencia | Cuando hay que bajar unidades, se elige la cantidad que turbina menos agua. Ejemplo: con 60 MW y 4 unidades pedidas, antes quedaba en 3 unidades con η ≈ 43 %. |
 | ✅ Corregido | Nivel del embalse | Mismo paso (0,01 m) en el Buscador y en la Colina. |
 | ℹ️ Nota | Modelo en Operación medida | Busca la apertura hasta 31,98° y sin el tope de 307 MW, para no recortar la potencia medida. |
+
+## Alineación con la app de Hidrometría (2-nov-2026)
+
+| Estado | Punto | Detalle |
+|---|---|---|
+| ✅ Nuevo | Regla operativa (Res. 1891) | Caudal regulado = potencia / F.C.; la banda del día es el promedio de ayer ± 4,70 %; se cumple con el promedio final del día; con vertimiento la validación se suspende. Con los datos de LoggerNet, la app reproduce el tablero de Hidrometría (promedio de ayer, banda y promedio acumulado del día) con diferencias de 0,1 m³/s o menos. |
+| ✅ Corregido | "Sin dato XM" | La tabla de Hidrometría muestra 0,0 MW en las horas sin dato de XM. Antes se leía como despacho de cero y además se perdía el Promedio RT de esa hora. Ahora queda como dato faltante y el RT se conserva. |
+| ✅ Nuevo | Estado por hora y energía del día | Por debajo, dentro o por encima de la banda, o sin dato, como en la app de Hidrometría; también la energía de XM y la de RT en las horas comunes. |
+| ✅ Nuevo | Programa para simular el nivel | Despacho de XM, Promedio RT o la operación plana que pide la regla (caudal regulado constante = promedio de ayer). Ituango opera plano por la Res. 1891: un despacho de XM con forma de precios (alto de noche, bajo a media mañana) no es lo que va a turbinar. |
+| ⚠️ Atención | Columna de caudal de LoggerNet | `QTurbinadoUx_FC` siguió con 1,62 durante casi un día después del cambio de regla; desde el 30-oct-2026 a media mañana aplica la fórmula con el nivel del radar. La app calcula el caudal de Hidrometría con la regla, no con esa columna. |

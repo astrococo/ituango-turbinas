@@ -12,6 +12,8 @@
    La hora es la del datalogger (se trata como hora de Colombia).
    ============================================================ */
 import {
+  bandaReglaOperativa,
+  estadoReglaOperativa,
   CONDICION_DESCARGA_DISENO,
   FC_HIDROMETRIA_POR_NIVEL,
   factorConversionHidrometria,
@@ -108,6 +110,21 @@ function unirNivel(filas, filasNivel, toleranciaMin = 10) {
   return { filas: out, sinNivel };
 }
 
+/* Caudal regulado de Hidrometría en un minuto: potencia total en bornes /
+   F.C. vigente (con el nivel del radar; sin nivel válido, 1,80). Es lo que
+   usa la app de Hidrometría para la regla operativa (Q_regulado =
+   Q_generado + descarga intermedia, que se toma 0). */
+function caudalRegulado(r) {
+  const P = r.p.reduce((s, x) => s + (x != null && x > 0 ? x : 0), 0);
+  if (r.p.every((x) => x == null)) return null;
+  return P / factorConversionHidrometria(r.nivel, r.t);
+}
+/* Caudal total de la columna QTurbinadoUx_FC de LoggerNet en un minuto. */
+function caudalColumnaLoggerNet(r) {
+  if (r.q.every((x) => x == null)) return null;
+  return r.q.reduce((s, x, u) => s + (x != null && r.p[u] != null && r.p[u] > 0 ? x : 0), 0);
+}
+
 /* F.C. implícito (P/Q) de una unidad y, desde el cambio de regla, el nivel
    con el que Hidrometría lo calculó: nivel = (F.C. − b) / a. */
 function fcImplicito(p, q) {
@@ -128,7 +145,7 @@ function agregarIntervalos(filas, minutos = 15) {
     const hh = +r.t.slice(11, 13), mm = +r.t.slice(14, 16);
     const m0 = Math.floor((hh * 60 + mm) / minutos) * minutos;
     const t = `${r.t.slice(0, 11)}${String(Math.floor(m0 / 60)).padStart(2, "0")}:${String(m0 % 60).padStart(2, "0")}`;
-    if (!grupos.has(t)) grupos.set(t, { t, n: 0, sp: [0, 0, 0, 0], cp: [0, 0, 0, 0], sq: [0, 0, 0, 0], cq: [0, 0, 0, 0], sq2: [0, 0, 0, 0], cq2: [0, 0, 0, 0], sV: 0, cV: 0, sNiv: 0, cNiv: 0, sNivFC: 0, cNivFC: 0, sFC: [0, 0, 0, 0], cFC: [0, 0, 0, 0] });
+    if (!grupos.has(t)) grupos.set(t, { t, n: 0, sp: [0, 0, 0, 0], cp: [0, 0, 0, 0], sq: [0, 0, 0, 0], cq: [0, 0, 0, 0], sq2: [0, 0, 0, 0], cq2: [0, 0, 0, 0], sV: 0, cV: 0, sNiv: 0, cNiv: 0, sNivFC: 0, cNivFC: 0, sFC: [0, 0, 0, 0], cFC: [0, 0, 0, 0], sReg: 0, cReg: 0, sLog: 0, cLog: 0 });
     const g = grupos.get(t);
     g.n++;
     for (let u = 0; u < 4; u++) {
@@ -144,6 +161,8 @@ function agregarIntervalos(filas, minutos = 15) {
     }
     if (r.nivel != null) { g.sNiv += r.nivel; g.cNiv++; }
     if (r.qVert != null) { g.sV += r.qVert; g.cV++; }
+    const qr = caudalRegulado(r); if (qr != null) { g.sReg += qr; g.cReg++; }
+    const ql = caudalColumnaLoggerNet(r); if (ql != null) { g.sLog += ql; g.cLog++; }
   }
   return [...grupos.values()].sort((a, b) => (a.t < b.t ? -1 : 1)).map((g) => {
     const p = g.sp.map((s, u) => (g.cp[u] ? s / g.cp[u] : null));
@@ -152,7 +171,7 @@ function agregarIntervalos(filas, minutos = 15) {
     const q2 = g.sq2.map((s, u) => (g.cq2[u] ? s / g.cq2[u] : null));
     const nivelColumna = g.cNiv ? g.sNiv / g.cNiv : null;
     const nivelFC = g.cNivFC ? g.sNivFC / g.cNivFC : null;
-    return { t: g.t, minutos: g.n, p, q, q2, qVert: g.cV ? g.sV / g.cV : null, fc, nivelColumna, nivelFC };
+    return { t: g.t, minutos: g.n, p, q, q2, qVert: g.cV ? g.sV / g.cV : null, fc, nivelColumna, nivelFC, qReg: g.cReg ? g.sReg / g.cReg : null, qLog: g.cLog ? g.sLog / g.cLog : null };
   });
 }
 
@@ -186,7 +205,8 @@ function caudalModeloIntervalos(intervalos, { nivelDe, cond = CONDICION_DESCARGA
     return {
       ...iv, nivel, n, qMod,
       qModTotal: ok ? qMod.reduce((s, x) => s + x, 0) : null,
-      qHidTotal: qHid.every((x) => x != null) ? qHid.reduce((s, x) => s + x, 0) : null,
+      qHidTotal: iv.qReg,            // Hidrometría: potencia / F.C. vigente (regla de su app)
+      qLogTotal: qHid.every((x) => x != null) ? qHid.reduce((s, x) => s + x, 0) : null, // columna de LoggerNet
       q2Total: q2.every((x) => x != null) ? q2.reduce((s, x) => s + x, 0) : null,
       pTotal: iv.p.reduce((s, x) => s + (x != null && x > 0 ? x : 0), 0),
     };
@@ -217,6 +237,51 @@ function verificarFC(filas, tol = 0.002) {
   return { antes, antesOk, despues, despuesOk, despuesSinNivel, nivelImplicito: { p05: q(0.05), mediana: q(0.5), p95: q(0.95) } };
 }
 
+/* ¿La columna QTurbinadoUx_FC de LoggerNet sigue la regla de Hidrometría?
+   Minuto a minuto, F.C. de la columna (ΣP/ΣQ de las unidades en línea)
+   frente al F.C. de la regla con el nivel del radar. Tolerancia 0,2 %.
+   Devuelve cuántos minutos coinciden y el primer y último minuto que no
+   (con cuántos de ellos están en 1,62, es decir, con el factor anterior). */
+function verificarColumnaLoggerNet(filas, tol = 0.002) {
+  let n = 0, ok = 0, con162 = 0, primero = null, ultimo = null;
+  for (const r of filas) {
+    let P = 0, Q = 0;
+    for (let u = 0; u < 4; u++) if (r.p[u] != null && r.p[u] > P_EN_LINEA_MW && r.q[u] != null && r.q[u] > 1e-6) { P += r.p[u]; Q += r.q[u]; }
+    if (!(Q > 0)) continue;
+    n++;
+    const fc = P / Q, regla = factorConversionHidrometria(r.nivel, r.t);
+    if (Math.abs(fc / regla - 1) <= tol) { ok++; continue; }
+    if (Math.abs(fc / 1.62 - 1) <= tol) con162++;
+    if (primero == null) primero = r.t;
+    ultimo = r.t;
+  }
+  return { minutos: n, coinciden: ok, noCoinciden: n - ok, con162, primero, ultimo };
+}
+
+/* Regla operativa (Res. 1891) día por día con los datos medidos: promedio
+   del caudal regulado (minutos con dato), banda = promedio del día anterior
+   ± 4,70 %, estado; con vertimiento (> 1 m³/s en algún minuto) se marca
+   excepción. Un día con menos del 90 % de los minutos queda "parcial". */
+function reglaOperativaDiaria(filas) {
+  const dias = new Map();
+  for (const r of filas) {
+    const d = r.t.slice(0, 10);
+    if (!dias.has(d)) dias.set(d, { dia: d, s: 0, c: 0, vert: false, qVertMax: 0 });
+    const g = dias.get(d);
+    const q = caudalRegulado(r);
+    if (q != null) { g.s += q; g.c++; }
+    if (r.qVert != null && r.qVert > 1) { g.vert = true; g.qVertMax = Math.max(g.qVertMax, r.qVert); }
+  }
+  const lista = [...dias.values()].sort((a, b) => (a.dia < b.dia ? -1 : 1));
+  return lista.map((g, k) => {
+    const prom = g.c ? g.s / g.c : null;
+    const ant = k > 0 && lista[k - 1].c ? lista[k - 1] : null;
+    const contiguo = ant && minutosDe(`${g.dia} 00:00`) - minutosDe(`${ant.dia} 00:00`) === 1440;
+    const banda = contiguo ? bandaReglaOperativa(ant.s / ant.c) : null;
+    return { dia: g.dia, qPromedio: prom, minutos: g.c, parcial: g.c < 0.9 * 1440, conVertimiento: g.vert, qVertMax: g.qVertMax, banda, estado: estadoReglaOperativa(prom, banda, g.vert) };
+  });
+}
+
 /* Resumen por unidad sobre los intervalos con modelo calculado: energía
    (MWh), volumen turbinado (hm³) según Hidrometría y según el modelo, horas
    en línea. El volumen solo suma los intervalos donde ambos existen. */
@@ -228,8 +293,9 @@ function resumenPorUnidad(intervalos) {
       const p = iv.p[u];
       if (p != null && p > P_EN_LINEA_MW) {
         E += p * dt; h += dt;
-        if (iv.q[u] != null && iv.qMod && iv.qMod[u] != null) {
-          vH += iv.q[u] * dt * 3600; vM += iv.qMod[u] * dt * 3600; comparados += dt;
+        const fcIv = iv.qReg > 0 && iv.pTotal > 0 ? iv.pTotal / iv.qReg : null; // F.C. medio del intervalo
+        if (fcIv != null && iv.qMod && iv.qMod[u] != null) {
+          vH += (p / fcIv) * dt * 3600; vM += iv.qMod[u] * dt * 3600; comparados += dt;
           if (iv.q2 && iv.q2[u] != null) v2 += iv.q2[u] * dt * 3600;
         }
       }
@@ -238,4 +304,4 @@ function resumenPorUnidad(intervalos) {
   });
 }
 
-export { UNIDADES_LOGGERNET, P_EN_LINEA_MW, separarCampos, leerLoggerNet, unirNivel, fcImplicito, nivelDesdeFC, agregarIntervalos, caudalModeloIntervalos, verificarFC, resumenPorUnidad };
+export { UNIDADES_LOGGERNET, P_EN_LINEA_MW, separarCampos, leerLoggerNet, unirNivel, caudalRegulado, caudalColumnaLoggerNet, verificarColumnaLoggerNet, reglaOperativaDiaria, fcImplicito, nivelDesdeFC, agregarIntervalos, caudalModeloIntervalos, verificarFC, resumenPorUnidad };

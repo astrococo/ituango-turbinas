@@ -8,8 +8,8 @@
    ============================================================ */
 import { useState, useMemo, useEffect } from "react";
 import { ResponsiveContainer, LineChart, CartesianGrid, XAxis, YAxis, Tooltip as RTooltip, Line, Legend, ReferenceLine } from "recharts";
-import { FC_HIDROMETRIA_POR_NIVEL, etiquetaCondicionDescarga, NIVEL_MIN_TEC, NAME } from "../modelo.js";
-import { leerLoggerNet, unirNivel, agregarIntervalos, caudalModeloIntervalos, verificarFC, resumenPorUnidad, P_EN_LINEA_MW } from "../operacion.js";
+import { FC_HIDROMETRIA_POR_NIVEL, etiquetaCondicionDescarga, NIVEL_MIN_TEC, NAME, ETIQUETA_ESTADO_REGLA } from "../modelo.js";
+import { leerLoggerNet, unirNivel, agregarIntervalos, caudalModeloIntervalos, verificarColumnaLoggerNet, reglaOperativaDiaria, caudalRegulado, resumenPorUnidad, P_EN_LINEA_MW } from "../operacion.js";
 import { BotonCSV, ChartHeader, Etiqueta, FONT_BODY, tickStyleFor } from "./base.jsx";
 
 const REPO_DATOS_DEFECTO = "astrococo/ituango-turbinas-datos";
@@ -95,7 +95,8 @@ export default function OperacionMedida({ T, condDescarga }) {
         }
         return out.sort((a, b) => (a.name < b.name ? -1 : 1));
       };
-      const gen = (await listar(CARPETA_GEN)).slice(-dias);
+      // un día más: es la base de la banda de la regla operativa del primer día mostrado
+      const gen = (await listar(CARPETA_GEN)).slice(-(dias + 1));
       if (!gen.length) throw new Error(`El repositorio no tiene todavía archivos en ${CARPETA_GEN}/: revise que el relay esté corriendo.`);
       const nombres = new Set(gen.map((f) => f.name));
       const niv = (await listar(CARPETA_NIVEL)).filter((f) => nombres.has(f.name));
@@ -131,7 +132,27 @@ export default function OperacionMedida({ T, condDescarga }) {
   }
 
   const intervalos = useMemo(() => (lectura ? agregarIntervalos(lectura.filas, 15) : null), [lectura]);
-  const verif = useMemo(() => (lectura ? verificarFC(lectura.filas) : null), [lectura]);
+  const verif = useMemo(() => (lectura ? verificarColumnaLoggerNet(lectura.filas) : null), [lectura]);
+  const regla = useMemo(() => (lectura ? reglaOperativaDiaria(lectura.filas) : null), [lectura]);
+  // Seguimiento intradiario de la regla: caudal regulado (15 min) y promedio acumulado del día
+  const graficaRegla = useMemo(() => {
+    if (!lectura || !regla) return [];
+    const porDia = Object.fromEntries(regla.map((d) => [d.dia, d]));
+    const out = []; let dia = null, s = 0, c = 0, sI = 0, cI = 0, tI = null;
+    for (const r of lectura.filas) {
+      const d = r.t.slice(0, 10);
+      if (d !== dia) { dia = d; s = 0; c = 0; }
+      const q = caudalRegulado(r); if (q == null) continue;
+      s += q; c++;
+      const t15 = r.t.slice(0, 14) + String(Math.floor(+r.t.slice(14, 16) / 15) * 15).padStart(2, "0");
+      if (t15 !== tI) { if (tI) out[out.length - 1].qReg = sI / cI; tI = t15; sI = 0; cI = 0; const b = porDia[d] && porDia[d].banda; out.push({ t: t15, acumulado: null, qReg: null, min: b ? b.min : null, max: b ? b.max : null }); }
+      sI += q; cI++;
+      out[out.length - 1].acumulado = s / c;
+      out[out.length - 1].qVert = r.qVert;
+    }
+    if (out.length) out[out.length - 1].qReg = sI / cI;
+    return out;
+  }, [lectura, regla]);
   const nivelDe = useMemo(() => (iv) => {
     if (modoNivel === "fijo") return nivelFijo;
     if (modoNivel === "columna") return iv.nivelColumna;
@@ -191,7 +212,7 @@ export default function OperacionMedida({ T, condDescarga }) {
     <div>
       <ChartHeader titulo="Operación medida (LoggerNet)" T={T}
         subtitulo="Generación por unidad (dato de cada minuto) y el caudal que reporta Hidrometría (potencia / F.C.), frente al caudal que da el modelo de la colina con la misma potencia."
-        tip={`El modelo busca la apertura hasta 31,98° (máximo ensayado) y sin el tope de 307 MW, para no recortar la potencia medida. El caudal por unidad de LoggerNet no es una medición: es la potencia dividida entre el F.C. de Hidrometría (1,62 hasta el 29-oct-2026 14:30; desde entonces ${FC_HIDROMETRIA_POR_NIVEL.a}·nivel ${FC_HIDROMETRIA_POR_NIVEL.b}). El modelo pasa la potencia de bornes al eje con el rendimiento del generador y busca en la colina la apertura que la entrega, con el nivel del embalse y la condición de descarga de la pestaña Descarga.`} />
+        tip={`El modelo busca la apertura hasta 31,98° (máximo ensayado) y sin el tope de 307 MW, para no recortar la potencia medida. El caudal por unidad de LoggerNet no es una medición: es la potencia dividida entre el F.C. de Hidrometría (1,62 hasta el 29-oct-2026 14:35; desde entonces 0,0119·nivel − 3,178 entre 390 y 420 msnm y 1,80 sin nivel válido). La app calcula el caudal de Hidrometría con esa regla y el nivel del radar, como la app de Hidrometría; la columna de LoggerNet se usa solo para verificar. El modelo pasa la potencia de bornes al eje con el rendimiento del generador y busca en la colina la apertura que la entrega, con el nivel del embalse y la condición de descarga de la pestaña Descarga.`} />
 
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
         <button style={boton(fuente === "github")} onClick={() => setFuente("github")}>Repositorio de datos (GitHub)</button>
@@ -233,7 +254,7 @@ export default function OperacionMedida({ T, condDescarga }) {
         <>
           <div className="itu-grid-form" style={{ marginBottom: 12 }}>
             <div>
-              <Etiqueta T={T} tip="Nivel del embalse para el modelo. Automático: el radar (Nivel_Radar_msnm_Avg del archivo All_Data); si falta, desde el 29-oct-2026 14:30, el nivel con el que Hidrometría calculó su F.C. (se despeja de potencia/caudal); si tampoco, el valor fijo.">Nivel del embalse</Etiqueta>
+              <Etiqueta T={T} tip="Nivel del embalse para el modelo. Automático: el radar (Nivel_Radar_msnm_Avg del archivo All_Data); si falta, desde el 29-oct-2026 14:35, el nivel con el que Hidrometría calculó su F.C. (se despeja de potencia/caudal); si tampoco, el valor fijo.">Nivel del embalse</Etiqueta>
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                 {[["auto", "Automático"], ["columna", "Radar"], ["fc", "Del F.C."], ["fijo", "Fijo"]].map(([v, l]) => (
                   <button key={v} style={boton(modoNivel === v)} onClick={() => setModoNivel(v)} disabled={v === "columna" && !lectura.columnaNivel}>{l}</button>
@@ -249,12 +270,11 @@ export default function OperacionMedida({ T, condDescarga }) {
           <div style={{ ...caja, marginBottom: 12 }}>
             <div><b style={{ color: T.ink }}>{lectura.origen}</b> · {lectura.filas[0].t} a {lectura.filas[lectura.filas.length - 1].t} · {lectura.formato}{lectura.columnaNivel ? " · nivel: radar" : " · sin nivel del radar"}</div>
             {lectura.avisos.length > 0 && <div style={{ color: T.amber }}>⚠ {lectura.avisos.join(" · ")}</div>}
-            {verif && (
+            {verif && verif.minutos > 0 && (
               <div>
-                F.C. de Hidrometría en los datos:
-                {verif.antes > 0 && <> antes del 29-oct-2026 14:30, {fmt((verif.antesOk / verif.antes) * 100, 1)} % de los valores son potencia / 1,62;</>}
-                {verif.despues > 0 && <> desde el cambio, el F.C. implica un nivel de {fmt(verif.nivelImplicito.mediana, 2)} msnm (entre {fmt(verif.nivelImplicito.p05, 2)} y {fmt(verif.nivelImplicito.p95, 2)}){verif.despues - verif.despuesSinNivel > 0 && <>, y coincide con la fórmula y el nivel del radar en {fmt((verif.despuesOk / (verif.despues - verif.despuesSinNivel)) * 100, 1)} %</>};</>}
-                {verif.antes + verif.despues === 0 && " no hay minutos con unidades en línea."}
+                Columna QTurbinadoUx_FC de LoggerNet frente a la regla de Hidrometría (potencia / F.C. con el nivel del radar): coincide en {fmt((verif.coinciden / verif.minutos) * 100, 1)} % de los minutos con generación
+                {verif.noCoinciden > 0 && <>; no coincide en {verif.noCoinciden.toLocaleString("es-CO")}, entre {verif.primero} y {verif.ultimo}{verif.con162 === verif.noCoinciden ? ", donde todavía usaba 1,62" : verif.con162 > 0 ? ` (${verif.con162.toLocaleString("es-CO")} con 1,62)` : ""}</>}.
+                {" "}La app usa siempre la regla, como la app de Hidrometría.
               </div>
             )}
             <div style={{ fontSize: 11.5, color: T.inkFaint }}>Modelo con la condición de descarga: {etiquetaCondicionDescarga(condDescarga)}. Unidad en línea: más de {P_EN_LINEA_MW} MW. Promedios de 15 minutos.</div>
@@ -281,6 +301,45 @@ export default function OperacionMedida({ T, condDescarga }) {
               </div>
               {totales.sinModelo > 0 && <div style={{ ...caja, color: T.amber, marginBottom: 12 }}>⚠ {totales.sinModelo} intervalos con generación sin caudal del modelo (sin nivel, o potencia fuera de lo alcanzable con la colina); no entran en los promedios.</div>}
 
+              {regla && regla.length > 0 && (
+                <div style={{ marginBottom: 14 }}>
+                  <ChartHeader titulo="Regla operativa (Res. 1891)" T={T}
+                    subtitulo="Caudal regulado = potencia / F.C. (descarga intermedia = 0). Banda del día = promedio de ayer ± 4,70 %. Cumple si el promedio final del día queda dentro; con vertimiento se suspende la validación."
+                    accion={<BotonCSV data={regla.map((d) => ({ dia: d.dia, q_regulado_promedio_m3s: d.qPromedio != null ? +d.qPromedio.toFixed(2) : null, minutos: d.minutos, banda_min_m3s: d.banda ? +d.banda.min.toFixed(2) : null, banda_max_m3s: d.banda ? +d.banda.max.toFixed(2) : null, vertimiento: d.conVertimiento, estado: ETIQUETA_ESTADO_REGLA[d.estado] }))} filename="regla_operativa_diaria.csv" T={T} />} />
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, fontFamily: FONT_BODY, color: T.ink }}>
+                      <thead><tr style={{ color: T.inkFaint }}>
+                        {["Día", "Q regulado promedio (m³/s)", "Banda (m³/s)", "Estado", ""].map((h, k) => <th key={k} style={{ padding: "5px 8px", borderBottom: `1px solid ${T.line}`, textAlign: k === 0 || k === 3 ? "left" : "right", fontWeight: 600 }}>{h}</th>)}
+                      </tr></thead>
+                      <tbody>
+                        {regla.map((d) => (
+                          <tr key={d.dia}>
+                            <td style={{ padding: "5px 8px" }}>{d.dia}</td>
+                            <td style={{ padding: "5px 8px", textAlign: "right" }}>{fmt(d.qPromedio, 1)}</td>
+                            <td style={{ padding: "5px 8px", textAlign: "right", color: T.inkMuted }}>{d.banda ? `${fmt(d.banda.min, 1)} a ${fmt(d.banda.max, 1)}` : "sin día anterior"}</td>
+                            <td style={{ padding: "5px 8px", fontWeight: 700, color: { cumple: T.teal, por_encima: T.red, por_debajo: T.red, excepcion: T.amber, sin_base: T.inkMuted }[d.estado] }}>{ETIQUETA_ESTADO_REGLA[d.estado]}</td>
+                            <td style={{ padding: "5px 8px", color: T.inkMuted, fontSize: 11.5 }}>{d.parcial ? `parcial: ${d.minutos.toLocaleString("es-CO")} de 1.440 min` : ""}{d.conVertimiento ? `${d.parcial ? " · " : ""}vertimiento hasta ${fmt(d.qVertMax, 0)} m³/s` : ""}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <ResponsiveContainer width="100%" height={240}>
+                    <LineChart data={graficaRegla} margin={{ top: 10, right: 12, left: 0, bottom: 4 }}>
+                      <CartesianGrid stroke={T.lineSoft} strokeDasharray="2 4" />
+                      <XAxis dataKey="t" ticks={ticksX(graficaRegla)} tickFormatter={etiquetaT} tick={tickStyleFor(T)} minTickGap={20} />
+                      <YAxis width={48} tick={tickStyleFor(T)} domain={["auto", "auto"]} tickFormatter={(v) => fmt(v, 0)} />
+                      <RTooltip formatter={(v) => (v == null ? "—" : `${fmt(v, 1)} m³/s`)} labelFormatter={etiquetaT} contentStyle={{ background: T.panel, border: `1px solid ${T.line}`, fontSize: 12 }} />
+                      <Legend wrapperStyle={{ fontSize: 11.5, fontFamily: FONT_BODY }} />
+                      <Line dataKey="max" name="Banda" stroke={T.inkMuted} strokeDasharray="5 3" strokeWidth={1.2} dot={false} isAnimationActive={false} connectNulls={false} />
+                      <Line dataKey="min" name="Banda (mín.)" legendType="none" stroke={T.inkMuted} strokeDasharray="5 3" strokeWidth={1.2} dot={false} isAnimationActive={false} connectNulls={false} />
+                      <Line dataKey="qReg" name="Caudal regulado (15 min)" stroke={T.amber} strokeWidth={1.3} dot={false} isAnimationActive={false} />
+                      <Line dataKey="acumulado" name="Promedio acumulado del día" stroke={T.cyan} strokeWidth={2.2} dot={false} isAnimationActive={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
               <ChartHeader titulo="Potencia en bornes" T={T} accion={<BotonCSV data={csv} filename="operacion_medida_15min.csv" T={T} />} />
               <ResponsiveContainer width="100%" height={240}>
                 <LineChart data={grafica} margin={{ top: 6, right: 12, left: 0, bottom: 4 }}>
@@ -294,7 +353,7 @@ export default function OperacionMedida({ T, condDescarga }) {
                 </LineChart>
               </ResponsiveContainer>
 
-              <ChartHeader titulo="Caudal turbinado total" subtitulo="Hidrometría (potencia / F.C.) frente al modelo de la colina con la misma potencia; también el caudal del vertedero." T={T} />
+              <ChartHeader titulo="Caudal turbinado total" subtitulo="Hidrometría (potencia / F.C. con el nivel del radar, como su app) frente al modelo de la colina con la misma potencia; también el caudal del vertedero." T={T} />
               <ResponsiveContainer width="100%" height={240}>
                 <LineChart data={grafica} margin={{ top: 6, right: 12, left: 0, bottom: 4 }}>
                   <CartesianGrid stroke={T.lineSoft} strokeDasharray="2 4" />

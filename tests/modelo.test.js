@@ -14,6 +14,7 @@ import {
   HILL_PROTO_186, WAE_PUNTOS, ESCENARIOS_2023_EPM_GE, ASE_ALMENARA, ASE_Q_GENERACION,
   CONDICION_DESCARGA_DISENO, unidadesPorAlmenara, buscarPuntoOptimo, resolverUnidadesConPotencias, GAMMAS_HILL,
   factorConversionHidrometria, textoHoraColombia, potenciaBornesDesdeEje,
+  bandaReglaOperativa, estadoReglaOperativa, estadoHoraDespacho, programaDespacho, resumenEnergiaDespacho,
   parsearResumenHorarioXM, numeroDesdeTexto, unidadesMinimasParaPotencia, rendimientoGenerador, simularDespachoHorario,
   volumenExtrapolado, nivelDesdeVolumenExtrapolado, resolverGammaParaPotencia, evaluarUnidadEnAlmenara, resolverPorUnidadConPorcentajes,
   evaluarHillChart, evaluarTurbinaUnidad, nivelAlmenaraASE, nivelAlmenaraSegunCondicion,
@@ -350,16 +351,26 @@ describe("11. Despacho intradiario (XM)", () => {
 });
 
 describe("12. Factor de conversión de Hidrometría (F.C.)", () => {
-  it("1,62 fijo hasta el 29-oct-2026 14:30 (hora de Colombia) y 0,0119·nivel − 3,178 desde entonces", () => {
-    expect(factorConversionHidrometria(412, "2026-10-29 14:29")).toBe(1.62);
-    expect(factorConversionHidrometria(412, "2026-10-29 14:30")).toBeCloseTo(0.0119 * 412 - 3.178, 12);
+  it("1,62 hasta el 29-oct-2026 14:35 (hora de Colombia); desde entonces 0,0119·N − 3,178", () => {
+    expect(factorConversionHidrometria(412, "2026-10-29 14:34")).toBe(1.62);
+    expect(factorConversionHidrometria(412, "2026-10-29 14:35")).toBeCloseTo(0.0119 * 412 - 3.178, 12);
     expect(factorConversionHidrometria(400, "2026-11-02T08:00:00")).toBeCloseTo(1.582, 12);
     expect(factorConversionHidrometria(400, "2026-01-01")).toBe(1.62);
   });
+  it("a 418 msnm el F.C. es 1,7962 y 900 MW equivalen a 501,1 m³/s", () => {
+    expect(factorConversionHidrometria(418, "2026-11-02 14:44")).toBeCloseTo(1.7962, 4);
+    expect(900 / factorConversionHidrometria(418, "2026-11-02 14:44")).toBeCloseTo(501.06, 2);
+  });
+  it("nivel fuera de 390-420 msnm o sin nivel: 1,80", () => {
+    expect(factorConversionHidrometria(420.5, "2026-11-02 08:00")).toBe(1.8);
+    expect(factorConversionHidrometria(389.9, "2026-11-02 08:00")).toBe(1.8);
+    expect(factorConversionHidrometria(null, "2026-11-02 08:00")).toBe(1.8);
+    expect(factorConversionHidrometria(420, "2026-11-02 08:00")).toBeCloseTo(1.82, 12);
+  });
   it("una fecha como Date se pasa a hora de Colombia (UTC−5)", () => {
-    expect(textoHoraColombia(new Date("2026-10-29T19:29:00Z"))).toBe("2026-10-29 14:29");
-    expect(factorConversionHidrometria(412, new Date("2026-10-29T19:29:00Z"))).toBe(1.62);
-    expect(factorConversionHidrometria(412, new Date("2026-10-29T19:30:00Z"))).toBeCloseTo(1.7248, 12);
+    expect(textoHoraColombia(new Date("2026-10-29T19:34:00Z"))).toBe("2026-10-29 14:34");
+    expect(factorConversionHidrometria(412, new Date("2026-10-29T19:34:00Z"))).toBe(1.62);
+    expect(factorConversionHidrometria(412, new Date("2026-10-29T19:35:00Z"))).toBeCloseTo(1.7248, 12);
   });
   it("bornes = eje × rendimiento del generador", () => {
     const pb = potenciaBornesDesdeEje(300);
@@ -409,5 +420,47 @@ describe("14. Despacho: fecha y horas de poca potencia", () => {
     expect(e.enMinimoEnsayado).toBe(true);
     expect(e.qTurbinado).toBeGreaterThan(0);
     expect(e.alcanzable).toBe(false);
+  });
+});
+
+describe("13. Regla operativa (Res. 1891) y despacho como en la app de Hidrometría", () => {
+  it("banda = promedio de ayer ± 4,70 %: 500 m³/s → 476,5 a 523,5", () => {
+    const b = bandaReglaOperativa(500);
+    expect(b.min).toBeCloseTo(476.5, 9);
+    expect(b.max).toBeCloseTo(523.5, 9);
+    expect(estadoReglaOperativa(510, b)).toBe("cumple");
+    expect(estadoReglaOperativa(530, b)).toBe("por_encima");
+    expect(estadoReglaOperativa(470, b)).toBe("por_debajo");
+    expect(estadoReglaOperativa(600, b, true)).toBe("excepcion");
+    expect(estadoReglaOperativa(500, null)).toBe("sin_base");
+  });
+  it("lee 'Sin dato XM' como dato faltante (no cero) y conserva el Promedio RT de esa hora", () => {
+    const r = parsearResumenHorarioXM([
+      "Resumen horario (2/11/2026)\t24 horas",
+      "09:00 - 09:59\t200.0 MW\t190.0 MW\t210.0 MW\t900.0 MW\t890.0 MW\t910.0 MW\t+700.0 MW / +350.00%\tPor encima",
+      "10:00 - 10:59\t0.0 MW\t0.0 MW\t0.0 MW\t905.0 MW\t895.0 MW\t915.0 MW\t+0.0 MW / +0.00%\tSin dato XM",
+      "15:00 - 15:59\t1000.0 MW\t950.0 MW\t1050.0 MW\t0.0 MW\t0.0 MW\t0.0 MW\t+0.0 MW / +0.00%\tSin dato RT",
+    ].join("\n"));
+    expect(r.horas[10]).toMatchObject({ despacho: null, rt: 905 });
+    expect(r.horas[15]).toMatchObject({ despacho: 1000, rt: null });
+    expect(r.horas[9]).toMatchObject({ despacho: 200, rt: 900 });
+    expect(r.avisos.some((a) => a.includes("Sin dato de XM en las horas 10"))).toBe(true);
+    expect(r.fecha).toBe("2026-11-02");
+  });
+  it("estado por hora como en la app de Hidrometría", () => {
+    expect(estadoHoraDespacho(1000, 900, 5)).toBe("por_debajo");
+    expect(estadoHoraDespacho(930, 900, 5)).toBe("dentro");
+    expect(estadoHoraDespacho(200, 900, 5)).toBe("por_encima");
+    expect(estadoHoraDespacho(null, 900, 5)).toBe("sin_dato_xm");
+    expect(estadoHoraDespacho(1000, null, 5)).toBe("sin_dato_rt");
+  });
+  it("programa para el nivel: XM repite la última hora con dato; RT usa XM donde falta; plano = Q × F.C.", () => {
+    const filas = [{ despacho: 100, rt: 90 }, { despacho: null, rt: 95 }, { despacho: 300, rt: null }];
+    expect(programaDespacho(filas, "xm")).toEqual({ potencias: [100, 100, 300], rellenadas: [1] });
+    expect(programaDespacho(filas, "rt")).toEqual({ potencias: [90, 95, 300], rellenadas: [] });
+    expect(programaDespacho(filas, "plano", { qObjetivo: 500, fc: 1.8 }).potencias[0]).toBeCloseTo(900, 9);
+    expect(programaDespacho(filas, "plano", {})).toBeNull();
+    const e = resumenEnergiaDespacho(filas);
+    expect(e).toMatchObject({ xm: 400, rt: 185, hComun: 1, xmComun: 100, rtComun: 90 });
   });
 });

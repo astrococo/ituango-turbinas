@@ -26,9 +26,15 @@ Colina de las turbinas Francis del PH Ituango, punto de operación, despacho int
   - apertura de 30,2° (100 %), con el 97 % como operación normal;
   - mínima ensayada: 4,87°.
 - **Potencia de XM y de LoggerNet:** está en bornes. Se pasa al eje con el rendimiento del generador (98,55–98,91 %).
-- **Factor de conversión de Hidrometría (MW por m³/s):**
-  - 1,62 hasta el 29-oct-2026 14:30;
-  - desde entonces, 0,0119·nivel − 3,178.
+- **Factor de conversión de Hidrometría (MW por m³/s), como en su app:**
+  - 1,62 hasta el 29-oct-2026 14:35;
+  - desde entonces, 0,0119·nivel − 3,178 con el nivel del radar, válido entre 390 y 420 msnm; sin nivel válido, 1,80.
+- **Regla operativa (Res. 1891), como en la app de Hidrometría:**
+  - caudal regulado = potencia / F.C. (la descarga intermedia se toma 0);
+  - banda del día = promedio de ayer ± 4,70 %;
+  - cumple si el promedio final del día queda dentro;
+  - con vertimiento, la validación se suspende.
+- **Despacho:** cada hora se compara el Promedio RT con el despacho de XM ± banda ("Sin dato XM" no se evalúa ni cuenta como cero). El nivel se puede simular con el despacho de XM, con lo generado (RT) o con la operación plana que pide la regla.
 
 ## Datos de operación
 

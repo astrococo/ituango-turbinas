@@ -332,14 +332,18 @@ const GAMMA_AMPLIADO_MAX = 30.2; // apertura extendida estudiada en 2023 (grados
 /* Factor de conversión (F.C.) que usa Hidrometría para ESTIMAR el caudal
    de cada unidad: Q = P_bornes / F.C. (MW por m³/s). No es una medición:
    en las unidades solo se mide la potencia. Los límites de la app siguen
-   siendo la apertura mecánica y los 307 MW; el F.C. solo se usa para
-   comparar con el modelo y para leer los datos de LoggerNet.
-   - Hasta el 29-oct-2026 14:30 (hora de Colombia): F.C. fijo de 1,62
-     (los "185 m³/s máximos" que se citaban salen de 300 MW / 1,62).
-   - Desde entonces: F.C. = 0,0119·Nivel_embalse − 3,178 (dato de
-     operaciones, nov-2026). Ej.: 1,582 a 400 msnm, 1,725 a 412 msnm. */
+   siendo la apertura mecánica y los 307 MW; el F.C. sirve para comparar
+   con el modelo, para la regla operativa y para leer LoggerNet.
+   Regla de la app de Hidrometría (nov-2026):
+   - Hasta el 29-oct-2026 14:35 (hora de Colombia): 1,62 fijo (los "185
+     m³/s máximos" que se citaban salen de 300 MW / 1,62).
+   - Desde entonces: F.C. = 0,0119·N − 3,178, con N = nivel del embalse
+     (radar), válido entre 390 y 420 msnm; sin nivel válido: 1,80.
+     Ej.: 1,582 a 400 msnm, 1,725 a 412 msnm, 1,820 a 420 msnm.
+   La columna QTurbinadoUx_FC de LoggerNet aplicó la fórmula desde el
+   30-oct-2026 11:34 (antes seguía en 1,62); ver src/operacion.js. */
 const FACTOR_HIDROMETRIA_MW_POR_M3S = 1.62;
-const FC_HIDROMETRIA_POR_NIVEL = Object.freeze({ a: 0.0119, b: -3.178, desde: "2026-10-29 14:30" });
+const FC_HIDROMETRIA_POR_NIVEL = Object.freeze({ a: 0.0119, b: -3.178, desde: "2026-10-29 14:35", nivelMin: 390, nivelMax: 420, sinNivel: 1.8 });
 /* Fecha y hora de Colombia (UTC−5, sin horario de verano) como texto
    "AAAA-MM-DD HH:MM". Acepta Date, milisegundos o texto "AAAA-MM-DD[ T]HH:MM[:SS]"
    (el texto se toma tal cual, ya en hora de Colombia). */
@@ -355,10 +359,38 @@ function textoHoraColombia(fecha) {
 }
 /* F.C. de Hidrometría vigente en una fecha (por defecto, el actual). */
 function factorConversionHidrometria(nivelEmbalse, fecha = new Date()) {
+  const R = FC_HIDROMETRIA_POR_NIVEL;
   const t = textoHoraColombia(fecha);
-  if (t != null && t < FC_HIDROMETRIA_POR_NIVEL.desde) return FACTOR_HIDROMETRIA_MW_POR_M3S;
-  return FC_HIDROMETRIA_POR_NIVEL.a * nivelEmbalse + FC_HIDROMETRIA_POR_NIVEL.b;
+  if (t != null && t < R.desde) return FACTOR_HIDROMETRIA_MW_POR_M3S;
+  const N = Number(nivelEmbalse);
+  if (nivelEmbalse == null || !Number.isFinite(N) || N < R.nivelMin || N > R.nivelMax) return R.sinNivel;
+  return R.a * N + R.b;
 }
+
+/* ============================================================
+   REGLA OPERATIVA (Res. ANLA 1891), como la aplica Hidrometría:
+   - Q_regulado = Q_generado + Q_descarga_intermedia; la fuente no trae
+     la descarga intermedia y se toma 0. Q_generado = P_bornes / F.C.
+   - Banda del día: promedio regulado del día anterior ± 4,70 %
+     (variación permitida total 9,4 %).
+   - Cumplimiento diario: el promedio regulado FINAL del día dentro de la
+     banda. Lo horario o instantáneo es solo seguimiento.
+   - Con vertimiento se suspende la validación (excepción hidráulica).
+   ============================================================ */
+const REGLA_OPERATIVA_RES1891 = Object.freeze({ bandaRelativa: 0.047 });
+function bandaReglaOperativa(qPromedioDiaAnterior, banda = REGLA_OPERATIVA_RES1891.bandaRelativa) {
+  if (!(qPromedioDiaAnterior > 0)) return null;
+  return { base: qPromedioDiaAnterior, min: qPromedioDiaAnterior * (1 - banda), max: qPromedioDiaAnterior * (1 + banda) };
+}
+/* "cumple" | "por_encima" | "por_debajo" | "excepcion" (vertimiento) | "sin_base" */
+function estadoReglaOperativa(qPromedio, banda, conVertimiento = false) {
+  if (conVertimiento) return "excepcion";
+  if (!banda || qPromedio == null || !Number.isFinite(qPromedio)) return "sin_base";
+  if (qPromedio > banda.max + 1e-9) return "por_encima";
+  if (qPromedio < banda.min - 1e-9) return "por_debajo";
+  return "cumple";
+}
+const ETIQUETA_ESTADO_REGLA = Object.freeze({ cumple: "Cumple", por_encima: "Por encima", por_debajo: "Por debajo", excepcion: "Excepción (vertimiento)", sin_base: "Sin base" });
 /* Potencia máxima GARANTIZADA por unidad: 307 MW — límite absoluto y
    explícito del estudio de ampliación de GE (2023): "no deberá exceder
    los límites de operación garantizada (potencia máx. de la turbina de
@@ -1383,7 +1415,10 @@ function parsearResumenHorarioXM(texto) {
       const mw = [...l.slice(m[0].length).matchAll(/(-?[\d.,]+)\s*MW/gi)].map((x) => numeroDesdeTexto(x[1]));
       if (mw.length < 1 || mw[0] == null) { avisos.push(`Hora ${h}: sin valor de despacho`); continue; }
       despacho = mw[0]; bandaInf = mw[1] ?? null; bandaSup = mw[2] ?? null;
-      rt = !/sin dato/i.test(l) && mw.length >= 7 ? mw[3] : null;
+      // "Sin dato XM": el 0,0 MW de la tabla no es un despacho de cero.
+      // "Sin dato RT": la hora aún no tiene generación medida.
+      if (/sin dato xm/i.test(l)) { despacho = null; bandaInf = null; bandaSup = null; }
+      rt = !/sin dato rt/i.test(l) && mw.length >= 7 ? mw[3] : null;
     } else {
       const partes = l.split(/\t|;|\s{2,}/).map((x) => x.trim()).filter(Boolean);
       const hh = partes[0] && partes[0].match(/^(\d{1,2})(?::\d{2})?$/);
@@ -1399,6 +1434,8 @@ function parsearResumenHorarioXM(texto) {
   }
   const faltan = horas.map((x, i) => (x ? null : i)).filter((x) => x != null);
   if (faltan.length && faltan.length < 24) avisos.push(`Faltan las horas ${faltan.join(", ")}`);
+  const sinXM = horas.filter((x) => x && x.despacho == null).map((x) => x.hora);
+  if (sinXM.length) avisos.push(`Sin dato de XM en las horas ${sinXM.join(", ")}`);
   // Fecha del despacho, si viene en el texto: "(9/10/2026)" (día/mes/año) o "2026-10-09"
   let fecha = null;
   const f1 = String(texto).match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
@@ -1406,6 +1443,51 @@ function parsearResumenHorarioXM(texto) {
   if (f1) fecha = `${f1[3]}-${f1[2].padStart(2, "0")}-${f1[1].padStart(2, "0")}`;
   else if (f2) fecha = `${f2[1]}-${f2[2]}-${f2[3]}`;
   return { horas, avisos, fecha };
+}
+/* Estado de una hora en la comparación "Energía RT vs Despacho", con la
+   misma lógica de la app de Hidrometría: sin dato de XM o de RT no se
+   evalúa; si no, se compara el Promedio RT con el despacho ± banda. */
+function estadoHoraDespacho(despacho, rt, bandaPct = 5) {
+  if (despacho == null) return "sin_dato_xm";
+  if (rt == null) return "sin_dato_rt";
+  const b = bandaPct / 100;
+  if (rt < despacho * (1 - b) - 1e-9) return "por_debajo";
+  if (rt > despacho * (1 + b) + 1e-9) return "por_encima";
+  return "dentro";
+}
+const ETIQUETA_ESTADO_HORA = Object.freeze({ sin_dato_xm: "Sin dato XM", sin_dato_rt: "Sin dato RT", por_debajo: "Por debajo", dentro: "Dentro de banda", por_encima: "Por encima" });
+/* Potencia de cada hora para simular el nivel, según el programa elegido:
+   - "xm": despacho de XM; una hora sin dato de XM repite la última hora con
+     dato (o la siguiente, si es al comienzo del día).
+   - "rt": Promedio RT donde lo hay; en el resto, el despacho de XM.
+   - "plano": la operación que pide la regla operativa: caudal regulado
+     constante = qObjetivo (m³/s) → P = qObjetivo × F.C. de Hidrometría.
+   Devuelve { potencias: [24], rellenadas: [horas sin dato propio] }. */
+function programaDespacho(filas, modo, { qObjetivo = null, fc = null } = {}) {
+  if (modo === "plano") {
+    if (!(qObjetivo > 0) || !(fc > 0)) return null;
+    return { potencias: Array(filas.length).fill(qObjetivo * fc), rellenadas: [] };
+  }
+  const base = filas.map((f) => (modo === "rt" ? (f.rt ?? f.despacho ?? null) : (f.despacho ?? null)));
+  const rellenadas = [];
+  const primera = base.find((v) => v != null) ?? 0;
+  let ultima = null;
+  const potencias = base.map((v, i) => {
+    if (v != null) { ultima = v; return v; }
+    rellenadas.push(i);
+    return ultima ?? primera;
+  });
+  return { potencias, rellenadas };
+}
+/* Energía (MWh) de XM y de RT; "comun" = horas que tienen los dos. */
+function resumenEnergiaDespacho(filas) {
+  let xm = 0, rt = 0, xmComun = 0, rtComun = 0, hXM = 0, hRT = 0, hComun = 0;
+  for (const f of filas) {
+    if (f.despacho != null) { xm += f.despacho; hXM++; }
+    if (f.rt != null) { rt += f.rt; hRT++; }
+    if (f.despacho != null && f.rt != null) { xmComun += f.despacho; rtComun += f.rt; hComun++; }
+  }
+  return { xm, rt, xmComun, rtComun, hXM, hRT, hComun, difComunPct: xmComun > 0 ? (rtComun / xmComun - 1) * 100 : null };
 }
 /* Nivel del embalse hora a hora para un programa de potencia.
    horas[i]: { potenciaMW (bornes, total de la central), unidades,
@@ -1485,6 +1567,10 @@ export {
   numeroDesdeTexto,
   parsearResumenHorarioXM,
   simularDespachoHorario,
+  estadoHoraDespacho,
+  ETIQUETA_ESTADO_HORA,
+  programaDespacho,
+  resumenEnergiaDespacho,
   COTA_VOLUMEN,
   ZV,
   A_MAX_ESTRUCTURAL,
@@ -1527,6 +1613,10 @@ export {
   FC_HIDROMETRIA_POR_NIVEL,
   textoHoraColombia,
   factorConversionHidrometria,
+  REGLA_OPERATIVA_RES1891,
+  bandaReglaOperativa,
+  estadoReglaOperativa,
+  ETIQUETA_ESTADO_REGLA,
   P_MAXIMO_ESPERADO_MW,
   GAMMA_ENSAYADO_MAX,
   POTENCIA_BASE_PCT_MW,

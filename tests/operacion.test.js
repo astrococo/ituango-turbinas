@@ -1,6 +1,6 @@
 /* Lectura de LoggerNet y cálculo de la pestaña "Operación medida". */
 import { describe, it, expect } from "vitest";
-import { leerLoggerNet, unirNivel, agregarIntervalos, caudalModeloIntervalos, verificarFC, resumenPorUnidad, nivelDesdeFC } from "../src/operacion.js";
+import { caudalRegulado, reglaOperativaDiaria, verificarColumnaLoggerNet, leerLoggerNet, unirNivel, agregarIntervalos, caudalModeloIntervalos, verificarFC, resumenPorUnidad, nivelDesdeFC } from "../src/operacion.js";
 import { factorConversionHidrometria, resolverGammaParaPotencia, rendimientoGenerador } from "../src/modelo.js";
 
 // Cabeceras reales de los dos archivos de la estación CR6 del vertedero (nov-2026)
@@ -61,9 +61,9 @@ describe("Lectura del archivo de LoggerNet", () => {
 });
 
 describe("Factor de conversión implícito en los datos", () => {
-  it("antes del 29-oct-2026 14:30 el F.C. implícito es 1,62; después da el nivel con que se calculó", () => {
-    const gen = leerLoggerNet(toa5([fila("2026-10-29 14:29", 411.6, [300, 0, 0, 0]), fila("2026-10-29 14:30", 411.6, [300, 0, 0, 0])])).filas;
-    const filas = unirNivel(gen, [{ t: "2026-10-29 14:25", nivel: 411.6 }]).filas;
+  it("antes del 29-oct-2026 14:35 el F.C. implícito es 1,62; después da el nivel con que se calculó", () => {
+    const gen = leerLoggerNet(toa5([fila("2026-10-29 14:34", 411.6, [300, 0, 0, 0]), fila("2026-10-29 14:35", 411.6, [300, 0, 0, 0])])).filas;
+    const filas = unirNivel(gen, [{ t: "2026-10-29 14:30", nivel: 411.6 }]).filas;
     const v = verificarFC(filas);
     expect(v).toMatchObject({ antes: 1, antesOk: 1, despues: 1, despuesOk: 1 });
     expect(nivelDesdeFC(0.0119 * 411.6 - 3.178, "2026-10-30 00:00")).toBeCloseTo(411.6, 9);
@@ -95,5 +95,31 @@ describe("Agregación y caudal del modelo", () => {
     expect(res[0].volModHm3).toBeCloseTo((r.resultado.Q * 1800) / 1e6, 9);
     expect(res[1].energiaMWh).toBe(0);
     expect(res[0].volQ2Hm3).toBeCloseTo((290 / 1.66) * 1800 / 1e6, 6);
+  });
+});
+
+describe("Regla operativa con los datos medidos (como la app de Hidrometría)", () => {
+  const minuto = (t, p, nivel, qVert = 0, q = null) => ({ t, p, q: q ?? p.map((x) => x / 1.62), q2: [null, null, null, null], qVert, nivel });
+  it("caudal regulado = potencia total / F.C. vigente con el nivel del radar", () => {
+    expect(caudalRegulado(minuto("2026-11-02 14:44", [225, 225, 225, 225], 418))).toBeCloseTo(900 / (0.0119 * 418 - 3.178), 9);
+    expect(caudalRegulado(minuto("2026-10-20 10:00", [300, 0, 0, 0], 412))).toBeCloseTo(300 / 1.62, 9);
+    expect(caudalRegulado(minuto("2026-11-02 10:00", [300, 0, 0, 0], null))).toBeCloseTo(300 / 1.8, 9);
+  });
+  it("día por día: banda con el promedio del día anterior; vertimiento = excepción; día no contiguo sin base", () => {
+    const dia = (d, P, nivel, vert = 0) => Array.from({ length: 1440 }, (_, i) => minuto(`${d} ${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}`, [P, 0, 0, 0], nivel, vert));
+    const fc = 0.0119 * 418 - 3.178;
+    const r = reglaOperativaDiaria([...dia("2026-11-01", 500 * fc, 418), ...dia("2026-11-02", 520 * fc, 418), ...dia("2026-11-03", 560 * fc, 418), ...dia("2026-11-04", 560 * fc, 418, 50), ...dia("2026-11-06", 500 * fc, 418)]);
+    expect(r.map((d) => d.estado)).toEqual(["sin_base", "cumple", "por_encima", "excepcion", "sin_base"]);
+    expect(r[1].qPromedio).toBeCloseTo(520, 6);
+    expect(r[1].banda.min).toBeCloseTo(500 * 0.953, 6);
+    expect(r[3].qVertMax).toBe(50);
+  });
+  it("detecta cuándo la columna de LoggerNet no sigue la regla (seguía en 1,62)", () => {
+    const filas = [
+      minuto("2026-10-29 14:34", [300, 0, 0, 0], 417.39),
+      minuto("2026-10-29 14:35", [300, 0, 0, 0], 417.39), // columna aún en 1,62
+      minuto("2026-10-30 11:34", [300, 0, 0, 0], 417.6, 0, [300 / (0.0119 * 417.6 - 3.178), 0, 0, 0]),
+    ];
+    expect(verificarColumnaLoggerNet(filas)).toMatchObject({ minutos: 3, coinciden: 2, noCoinciden: 1, con162: 1, primero: "2026-10-29 14:35", ultimo: "2026-10-29 14:35" });
   });
 });
