@@ -3,7 +3,7 @@
    (Slider, BotonGrupo, Etiqueta…) y utilidades de gráficos.
    Separado de ItuangoSimulador.jsx en oct-2026 sin cambios.
    ============================================================ */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Brush } from "recharts";
 
 /* ============================================================
@@ -57,6 +57,7 @@ function GlobalStyles({ T, theme, altoContraste }) {
       *, *::before, *::after { box-sizing:border-box; }
       :focus-visible { outline:2px solid ${T.teal}; outline-offset:2px; }
       button { font-family:${FONT_BODY}; }
+      .recharts-legend-item-text { color:${T.inkMuted} !important; }
       .itu-grid { display:grid; grid-template-columns: 320px 1fr; gap:20px; }
       .itu-grid-form { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:14px; }
       .itu-kpis { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:10px; }
@@ -124,6 +125,7 @@ function GlobalStyles({ T, theme, altoContraste }) {
    teléfono no se sale por los lados). Clic o toque para abrir/cerrar. */
 function InfoTip({ text, T }) {
   const [pos, setPos] = useState(null);
+  const caja = useRef(null);
   const abrir = (el) => {
     const r = el.getBoundingClientRect();
     const vw = window.innerWidth, vh = window.innerHeight;
@@ -134,23 +136,35 @@ function InfoTip({ text, T }) {
   };
   useEffect(() => {
     if (!pos) return undefined;
-    const cerrar = () => setPos(null);
+    const dentro = (e) => caja.current && caja.current.contains(e.target);
+    const cerrar = (e) => { if (!dentro(e)) setPos(null); };
+    const cerrarSiempre = () => setPos(null);
     window.addEventListener("scroll", cerrar, true);
-    window.addEventListener("resize", cerrar);
-    return () => { window.removeEventListener("scroll", cerrar, true); window.removeEventListener("resize", cerrar); };
+    window.addEventListener("resize", cerrarSiempre);
+    document.addEventListener("pointerdown", cerrar, true);
+    return () => {
+      window.removeEventListener("scroll", cerrar, true);
+      window.removeEventListener("resize", cerrarSiempre);
+      document.removeEventListener("pointerdown", cerrar, true);
+    };
   }, [pos]);
+  // Con mouse: se abre al pasar por encima. Con el dedo (o clic): un toque abre y
+  // un toque fuera cierra. El hover no se usa en pantallas táctiles, porque el
+  // navegador lo simula justo antes del toque y el clic lo volvía a cerrar.
   return (
     <span
+      ref={caja}
       style={{ display: "inline-block", marginLeft: 6 }}
-      onMouseEnter={(e) => abrir(e.currentTarget)} onMouseLeave={() => setPos(null)}
-      onClick={(e) => { e.stopPropagation(); if (pos) setPos(null); else abrir(e.currentTarget); }}
+      onPointerEnter={(e) => { if (e.pointerType === "mouse") abrir(e.currentTarget); }}
+      onPointerLeave={(e) => { if (e.pointerType === "mouse") setPos(null); }}
+      onClick={(e) => { e.stopPropagation(); if (!pos) abrir(e.currentTarget); }}
     >
-      <span role="button" tabIndex={0} aria-label="Más información"
-        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (pos) setPos(null); else abrir(e.currentTarget); } }}
+      <span role="button" tabIndex={0} aria-label="Más información" aria-expanded={!!pos}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (pos) setPos(null); else abrir(e.currentTarget); } if (e.key === "Escape") setPos(null); }}
         style={{
           display: "inline-flex", alignItems: "center", justifyContent: "center",
-          width: 16, height: 16, borderRadius: "50%", border: `1px solid ${T.inkFaint}`,
-          fontSize: 10.5, color: T.inkFaint, cursor: "help", fontFamily: FONT_BODY, fontWeight: 700, lineHeight: 1,
+          width: 18, height: 18, borderRadius: "50%", border: `1px solid ${T.inkMuted}`,
+          fontSize: 11, color: T.inkMuted, cursor: "help", fontFamily: FONT_BODY, fontWeight: 700, lineHeight: 1,
         }}>i</span>
       {pos && (
         <div role="tooltip" style={{

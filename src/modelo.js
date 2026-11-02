@@ -425,9 +425,10 @@ function gammaMecanicoDeRango(rango) {
   return GAMMA_ORIGINAL_MAX; // "original"
 }
 function etiquetaRango(rango) {
-  if (rango === "ampliado") return `ampliado =100% (30.2° — usa la reserva de frecuencia)`;
-  if (rango === "normal") return `normal ≤97% (${GAMMA_NORMAL_MAX.toFixed(2)}°)`;
-  return `original ≤${pctFromDeg(GAMMA_ORIGINAL_MAX).toFixed(0)}% (26.5°)`;
+  const g = (v, d) => v.toLocaleString("es-CO", { minimumFractionDigits: d, maximumFractionDigits: d });
+  if (rango === "ampliado") return `ampliado = 100 % (30,2°, usa la reserva de frecuencia)`;
+  if (rango === "normal") return `normal ≤ 97 % (${g(GAMMA_NORMAL_MAX, 2)}°)`;
+  return `original ≤ ${g(pctFromDeg(GAMMA_ORIGINAL_MAX), 0)} % (26,5°)`;
 }
 
 /* ============================================================
@@ -1433,8 +1434,20 @@ function simularDespachoHorario({ nivelInicial, horas, qEntrada, cond = CONDICIO
     if (P > 0 && n > 0) {
       let x = resolver(n);
       // Por debajo de la apertura mínima ensayada (4,87°) la unidad no tiene un
-      // punto estable: se reparte la potencia entre menos unidades.
-      while (x.r.debajoDelMinimoEnsayado && nUsadas > 1) { nUsadas--; x = resolver(nUsadas); reducidas = true; }
+      // punto estable: se reparte la potencia entre menos unidades. De las
+      // cantidades posibles (1 a n−1) se toma la que turbina menos agua, es
+      // decir, la de mayor eficiencia.
+      if (x.r.debajoDelMinimoEnsayado && n > 1) {
+        reducidas = true;
+        let mejor = null;
+        for (let k = n - 1; k >= 1; k--) {
+          const y = resolver(k);
+          if (y.r.debajoDelMinimoEnsayado || !y.r.resultado) continue;
+          const q = y.r.resultado.Q * k;
+          if (!mejor || q < mejor.q - 1e-9) mejor = { k, y, q };
+        }
+        if (mejor) { nUsadas = mejor.k; x = mejor.y; } else { nUsadas = 1; x = resolver(1); }
+      }
       pBornesU = x.pb; pEjeU = x.pe; r = x.r;
       if (r.debajoDelMinimoEnsayado) {
         // Ni con una unidad: se toma el caudal de la apertura mínima ensayada

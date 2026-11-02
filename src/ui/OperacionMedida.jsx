@@ -83,6 +83,10 @@ export default function OperacionMedida({ T, condDescarga }) {
     try {
       const hoy = new Date(Date.now() - 5 * 3600e3);
       const anios = [...new Set([new Date(hoy.getTime() - (dias + 1) * 864e5).getUTCFullYear(), hoy.getUTCFullYear()])];
+      // GitHub responde 404 tanto si falta la carpeta como si el token no ve el repositorio:
+      // primero se comprueba el repositorio, para dar el error correcto.
+      try { await gh(`https://api.github.com/repos/${repo}`, token.trim()); }
+      catch (e) { throw new Error(/404/.test(e.message) ? `El token no tiene acceso a ${repo}, o el repositorio no existe (404). Revise el nombre y que el token sea de ese repositorio.` : e.message); }
       const listar = async (carpeta) => {
         let out = [];
         for (const a of anios) {
@@ -92,7 +96,7 @@ export default function OperacionMedida({ T, condDescarga }) {
         return out.sort((a, b) => (a.name < b.name ? -1 : 1));
       };
       const gen = (await listar(CARPETA_GEN)).slice(-dias);
-      if (!gen.length) throw new Error(`La carpeta ${CARPETA_GEN}/ no tiene archivos diarios todavía (o el repositorio no existe).`);
+      if (!gen.length) throw new Error(`El repositorio no tiene todavía archivos en ${CARPETA_GEN}/: revise que el relay esté corriendo.`);
       const nombres = new Set(gen.map((f) => f.name));
       const niv = (await listar(CARPETA_NIVEL)).filter((f) => nombres.has(f.name));
       const todos = [...gen, ...niv];
@@ -174,7 +178,7 @@ export default function OperacionMedida({ T, condDescarga }) {
     fecha_hora: iv.t, minutos: iv.minutos, nivel_usado_msnm: iv.nivel != null ? +iv.nivel.toFixed(3) : null, unidades_en_linea: iv.n,
     q_vertedero_m3s: iv.qVert != null ? +iv.qVert.toFixed(2) : null,
     ...Object.fromEntries(iv.p.flatMap((p, u) => [[`p_u${u + 1}_mw`, p != null ? +p.toFixed(2) : null], [`q_fc_u${u + 1}_m3s`, iv.q[u] != null ? +iv.q[u].toFixed(2) : null],
-      [`qturbinado_u${u + 1}_m3s`, iv.q2 && iv.q2[u] != null ? +iv.q2[u].toFixed(2) : null], [`q_modelo_u${u + 1}_m3s`, iv.qMod[u] != null ? +iv.qMod[u].toFixed(2) : null]])),
+      ...(MOSTRAR_WINTER_KENNEDY ? [[`q_winter_kennedy_u${u + 1}_m3s`, iv.q2 && iv.q2[u] != null ? +iv.q2[u].toFixed(2) : null]] : []), [`q_modelo_u${u + 1}_m3s`, iv.qMod[u] != null ? +iv.qMod[u].toFixed(2) : null]])),
   })), [calculo]);
 
   const caja = { padding: "10px 12px", background: T.panelSoft, borderRadius: 8, fontSize: 12.5, fontFamily: FONT_BODY, color: T.inkMuted, lineHeight: 1.6 };
@@ -187,7 +191,7 @@ export default function OperacionMedida({ T, condDescarga }) {
     <div>
       <ChartHeader titulo="Operación medida (LoggerNet)" T={T}
         subtitulo="Generación por unidad (dato de cada minuto) y el caudal que reporta Hidrometría (potencia / F.C.), frente al caudal que da el modelo de la colina con la misma potencia."
-        tip={`El caudal por unidad de LoggerNet no es una medición: es la potencia dividida entre el F.C. de Hidrometría (1,62 hasta el 29-oct-2026 14:30; desde entonces ${FC_HIDROMETRIA_POR_NIVEL.a}·nivel ${FC_HIDROMETRIA_POR_NIVEL.b}). El modelo pasa la potencia de bornes al eje con el rendimiento del generador y busca en la colina la apertura que la entrega, con el nivel del embalse y la condición de descarga de la pestaña Descarga.`} />
+        tip={`El modelo busca la apertura hasta 31,98° (máximo ensayado) y sin el tope de 307 MW, para no recortar la potencia medida. El caudal por unidad de LoggerNet no es una medición: es la potencia dividida entre el F.C. de Hidrometría (1,62 hasta el 29-oct-2026 14:30; desde entonces ${FC_HIDROMETRIA_POR_NIVEL.a}·nivel ${FC_HIDROMETRIA_POR_NIVEL.b}). El modelo pasa la potencia de bornes al eje con el rendimiento del generador y busca en la colina la apertura que la entrega, con el nivel del embalse y la condición de descarga de la pestaña Descarga.`} />
 
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
         <button style={boton(fuente === "github")} onClick={() => setFuente("github")}>Repositorio de datos (GitHub)</button>
@@ -310,8 +314,8 @@ export default function OperacionMedida({ T, condDescarga }) {
                 <LineChart data={grafica} margin={{ top: 6, right: 12, left: 0, bottom: 4 }}>
                   <CartesianGrid stroke={T.lineSoft} strokeDasharray="2 4" />
                   <XAxis dataKey="t" ticks={ticksX(grafica)} tickFormatter={etiquetaT} tick={tickStyleFor(T)} minTickGap={20} />
-                  <YAxis width={48} tick={tickStyleFor(T)} domain={["auto", "auto"]} tickFormatter={(v) => v.toFixed(2)} />
-                  <RTooltip formatter={(v) => (v == null ? "—" : v.toFixed(3))} labelFormatter={etiquetaT} contentStyle={{ background: T.panel, border: `1px solid ${T.line}`, fontSize: 12 }} />
+                  <YAxis width={48} tick={tickStyleFor(T)} domain={["auto", "auto"]} tickFormatter={(v) => fmt(v, 2)} />
+                  <RTooltip formatter={(v) => (v == null ? "—" : fmt(v, 3))} labelFormatter={etiquetaT} contentStyle={{ background: T.panel, border: `1px solid ${T.line}`, fontSize: 12 }} />
                   <Legend wrapperStyle={{ fontSize: 11.5, fontFamily: FONT_BODY }} />
                   <ReferenceLine x={grafica.find((g) => g.t >= FC_HIDROMETRIA_POR_NIVEL.desde)?.t} stroke={T.inkFaint} strokeDasharray="4 3" />
                   <Line dataKey="fcHid" name="Hidrometría" stroke={T.amber} strokeWidth={1.8} dot={false} isAnimationActive={false} />

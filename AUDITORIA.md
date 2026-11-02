@@ -1,6 +1,6 @@
 # Auditoría · Turbinas Ituango
 
-Fecha: 2-nov-2026. Revisión de cada pestaña, campo y resultado. Un revisor independiente usó la app en PC y en teléfono, y cada hallazgo se verificó con números.
+Fecha: 2-nov-2026. Revisión de cada pestaña, campo y resultado. Un revisor independiente usó la app en PC y en teléfono y verificó cada hallazgo con números. Después de las correcciones, un segundo revisor confirmó 9 de los 10 puntos y encontró los problemas de la última tabla, que también se corrigieron.
 
 ## Modelo y cálculos
 
@@ -32,3 +32,16 @@ Fecha: 2-nov-2026. Revisión de cada pestaña, campo y resultado. Un revisor ind
 | ✅ Corregido | Textos desactualizados | El título de la página y las referencias a un simulador que la app ya no tiene. |
 | ✅ Nuevo | Instalable | Manifiesto, íconos y copia sin conexión (primero la red). El tema y el contraste se recuerdan en el navegador. |
 | ✅ Nuevo | Despacho | Fecha del despacho (tomada del texto pegado), aviso cuando falta el despacho y columna "Q Hidrometría". |
+
+## Segunda revisión (después de las correcciones)
+
+| Estado | Punto | Detalle |
+|---|---|---|
+| ✅ Corregido | Ayudas "i" en el teléfono | Un toque las abría y el mismo toque las volvía a cerrar. Ahora un toque abre y un toque fuera cierra; con mouse se abren al pasar por encima. Probado en las 7 pestañas con pantalla táctil de 390 px. |
+| ✅ Corregido | Caudal Winter-Kennedy en el CSV | Estaba oculto en pantalla pero salía en la descarga. Ya no sale. |
+| ✅ Corregido | Errores de GitHub | Un token sin acceso o un nombre de repositorio mal escrito se mostraban como "sin archivos". Ahora se dice que el token no tiene acceso al repositorio. |
+| ✅ Corregido | Números con punto decimal | Quedaban en el BEP, el rango de apertura, la tabla de escenarios de 2023 y el eje del F.C. de Operación medida. |
+| ✅ Corregido | Contraste | Leyendas de las gráficas, etiquetas de los escenarios en la colina y resumen vacío del despacho. |
+| ✅ Corregido | Despacho con poca potencia | Cuando hay que bajar unidades, se elige la cantidad que turbina menos agua. Ejemplo: con 60 MW y 4 unidades pedidas, antes quedaba en 3 unidades con η ≈ 43 %. |
+| ✅ Corregido | Nivel del embalse | Mismo paso (0,01 m) en el Buscador y en la Colina. |
+| ℹ️ Nota | Modelo en Operación medida | Busca la apertura hasta 31,98° y sin el tope de 307 MW, para no recortar la potencia medida. |

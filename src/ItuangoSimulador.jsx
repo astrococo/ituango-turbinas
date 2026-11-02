@@ -227,7 +227,7 @@ function ChartFamilia({ ejeX, ejeY, xLabel, yLabel, xDomain, yDomain, waeCampoX,
           <g key={i}>
             <rect x={sx(p.x) - 5} y={sy(p.y) - 5} width={10} height={10} fill="#8E4EC6" stroke={T.bg} strokeWidth={1.2} transform={`rotate(45, ${sx(p.x)}, ${sy(p.y)})`} />
             <line x1={sx(p.x) + 7} y1={sy(p.y)} x2={sx(p.x) + 16} y2={sy(p.y) - 8 - i * 13} stroke="#8E4EC6" strokeWidth={0.8} opacity={0.6} />
-            <text x={sx(p.x) + 18} y={sy(p.y) - 6 - i * 13} fontSize="10" fill="#8E4EC6" fontFamily={FONT_BODY} fontWeight="700">{p.label}</text>
+            <text x={sx(p.x) + 18} y={sy(p.y) - 6 - i * 13} fontSize="10" fill={T.ink} fontFamily={FONT_BODY} fontWeight="700">{p.label}</text>
           </g>
         ))}
         {hover && <circle cx={hover.xPix} cy={hover.yPix} r={5} fill={T.cyan} stroke={T.bg} strokeWidth={1.5} />}
@@ -379,6 +379,9 @@ function PanelCondicionDescarga({ cond, setCond, T, nivelEmbalse, nUnidades, gam
     </div>
   );
 }
+
+/* Número es-CO con los decimales que traiga el dato (máximo 3). */
+const fxa = (v) => (v == null || !Number.isFinite(Number(v)) ? "—" : Number(v).toLocaleString("es-CO", { maximumFractionDigits: 3 }));
 
 function InputNumeroLibre({ value, onChange, className, style, min, max, step, disabled }) {
   const dec = step && step < 1 ? Math.min(4, (String(step).split(".")[1] || "").length) : 0;
@@ -579,7 +582,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
       </div>
 
       {vacio && <div style={{ ...resumen, marginBottom: 12, color: T.ink }}>Pegue el resumen horario de XM (o escriba el despacho en la tabla) para calcular. Sin despacho, el nivel solo refleja el caudal de entrada.</div>}
-      <div style={{ ...resumen, marginBottom: 12, opacity: vacio ? 0.55 : 1 }}>
+      <div style={{ ...resumen, marginBottom: 12 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: T.teal }}>
           Nivel a las 24 h con el despacho XM: {fx(calc.xm.Hfinal, 3)} msnm ({calc.xm.deltaH >= 0 ? "+" : ""}{fx(calc.xm.deltaH * 100, 1)} cm)
         </div>
@@ -590,8 +593,8 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
         {calc.errMedido.length > 0 && <div>Frente al nivel medido ({calc.errMedido.length} h): diferencia máxima {fx(Math.max(...calc.errMedido.map(Math.abs)) * 100, 1)} cm{calc.rt ? " (escenario con RT)" : ""}.</div>}
         <div style={{ fontSize: 11.5, color: T.inkFaint }}>Almenara: {etiquetaCondicionDescarga(condDescarga)} (panel Condición de descarga; el caudal del río en D4' incluye lo turbinado).</div>
         {noAlcanzables.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {noAlcanzables.map((d) => d.hora).join(", ")}: la potencia no se alcanza con esas unidades, el techo de apertura {etiquetaTecho} (se elige en "Rango de apertura" del Buscador) y {P_MAXIMO_ESPERADO_MW} MW por unidad. Aumenta las unidades de esa hora o revisa el techo; el nivel se calcula con la potencia máxima alcanzable.</div>}
-        {reducidas.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {reducidas.map((d) => `${d.hora} (${d.unidadesPedidas}→${d.unidades} ud.)`).join(", ")}: con las unidades pedidas, cada una quedaría por debajo de la apertura mínima ensayada ({GAMMAS_HILL[0]}°); se calculó con menos unidades.</div>}
-        {bajoMinimo.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {bajoMinimo.map((d) => d.hora).join(", ")}: la potencia es menor que la de una unidad en la apertura mínima ensayada ({GAMMAS_HILL[0]}°); se tomó el caudal de esa apertura mínima con una unidad.</div>}
+        {reducidas.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {reducidas.map((d) => `${d.hora} (${d.unidadesPedidas}→${d.unidades} ud.)`).join(", ")}: con las unidades pedidas, cada una quedaría por debajo de la apertura mínima ensayada ({fx(GAMMAS_HILL[0], 2)}°); se calculó con la cantidad de unidades que turbina menos agua.</div>}
+        {bajoMinimo.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {bajoMinimo.map((d) => d.hora).join(", ")}: la potencia es menor que la de una unidad en la apertura mínima ensayada ({fx(GAMMAS_HILL[0], 2)}°); se tomó el caudal de esa apertura mínima con una unidad.</div>}
         {sobreDisponibles.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {sobreDisponibles.map((f) => f.hora).join(", ")}: más unidades que las disponibles ({unidadesDisp}).</div>}
       </div>
 
@@ -1538,7 +1541,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
 
       {tab === "colina" && (<>
       <div style={cardStyle}>
-        <ChartHeader titulo="Colina de la turbina — exploración y simulación" subtitulo="Ensayo de modelo físico (2013), transpuesto al prototipo según IEC 60193. Punto Óptimo de Eficiencia (BEP): H=198.29 m, Q=146.67 m³/s, P=273.41 MW, γ=21.5°, η=96.48%." T={T}
+        <ChartHeader titulo="Colina de la turbina — exploración y simulación" subtitulo="Ensayo de modelo físico (2013), transpuesto al prototipo según IEC 60193. Punto de máxima eficiencia del ensayo (BEP): H = 198,29 m, Q = 146,67 m³/s, P = 273,41 MW, γ = 21,5°, η = 96,48 %." T={T}
           tip="Reproduce las familias de curvas de apertura constante (γ), las isolíneas de eficiencia (trazadas por marching squares sobre una malla interpolada de la colina — eficiencia de MODELO en los gráficos n₁₁, de PROTOTIPO con step-up IEC 60193 en los de escala real) y los 6 puntos WAE reales. No incluye los polígonos de área de operación (sin coordenadas en los datos extraídos)." />
         <div className="itu-2col" style={{ marginTop: 10 }}>
           <div>
@@ -1572,7 +1575,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
         </div>
         <div className="itu-2col" style={{ marginTop: 4, marginBottom: 4 }}>
           <div>
-            <Slider label="Nivel del embalse" value={nivelEmbalseExploracion} min={NIVEL_MIN_TEC} max={permitirSobreNAMO ? NAME : NAMO} step={0.1} onChange={alEditarNivelEmbalse} unit=" msnm" T={T}
+            <Slider label="Nivel del embalse" value={nivelEmbalseExploracion} min={NIVEL_MIN_TEC} max={permitirSobreNAMO ? NAME : NAMO} step={0.01} onChange={alEditarNivelEmbalse} unit=" msnm" T={T}
               tip={`Nivel del embalse. Rango normal de operación: ${NIVEL_MIN_TEC}-${NAMO} msnm (NAMO). Determina el salto neto vía: H_neta = Nivel_embalse − Nivel_almenara − pérdida de carga (h=k·Q²). El nivel de la almenara sale de la "Condición de descarga" elegida arriba (diseño, río colmatado ASE o manual). La colina reproduce los escenarios GE 2023 con error <0.15% cuando se usa la almenara de cada escenario. A nivel del embalse más alto, para la MISMA potencia se necesita menor apertura y menor caudal por unidad (a mayor salto, se logra la misma potencia con menos agua) — es física esperada, no un error.`} />
             <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 11.5, color: T.inkFaint, fontFamily: FONT_BODY, cursor: "pointer" }}>
               <input type="checkbox" checked={permitirSobreNAMO} onChange={(e) => { setPermitirSobreNAMO(e.target.checked); if (!e.target.checked && nivelEmbalseExploracion > NAMO) alEditarNivelEmbalse(NAMO); }} />
@@ -1704,7 +1707,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
             <XAxis dataKey="H" type="number" domain={[NIVEL_MIN_TEC, NAMO]} tick={tickStyleFor(T)} tickFormatter={fmtTick} />
             <YAxis type="number" tick={tickStyleFor(T)} tickFormatter={fmtTick} label={{ value: "Caudal turbinable total (m³/s)", angle: -90, position: "left", offset: -2, style: { fontSize: 12.5, fontWeight: 600, fill: T.ink, fontFamily: FONT_BODY, textAnchor: "middle" } }} />
             <RTooltip content={<CustomTooltip unidad="m³/s" T={T} labelPrefix="Nivel = " labelSuffix=" msnm" />} />
-            <Legend verticalAlign="bottom" wrapperStyle={{ fontSize: 10, fontFamily: FONT_BODY, paddingTop: 20 }} />
+            <Legend verticalAlign="bottom" wrapperStyle={{ fontSize: 11.5, fontFamily: FONT_BODY, paddingTop: 20 }} />
             {Array.from({ length: N_TURBINAS_MAX }, (_, i) => i + 1).map((n) => (
               <Line key={n} type="monotone" dataKey={`n${n}`} name={`${n} unidad(es)`} stroke={COLORES_GAMMA[(n - 1) % COLORES_GAMMA.length]} strokeWidth={n === nTurbActivasExploracion ? 3 : 1.4} dot={false} isAnimationActive={false} connectNulls />
             ))}
@@ -1725,7 +1728,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
             <XAxis dataKey="H" type="number" domain={[NIVEL_MIN_TEC, NAMO]} tick={tickStyleFor(T)} tickFormatter={fmtTick} />
             <YAxis width={52} type="number" tick={tickStyleFor(T)} domain={["auto", "auto"]} tickFormatter={(v) => fx(v, 2)} label={axisLabel("F.C. (MW / (m³/s))", -90)} />
             <RTooltip content={<CustomTooltip unidad="MW/(m³/s)" T={T} labelPrefix="Nivel = " labelSuffix=" msnm" decimales={3} decimalesEtiqueta={2} />} />
-            <Legend wrapperStyle={{ fontSize: 10, fontFamily: FONT_BODY, paddingTop: 14 }} />
+            <Legend wrapperStyle={{ fontSize: 11.5, fontFamily: FONT_BODY, paddingTop: 14 }} />
             <Line type="monotone" dataKey="FC" name="Modelo (apertura máxima)" stroke={T.teal} strokeWidth={2.2} dot={false} isAnimationActive={false} connectNulls />
             <Line type="linear" dataKey="FC_hidrometria" name="Hidrometría desde 29-oct-2026" stroke={T.ink} strokeDasharray="6 3" strokeWidth={1.6} dot={false} isAnimationActive={false} />
             <Line type="linear" dataKey="FC_anterior" name="Hidrometría antes (1,62)" stroke={T.inkFaint} strokeDasharray="2 3" strokeWidth={1.4} dot={false} isAnimationActive={false} />
@@ -1745,7 +1748,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
             <XAxis dataKey="volUtilPct" type="number" domain={[0, 100]} tick={tickStyleFor(T)} tickFormatter={fmtTick} />
             <YAxis width={52} type="number" tick={tickStyleFor(T)} domain={["auto", "auto"]} tickFormatter={(v) => fx(v, 2)} label={axisLabel("F.C. (MW / (m³/s))", -90)} />
             <RTooltip content={<CustomTooltip unidad="MW/(m³/s)" T={T} labelPrefix="Vol. útil = " labelSuffix=" %" decimales={3} />} />
-            <Legend wrapperStyle={{ fontSize: 10, fontFamily: FONT_BODY, paddingTop: 14 }} />
+            <Legend wrapperStyle={{ fontSize: 11.5, fontFamily: FONT_BODY, paddingTop: 14 }} />
             <Line type="monotone" dataKey="FC" name="Modelo (apertura máxima)" stroke={T.amber} strokeWidth={2.2} dot={false} isAnimationActive={false} connectNulls />
             <Line type="linear" dataKey="FC_hidrometria" name="Hidrometría desde 29-oct-2026" stroke={T.ink} strokeDasharray="6 3" strokeWidth={1.6} dot={false} isAnimationActive={false} />
             <Line type="linear" dataKey="FC_anterior" name="Hidrometría antes (1,62)" stroke={T.inkFaint} strokeDasharray="2 3" strokeWidth={1.4} dot={false} isAnimationActive={false} />
@@ -1815,14 +1818,14 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
                     {e.id}{e.garantizado === false && <span style={{ color: T.red, fontWeight: 700 }}> ✗</span>}
                     <div style={{ fontWeight: 400, color: T.inkFaint, fontSize: 11 }}>{e.descripcion}</div>
                   </td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", color: T.ink }}>{e.Q_m3s} m³/s</td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", color: T.ink }}>{e.saltoNeto_m} m</td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", color: T.ink }}>{e.gamma_deg}°</td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", color: e.P_turbina_MW > P_MAXIMO_ESPERADO_MW ? T.red : T.ink, fontWeight: e.P_turbina_MW > P_MAXIMO_ESPERADO_MW ? 700 : 400 }}>{e.P_turbina_MW} MW</td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", color: T.ink }}>{e.P_bornes_generador_MW} MW <span style={{ color: T.inkFaint, fontSize: 10.5 }}>(η={e.eta_generador_pct}%)</span></td>
+                  <td style={{ padding: "6px 8px", textAlign: "right", color: T.ink }}>{fxa(e.Q_m3s)} m³/s</td>
+                  <td style={{ padding: "6px 8px", textAlign: "right", color: T.ink }}>{fxa(e.saltoNeto_m)} m</td>
+                  <td style={{ padding: "6px 8px", textAlign: "right", color: T.ink }}>{fxa(e.gamma_deg)}°</td>
+                  <td style={{ padding: "6px 8px", textAlign: "right", color: e.P_turbina_MW > P_MAXIMO_ESPERADO_MW ? T.red : T.ink, fontWeight: e.P_turbina_MW > P_MAXIMO_ESPERADO_MW ? 700 : 400 }}>{fxa(e.P_turbina_MW)} MW</td>
+                  <td style={{ padding: "6px 8px", textAlign: "right", color: T.ink }}>{fxa(e.P_bornes_generador_MW)} MW <span style={{ color: T.inkMuted, fontSize: 10.5 }}>(η = {fxa(e.eta_generador_pct)} %)</span></td>
                   <td style={{ padding: "6px 8px", textAlign: "right", color: T.teal, fontWeight: 700 }}>
-                    {e.P_subestacion_MW != null ? `${e.P_subestacion_MW} MW` : <span style={{ color: T.inkFaint, fontWeight: 400 }}>— (solo 1 unidad, sin subestación)</span>}
-                    {e.eta_transformador_pct != null && <span style={{ color: T.inkFaint, fontSize: 10.5, fontWeight: 400 }}> (η_transf={e.eta_transformador_pct}%)</span>}
+                    {e.P_subestacion_MW != null ? `${fxa(e.P_subestacion_MW)} MW` : <span style={{ color: T.inkFaint, fontWeight: 400 }}>— (solo 1 unidad, sin subestación)</span>}
+                    {e.eta_transformador_pct != null && <span style={{ color: T.inkFaint, fontSize: 10.5, fontWeight: 400 }}> (η transformador = {fxa(e.eta_transformador_pct)} %)</span>}
                   </td>
                 </tr>
               ))}
@@ -1830,8 +1833,8 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
           </table>
         </div>
         <div style={{ fontSize: 12, color: T.inkMuted, marginTop: 10, fontFamily: FONT_BODY, lineHeight: 1.5 }}>
-          ✗ = nota 4 del del documento: estas condiciones NO se consideran dentro del rango de operación garantizado del proyecto (son una evaluación exploratoria, no una garantía contractual).
-          En los escenarios de 4 unidades (), la potencia en bornes/transformador/subestación es el <b>total de las 4 unidades</b>; la potencia turbina mostrada es <b>por unidad</b>.
+          ✗ = nota 4 del documento: estas condiciones NO se consideran dentro del rango de operación garantizado del proyecto (son una evaluación exploratoria, no una garantía contractual).
+          En los escenarios de 4 unidades, la potencia en bornes/transformador/subestación es el <b>total de las 4 unidades</b>; la potencia turbina mostrada es <b>por unidad</b>.
         </div>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 10, padding: "9px 12px", background: T.panelSoft, border: `1px solid ${T.red}`, borderRadius: 6, fontSize: 12, color: T.red, fontFamily: FONT_BODY, lineHeight: 1.5 }}>
           <span>⚠</span>
