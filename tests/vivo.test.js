@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { calcularVivo } from "../src/datos/vivo.jsx";
 import { leerLoggerNet, unirNivel } from "../src/operacion.js";
-import { resumirDias, filaDiaria, requeridoRestoDelDia, cierreProyectado, validarDespachoDia } from "../src/analitica.js";
+import { resumirDias, filaDiaria, requeridoRestoDelDia, cierreProyectado, validarDespachoDia, aperturaIntervalos, resumenHora, serieHoraria } from "../src/analitica.js";
+import { pctFromDeg, degFromPct, CONDICION_DESCARGA_DEFECTO } from "../src/modelo.js";
 
 /* Datos sintéticos (sin cifras de operación): dos días de 4 unidades. */
 function csvGen(dia, pU) {
@@ -74,5 +75,27 @@ describe("calidad y validación por día", () => {
   });
   it("no valida el despacho con un día incompleto", () => {
     expect(validarDespachoDia({ ...dia, parcial: true })).toBeNull();
+  });
+  it("apertura estimada: intervalos de 15 min iguales al cálculo horario y equivalencia en %", () => {
+    const hora = filas.filter((r) => r.t.startsWith("2026-11-20 08:"));
+    const iv = aperturaIntervalos(hora, 4, { minutos: 15, cond: CONDICION_DESCARGA_DEFECTO });
+    expect(iv).toHaveLength(4);
+    expect(iv[0].t).toBe("2026-11-20 08:00");
+    expect(iv[1].t).toBe("2026-11-20 08:15");
+    const ref = resumenHora("2026-11-20 08:00", hora.slice(0, 15), 4, { cond: CONDICION_DESCARGA_DEFECTO });
+    expect(iv[0].gamma[0]).toBe(ref.gamma[0]);
+    expect(iv[0].gamma[0]).toBeGreaterThan(4.87);
+    expect(iv[0].gamma[0]).toBeLessThan(31.98);
+    expect(iv[0].gamma[3]).toBeNull(); // unidad detenida
+    expect(pctFromDeg(30.2)).toBeCloseTo(100, 12);
+    expect(degFromPct(97)).toBeCloseTo(29.294, 12);
+    expect(pctFromDeg(26.5)).toBeCloseTo(87.748, 3);
+  });
+  it("serie horaria incluye la apertura por unidad", () => {
+    const d = resumirDias(filas.filter((r) => r.t.startsWith("2026-11-20 0")), { cond: CONDICION_DESCARGA_DEFECTO });
+    const s = serieHoraria(d);
+    expect(s.gamma.length).toBe(s.t.length);
+    expect(s.gamma[0][0]).toBeGreaterThan(0);
+    expect(s.gamma[0][3]).toBeNull();
   });
 });

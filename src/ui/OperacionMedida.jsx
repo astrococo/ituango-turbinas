@@ -7,12 +7,13 @@
    navegador y no se envía a ningún lado.
    ============================================================ */
 import { useState, useMemo, useEffect } from "react";
-import { FC_HIDROMETRIA_POR_NIVEL, etiquetaCondicionDescarga, NIVEL_MIN_TEC, NAME, ETIQUETA_ESTADO_REGLA } from "../modelo.js";
+import { FC_HIDROMETRIA_POR_NIVEL, etiquetaCondicionDescarga, NIVEL_MIN_TEC, NAME, ETIQUETA_ESTADO_REGLA, pctFromDeg } from "../modelo.js";
 import { leerLoggerNet, unirNivel, agregarIntervalos, caudalModeloIntervalos, verificarColumnaLoggerNet, reglaOperativaDiaria, caudalRegulado, resumenPorUnidad, P_EN_LINEA_MW } from "../operacion.js";
 import { BotonCSV, ChartHeader, Etiqueta, FONT_BODY } from "./base.jsx";
 import { useDatos } from "../datos/fuentes.jsx";
 import { GraficoSeries } from "./graficos.jsx";
 import { SelectorRango, rangoUltimos, sumarDiasTxt } from "./comunes.jsx";
+import { GraficoApertura } from "./Apertura.jsx";
 
 const CARPETA_GEN = "loggernet";
 const CARPETA_NIVEL = "nivel";
@@ -209,7 +210,8 @@ export default function OperacionMedida({ T, condDescarga }) {
     fecha_hora: iv.t, minutos: iv.minutos, nivel_usado_msnm: iv.nivel != null ? +iv.nivel.toFixed(3) : null, unidades_en_linea: iv.n,
     q_vertedero_m3s: iv.qVert != null ? +iv.qVert.toFixed(2) : null,
     ...Object.fromEntries(iv.p.flatMap((p, u) => [[`p_u${u + 1}_mw`, p != null ? +p.toFixed(2) : null], [`q_fc_u${u + 1}_m3s`, iv.q[u] != null ? +iv.q[u].toFixed(2) : null],
-      ...(MOSTRAR_WINTER_KENNEDY ? [[`q_winter_kennedy_u${u + 1}_m3s`, iv.q2 && iv.q2[u] != null ? +iv.q2[u].toFixed(2) : null]] : []), [`q_modelo_u${u + 1}_m3s`, iv.qMod[u] != null ? +iv.qMod[u].toFixed(2) : null]])),
+      ...(MOSTRAR_WINTER_KENNEDY ? [[`q_winter_kennedy_u${u + 1}_m3s`, iv.q2 && iv.q2[u] != null ? +iv.q2[u].toFixed(2) : null]] : []), [`q_modelo_u${u + 1}_m3s`, iv.qMod[u] != null ? +iv.qMod[u].toFixed(2) : null],
+      [`apertura_modelo_u${u + 1}_pct`, iv.gamma && iv.gamma[u] != null ? +pctFromDeg(iv.gamma[u]).toFixed(2) : null], [`apertura_modelo_u${u + 1}_grados`, iv.gamma && iv.gamma[u] != null ? +iv.gamma[u].toFixed(3) : null]])),
   })), [calculo]);
 
   const caja = { padding: "10px 12px", background: T.panelSoft, borderRadius: 8, fontSize: 12.5, fontFamily: FONT_BODY, color: T.inkMuted, lineHeight: 1.6 };
@@ -246,7 +248,7 @@ export default function OperacionMedida({ T, condDescarga }) {
     <div>
       <ChartHeader titulo="Operación medida (LoggerNet)" T={T}
         subtitulo="Generación por unidad (dato de cada minuto) y el caudal que reporta Hidrometría (potencia / F.C.), frente al caudal que da el modelo de la colina con la misma potencia."
-        tip={`El modelo busca la apertura hasta 31,98° (máximo ensayado) y sin el tope de 307 MW, para no recortar la potencia medida. El caudal por unidad de LoggerNet no es una medición: es la potencia dividida entre el F.C. de Hidrometría (1,62 hasta el 29-oct-2026 14:35; desde entonces 0,0119·nivel − 3,178 entre 390 y 420 msnm y 1,80 sin nivel válido). La app calcula el caudal de Hidrometría con esa regla y el nivel del radar, como la app de Hidrometría; la columna de LoggerNet se usa solo para verificar. El modelo pasa la potencia de bornes al eje con el rendimiento del generador y busca en la colina la apertura que la entrega, con el nivel del embalse y la condición de descarga de la pestaña Descarga.`} />
+        tip={`El modelo busca la apertura hasta 105,9 % = 31,98° (máximo ensayado; 100 % = 30,2°) y sin el tope de 307 MW, para no recortar la potencia medida. El caudal por unidad de LoggerNet no es una medición: es la potencia dividida entre el F.C. de Hidrometría (1,62 hasta el 29-oct-2026 14:35; desde entonces 0,0119·nivel − 3,178 entre 390 y 420 msnm y 1,80 sin nivel válido). La app calcula el caudal de Hidrometría con esa regla y el nivel del radar, como la app de Hidrometría; la columna de LoggerNet se usa solo para verificar. El modelo pasa la potencia de bornes al eje con el rendimiento del generador y busca en la colina la apertura que la entrega, con el nivel del embalse y la condición de descarga de la pestaña Descarga.`} />
 
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
         <button style={boton(fuente === "github")} onClick={() => setFuente("github")}>Repositorio de datos (GitHub)</button>
@@ -370,6 +372,9 @@ export default function OperacionMedida({ T, condDescarga }) {
 
               <ChartHeader titulo="Factor de conversión (MW por m³/s)" subtitulo="Potencia total / caudal total de Hidrometría, del modelo y del Winter-Kennedy." T={T} />
               <GraficoSeries T={T} x={sOp.x} series={sOp.fc} unidad="MW/(m³/s)" ejeY="MW por m³/s" decimales={3} grupo="om" alto={220} nombreArchivo="fc_15min" verticales={[{ x: FC_HIDROMETRIA_POR_NIVEL.desde, rotulo: "F.C. por nivel" }]} />
+
+              <ChartHeader titulo="Apertura del distribuidor por unidad" subtitulo="Promedio de cada intervalo de 15 min, en % y su equivalente en grados (eje derecho y tooltip): la apertura que da el modelo de la colina para la potencia medida de cada unidad, con la condición de descarga elegida arriba." T={T} />
+              <GraficoApertura T={T} x={sOp.x} filas={(calculo || []).map((iv) => iv.gamma || null)} nU={4} pasoH={(calculo || []).map((iv) => (iv.minutos || 15) / 60)} grupo="om" nombreArchivo="apertura_15min" />
 
               <div className="itu-tabla" style={{ marginTop: 12 }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, fontFamily: FONT_BODY, color: T.ink }}>

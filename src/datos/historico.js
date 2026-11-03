@@ -30,7 +30,7 @@ function useHorario(desde, hasta) {
       m = mm === 12 ? `${a + 1}-01` : `${a}-${String(mm + 1).padStart(2, "0")}`;
     }
     const partes = await Promise.all(meses.map((x) => d.leerJSON(`derivados/horario/${x}.json`).catch(() => null)));
-    const out = { t: [], nivel: [], qReg: [], qVert: [], qDesc: [], fc: [], p: [], qFC: [], qWK: [], fcWK: [], qMod: [], etaWK: [], etaMod: [], linea: [], qComp: [], aComp: [] };
+    const out = { t: [], nivel: [], qReg: [], qVert: [], qDesc: [], fc: [], p: [], qFC: [], qWK: [], fcWK: [], qMod: [], etaWK: [], etaMod: [], linea: [], qComp: [], aComp: [], gamma: [] };
     for (const p of partes.filter(Boolean)) {
       p.t.forEach((t, i) => {
         if (t.slice(0, 10) < desde || t.slice(0, 10) > hasta) return;

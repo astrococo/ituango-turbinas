@@ -6,10 +6,11 @@ import { useMemo, useState } from "react";
 import { useHorario } from "../datos/historico.js";
 import { useVivo } from "../datos/vivo.jsx";
 import { useDatos } from "../datos/fuentes.jsx";
-import { ETIQUETA_ESTADO_REGLA, NAMO, repartoPorUnidad, CONDICION_DESCARGA_DEFECTO, factorConversionHidrometria } from "../modelo.js";
-import { minutosDe, tramosCumplimiento } from "../analitica.js";
+import { ETIQUETA_ESTADO_REGLA, NAMO, repartoPorUnidad, CONDICION_DESCARGA_DEFECTO, factorConversionHidrometria, pctFromDeg } from "../modelo.js";
+import { minutosDe, tramosCumplimiento, aperturaIntervalos } from "../analitica.js";
 import { GraficoSeries, Estado, BarraBanda, fmtNum, colorSerie, aSeg } from "./graficos.jsx";
 import { Proposito, Tarjeta, Kpi, PanelConexion, hace, fechaCorta, SelectorRango, rangoUltimos } from "./comunes.jsx";
+import { GraficoApertura } from "./Apertura.jsx";
 
 const TIPO_ESTADO = { cumple: "bien", por_encima: "critico", por_debajo: "serio", excepcion: "aviso", sin_base: "neutro" };
 const P_LINEA = 20;
@@ -103,6 +104,31 @@ export default function Tablero({ T, condDescarga }) {
     { nombre: "Banda máx.", datos: series.bMax, color: T.inkFaint, dash: true, ancho: 1.2, escalones: true },
   ], [series, T]);
 
+  // Apertura del distribuidor estimada por unidad en el rango de los gráficos:
+  // hasta 48 h, cada 15 min con el dato de cada minuto; más días, por hora
+  // (histórico + horas de hoy). Mismo cálculo que el resumen horario.
+  const apertura = useMemo(() => {
+    if (!v) return null;
+    if (porMinuto) {
+      if (!v.filas || !v.filas.length) return null;
+      const f = v.filas.filter((r) => r.t.slice(0, 10) >= rango.desde && r.t.slice(0, 10) <= rango.hasta);
+      if (!f.length) return null;
+      const nU = f[0].p.length;
+      const iv = aperturaIntervalos(f, nU, { minutos: 15, cond: CONDICION_DESCARGA_DEFECTO });
+      return { paso: "15 min", t: iv.map((x) => x.t), filas: iv.map((x) => x.gamma), pasoH: iv.map((x) => x.min / 60), nU };
+    }
+    const h = horario.datos;
+    if (!h) return null;
+    const filas = h.t.map((t, i) => ({ t, g: h.gamma[i] }));
+    if (v.resHoy && rango.hasta >= v.hoy) {
+      const ya = new Set(filas.map((r) => r.t));
+      v.resHoy.horas.forEach((x) => { if (x && !ya.has(x.t)) filas.push({ t: x.t, g: x.gamma }); });
+    }
+    if (!filas.length) return null;
+    const nU = filas.reduce((k, r) => Math.max(k, r.g ? r.g.length : 0), 0);
+    return { paso: "hora", t: filas.map((r) => r.t), filas: filas.map((r) => r.g), pasoH: 1, nU };
+  }, [v, porMinuto, rango.desde, rango.hasta, horario.datos]);
+
   // Modelo por unidad con el promedio de los últimos 15 min
   const modelo = useMemo(() => {
     if (!v || !v.actual || v.actual.nivel == null) return null;
@@ -157,7 +183,7 @@ export default function Tablero({ T, condDescarga }) {
       fuente={v && v.ultima ? <>Relay de LoggerNet (dato cada minuto) · HydroForecast · se actualiza solo cada 5 min{cuando ? `, última consulta ${cuando.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}` : ""}</> : "Relay de LoggerNet y HydroForecast"}
       para="Ver en una sola pantalla cómo está la central ahora: nivel y su tendencia, potencia y caudal por unidad, vertedero, caudal descargado y cómo va el día frente a la regla operativa de la Res. 1891."
       logras="Decidir en caliente: cuánto puede generar el resto del día sin salir de la banda, si el embalse sube o baja y a qué ritmo, y qué viene por el río según HydroForecast y las estaciones aguas arriba."
-      resultados="Indicadores con estado (✓ / ! / ✕), el caudal que debe promediar el resto del día para cerrar dentro de la banda (en m³/s y en MW), el cierre proyectado, el caudal de cada unidad (Hidrometría, Winter-Kennedy y modelo) y gráficos de las últimas 48 h." />
+      resultados="Indicadores con estado (✓ / ! / ✕), el caudal que debe promediar el resto del día para cerrar dentro de la banda (en m³/s y en MW), el cierre proyectado, el caudal y la apertura del distribuidor de cada unidad (Hidrometría, Winter-Kennedy y modelo; apertura en % y grados) y gráficos del rango elegido (por defecto, las últimas 48 h)." />
   );
   if (!datos.conectado && !(v && v.hf && (v.hf.pronostico || v.hf.observado))) return <>{guia}<PanelConexion T={T} /></>;
 
@@ -216,7 +242,7 @@ export default function Tablero({ T, condDescarga }) {
           <div className="itu-tabla">
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, fontVariantNumeric: "tabular-nums" }}>
               <thead><tr style={{ color: T.inkFaint, textAlign: "right" }}>
-                <th style={{ textAlign: "left", padding: "6px 8px" }}>Unidad</th><th style={{ padding: "6px 8px" }}>P (MW)</th><th style={{ padding: "6px 8px" }}>Q Hidrometría</th><th style={{ padding: "6px 8px" }}>Q WK (sin calibrar)</th><th style={{ padding: "6px 8px" }}>Q modelo</th><th style={{ padding: "6px 8px" }}>Apertura modelo</th><th style={{ padding: "6px 8px" }}>F.C. WK (30 d)</th><th style={{ padding: "6px 8px" }}>Factor relativo</th>
+                <th style={{ textAlign: "left", padding: "6px 8px" }}>Unidad</th><th style={{ padding: "6px 8px" }}>P (MW)</th><th style={{ padding: "6px 8px" }}>Q Hidrometría</th><th style={{ padding: "6px 8px" }}>Q WK (sin calibrar)</th><th style={{ padding: "6px 8px" }}>Q modelo</th><th style={{ padding: "6px 8px" }}>Apertura modelo (% · °)</th><th style={{ padding: "6px 8px" }}>F.C. WK (30 d)</th><th style={{ padding: "6px 8px" }}>Factor relativo</th>
               </tr></thead>
               <tbody>{a.p.map((p, u) => {
                 const m = modelo.comun.porUnidad[u], idx = v.indiceUnidades ? v.indiceUnidades[u] : null;
@@ -228,7 +254,7 @@ export default function Tablero({ T, condDescarga }) {
                     <td style={{ padding: "6px 8px" }}>{on ? fmtNum(a.qFC[u], 1) : "—"}</td>
                     <td style={{ padding: "6px 8px" }}>{on ? fmtNum(a.qWK[u], 1) : "—"}</td>
                     <td style={{ padding: "6px 8px" }}>{on && m ? fmtNum(m.qColina, 1) : "—"}</td>
-                    <td style={{ padding: "6px 8px" }}>{on && m ? `${fmtNum(m.gamma, 1)}°` : "—"}</td>
+                    <td style={{ padding: "6px 8px" }}>{on && m ? <>{fmtNum(pctFromDeg(m.gamma), 1)} %<span style={{ color: T.inkFaint, fontSize: 11 }}> · {fmtNum(m.gamma, 1)}°</span></> : "—"}</td>
                     <td style={{ padding: "6px 8px" }}>{idx && idx.fcWK ? fmtNum(idx.fcWK, 3) : "—"}</td>
                     <td style={{ padding: "6px 8px" }}>{idx && idx.factor ? fmtNum(idx.factor, 3) : "—"}</td>
                   </tr>
@@ -260,6 +286,12 @@ export default function Tablero({ T, condDescarga }) {
             <Tarjeta T={T} titulo="Nivel del embalse"><GraficoSeries T={T} x={series.t} series={sNivel} unidad="msnm" ejeY="msnm" decimales={3} grupo="vivo" alto={220} nombreArchivo={`nivel_${rango.desde}_${rango.hasta}`} referencias={[{ y: NAMO, rotulo: `NAMO ${NAMO}` }]} /></Tarjeta>
             <Tarjeta T={T} titulo="Potencia por unidad"><GraficoSeries T={T} x={series.t} series={sPot} unidad="MW" ejeY="MW" decimales={1} grupo="vivo" alto={220} nombreArchivo={`potencia_${rango.desde}_${rango.hasta}`} incluirCero /></Tarjeta>
           </div>
+          {apertura && apertura.nU > 0 && (
+            <Tarjeta T={T} titulo={`Apertura del distribuidor por unidad (${fechaCorta(rango.desde)} – ${fechaCorta(rango.hasta)})`}
+              subtitulo={apertura.paso === "15 min" ? "Promedio de cada 15 minutos (la hora marca el inicio del intervalo), en % y su equivalente en grados (eje derecho y tooltip). Se cuenta la unidad si estuvo en línea al menos la mitad del intervalo." : "Promedio de cada hora, en % y su equivalente en grados (eje derecho y tooltip). Se cuenta la unidad si estuvo en línea al menos media hora."}>
+              <GraficoApertura T={T} x={apertura.t} filas={apertura.filas} nU={apertura.nU} pasoH={apertura.pasoH} grupo="vivo" nombreArchivo={`apertura_${rango.desde}_${rango.hasta}`} mensajeVacio="Sin apertura calculable en el periodo (ninguna unidad en línea, o días del histórico anteriores al cálculo de la apertura)." />
+            </Tarjeta>
+          )}
         </>
       )}
 

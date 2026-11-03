@@ -214,6 +214,7 @@ function caudalModeloIntervalos(intervalos, { nivelDe, cond = CONDICION_DESCARGA
     const enLinea = iv.p.map((p) => p != null && p > P_EN_LINEA_MW);
     const n = enLinea.filter(Boolean).length;
     const qMod = [null, null, null, null];
+    const gamma = [null, null, null, null]; // apertura del distribuidor estimada (grados); null si la unidad no está en línea
     let ok = nivel != null;
     if (ok) {
       for (let u = 0; u < 4; u++) {
@@ -222,16 +223,18 @@ function caudalModeloIntervalos(intervalos, { nivelDe, cond = CONDICION_DESCARGA
         const clave = `${pb}|${nv}|${n}`;
         if (!cache.has(clave)) {
           const r = resolverGammaParaPotencia(nv, pb / rendimientoGenerador(pb), n, gammaMax, null, cond);
-          cache.set(clave, r.resultado && r.alcanzable !== false ? r.resultado.Q : null);
+          cache.set(clave, r.resultado && r.alcanzable !== false ? { q: r.resultado.Q, g: r.gamma } : null);
         }
-        qMod[u] = cache.get(clave);
+        const c = cache.get(clave);
+        qMod[u] = c ? c.q : null;
+        gamma[u] = c ? c.g : null;
         if (qMod[u] == null) ok = false;
       }
     }
     const qHid = iv.p.map((p, u) => (p != null && p > P_EN_LINEA_MW && iv.q[u] != null ? iv.q[u] : p != null && p > P_EN_LINEA_MW ? null : 0));
     const q2 = iv.q2 ? iv.p.map((p, u) => (p != null && p > P_EN_LINEA_MW ? iv.q2[u] : 0)) : [null, null, null, null];
     return {
-      ...iv, nivel, n, qMod,
+      ...iv, nivel, n, qMod, gamma,
       qModTotal: ok ? qMod.reduce((s, x) => s + x, 0) : null,
       qHidTotal: iv.qReg,            // Hidrometría: potencia / F.C. vigente (regla de su app)
       qLogTotal: qHid.every((x) => x != null) ? qHid.reduce((s, x) => s + x, 0) : null, // columna de LoggerNet

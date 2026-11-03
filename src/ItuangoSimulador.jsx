@@ -17,6 +17,7 @@ import { tramosCumplimiento } from "./analitica.js";
 import { ProveedorDatos, useDatos } from "./datos/fuentes.jsx";
 import { Proposito, PanelConexion } from "./ui/comunes.jsx";
 import { GraficoSeries } from "./ui/graficos.jsx";
+import { EQUIV_APERTURA, referenciasApertura, NOTA_APERTURA } from "./ui/Apertura.jsx";
 import Tablero from "./ui/Tablero.jsx";
 import ReglaAnla from "./ui/ReglaAnla.jsx";
 import Unidades from "./ui/Unidades.jsx";
@@ -272,7 +273,7 @@ function ChartFamilia({ ejeX, ejeY, xLabel, yLabel, xDomain, yDomain, waeCampoX,
           transform: "translate(12px, -110%)", background: T.panel, border: `1px solid ${T.line}`, borderRadius: 6,
           padding: "7px 10px", fontFamily: FONT_BODY, fontSize: 11, color: T.ink, boxShadow: T.cardShadow, pointerEvents: "none", whiteSpace: "nowrap", zIndex: 5,
         }}>
-          <div style={{ color: T.teal, fontWeight: 700 }}>γ = {hover.punto.gamma}°</div>
+          <div style={{ color: T.teal, fontWeight: 700 }}>Apertura = {fx(pctFromDeg(hover.punto.gamma), 1)} % (γ = {fx(hover.punto.gamma, 2)}°)</div>
           <div>Q = {fx(hover.punto.Q, 1)} m³/s · P = {fx(hover.punto.P, 1)} MW</div>
           <div>η = {fx(hover.punto.eta, 2)}% · H = {fx(hover.punto.H, 1)} m</div>
         </div>
@@ -699,6 +700,24 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
     return { x: g.map((x) => x.hora), s };
   }, [calc, T, sensQ, bandaPct]); // eslint-disable-line react-hooks/exhaustive-deps
   const det = calc.principal.detalle;
+  // Apertura por hora: la del programa simulado (igual para cada unidad en
+  // línea) y, si la fecha es hoy, la estimada de cada unidad con lo medido.
+  const seriesApertura = (() => {
+    const x = [...HORAS_DIA, 24];
+    const ext = (arr) => [...arr, arr[arr.length - 1]];
+    const pct = (g) => (g != null && g > 0 ? +pctFromDeg(g).toFixed(2) : null);
+    const s = [];
+    const hReal = vivo && vivo.hoy === fecha && vivo.resHoy ? vivo.resHoy.horas : null;
+    if (hReal) {
+      const nU = hReal.reduce((k, h) => Math.max(k, h && h.gamma ? h.gamma.length : 0), 0);
+      for (let u = 0; u < nU; u++) {
+        const datos = HORAS_DIA.map((h) => pct(hReal[h] && hReal[h].gamma ? hReal[h].gamma[u] : null));
+        if (datos.some((v) => v != null)) s.push({ nombre: `U${u + 1} real (estimada)`, datos: ext(datos), indice: u, ancho: 1.8, escalones: true });
+      }
+    }
+    s.push({ nombre: `Programa simulado (cada unidad en línea)`, datos: ext(det.map((d) => (d.qTurbinado > 0 ? pct(d.gamma) : null))), color: T.ink, dash: true, ancho: 2.2, escalones: true });
+    return { x, s, conReal: !!hReal };
+  })();
   const noAlcanzables = det.filter((d) => d.potenciaMW > 0 && !d.alcanzable && !d.enMinimoEnsayado);
   const bajoMinimo = det.filter((d) => d.enMinimoEnsayado);
   const reducidas = det.filter((d) => d.unidadesReducidas && !d.enMinimoEnsayado);
@@ -713,7 +732,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
   const csv = det.map((d, i) => ({
     hora: d.hora, despacho_xm_mw: filas[i].despacho, promedio_rt_mw: filas[i].rt, estado_hora: ETIQUETA_ESTADO_HORA[calc.estados[i]],
     programa_simulado: nombrePrograma(calc.modo, calc.progs), potencia_programa_mw: +d.potenciaMW.toFixed(2), unidades: d.unidades,
-    p_bornes_unidad_mw: +d.pBornesUnidad.toFixed(2), p_eje_unidad_mw: +d.pEjeUnidad.toFixed(2), apertura_grados: +d.gamma.toFixed(3),
+    p_bornes_unidad_mw: +d.pBornesUnidad.toFixed(2), p_eje_unidad_mw: +d.pEjeUnidad.toFixed(2), apertura_pct: +pctFromDeg(d.gamma).toFixed(2), apertura_grados: +d.gamma.toFixed(3),
     eta_pct: d.eta != null ? +d.eta.toFixed(2) : null, q_turbinado_modelo_m3s: +d.qTurbinado.toFixed(2),
     q_regulado_hidrometria_m3s: calc.regla.porHora[i].principal != null ? +calc.regla.porHora[i].principal.toFixed(2) : null, q_entrada_m3s: d.qEntrada,
     nivel_fin: +d.Hfin.toFixed(4), nivel_fin_banda_inf: +calc.inf.serie[i + 1].nivel.toFixed(4), nivel_fin_banda_sup: +calc.sup.serie[i + 1].nivel.toFixed(4),
@@ -837,8 +856,8 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
         {calc.errMedido.length > 0 && <div>Frente al nivel medido ({calc.errMedido.length} h): diferencia máxima {fx(Math.max(...calc.errMedido.map(Math.abs)) * 100, 1)} cm.</div>}
         <div style={{ fontSize: 11.5, color: T.inkFaint }}>Almenara: {etiquetaCondicionDescarga(condDescarga)} (panel Condición de descarga; el caudal del río en D4' incluye lo turbinado). F.C. de Hidrometría a {fx(nivelInicial, 2)} msnm: {fx(fcInicio, 3)}.</div>
         {noAlcanzables.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {noAlcanzables.map((d) => d.hora).join(", ")}: la potencia no se alcanza con esas unidades, el techo de apertura {etiquetaTecho} (se elige en "Rango de apertura" del Buscador) y {P_MAXIMO_ESPERADO_MW} MW por unidad. Aumenta las unidades de esa hora o revisa el techo; el nivel se calcula con la potencia máxima alcanzable.</div>}
-        {reducidas.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {reducidas.map((d) => `${d.hora} (${d.unidadesPedidas}→${d.unidades} ud.)`).join(", ")}: con las unidades pedidas, cada una quedaría por debajo de la apertura mínima ensayada ({fx(GAMMAS_HILL[0], 2)}°); se calculó con la cantidad de unidades que turbina menos agua.</div>}
-        {bajoMinimo.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {bajoMinimo.map((d) => d.hora).join(", ")}: la potencia es menor que la de una unidad en la apertura mínima ensayada ({fx(GAMMAS_HILL[0], 2)}°); se tomó el caudal de esa apertura mínima con una unidad.</div>}
+        {reducidas.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {reducidas.map((d) => `${d.hora} (${d.unidadesPedidas}→${d.unidades} ud.)`).join(", ")}: con las unidades pedidas, cada una quedaría por debajo de la apertura mínima ensayada ({fx(pctFromDeg(GAMMAS_HILL[0]), 1)} % = {fx(GAMMAS_HILL[0], 2)}°); se calculó con la cantidad de unidades que turbina menos agua.</div>}
+        {bajoMinimo.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {bajoMinimo.map((d) => d.hora).join(", ")}: la potencia es menor que la de una unidad en la apertura mínima ensayada ({fx(pctFromDeg(GAMMAS_HILL[0]), 1)} % = {fx(GAMMAS_HILL[0], 2)}°); se tomó el caudal de esa apertura mínima con una unidad.</div>}
         {sobreDisponibles.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {sobreDisponibles.map((f) => f.hora).join(", ")}: más unidades que las disponibles ({unidadesDisp}).</div>}
       </div>
 
@@ -858,6 +877,10 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
 
       <ChartHeader titulo="Potencia por hora: despacho, generación real y programa" T={T} subtitulo="MW en bornes. Las líneas punteadas grises son la banda de la regla expresada en MW con el F.C. de las 00:00." />
       <GraficoSeries T={T} tipoX="numero" ejeX="Hora" x={seriesPotencia.x} series={seriesPotencia.s} unidad="MW" ejeY="MW" decimales={0} alto={240} grupo="desp" nombreArchivo={`potencia_horaria_${fecha}`} />
+
+      <ChartHeader titulo="Apertura del distribuidor por hora" T={T} subtitulo={seriesApertura.conReal ? "Programa simulado (todas las unidades en línea con la misma apertura) frente a la apertura estimada de cada unidad con su potencia medida en las horas ya transcurridas. En % y su equivalente en grados (eje derecho y tooltip)." : "Apertura de cada unidad en línea con el programa simulado (todas con la misma apertura). En % y su equivalente en grados (eje derecho y tooltip). Para la fecha de hoy se agrega la estimada de cada unidad con lo medido."} />
+      <GraficoSeries T={T} tipoX="numero" ejeX="Hora" x={seriesApertura.x} series={seriesApertura.s} unidad="%" ejeY="apertura (%)" decimales={1} alto={240} grupo="desp" nombreArchivo={`apertura_horaria_${fecha}`} referencias={referenciasApertura(T)} equivalente={EQUIV_APERTURA} />
+      <p style={{ fontSize: 11.5, color: T.inkFaint, margin: "-6px 0 14px", lineHeight: 1.5, fontFamily: FONT_BODY }}>{NOTA_APERTURA} El techo del programa es el elegido en "Rango de apertura" ({etiquetaTecho}).</p>
 
       <ChartHeader titulo="Nivel del embalse — evolución intradiaria" T={T} accion={<BotonCSV data={csv} filename="despacho_intradiario.csv" T={T} />} />
       <GraficoSeries T={T} tipoX="numero" ejeX="Hora" grupo="desp" x={seriesNivel.x} series={seriesNivel.s} unidad="msnm" ejeY="msnm" decimales={3} alto={300} nombreArchivo="despacho_nivel" bandas={[{ desde: 0, hasta: 1, relleno: "rgba(148,163,184,0.10)" }, { desde: 2, hasta: 3 }]} />
@@ -1807,14 +1830,14 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
       </>)}
 
       {tab === "despacho" && (<>
-      <Proposito T={T} id="despacho" titulo="Despacho intradiario" fuente="Modelo de la colina + curvas cota-volumen; datos en vivo del relay y HydroForecast" para="Proyectar el nivel del embalse hora a hora con el despacho de XM, la generación real (RT) o el programa plano, y revisar la regla operativa del día." logras="Saber, antes de que termine el día, si el programa deja el embalse donde se quiere y si el promedio regulado queda dentro de la banda de la Res. 1891." resultados="Nivel a las 24 h con bandas de sensibilidad, estado de cada hora (XM frente a RT), caudal regulado por hora y su promedio frente a la banda, tabla horaria y CSV. El nivel de las 00:00, el Q de ayer, el caudal de entrada y las horas ya cerradas se llenan con los datos en vivo; el despacho de XM se pega." />
+      <Proposito T={T} id="despacho" titulo="Despacho intradiario" fuente="Modelo de la colina + curvas cota-volumen; datos en vivo del relay y HydroForecast" para="Proyectar el nivel del embalse hora a hora con el despacho de XM, la generación real (RT) o el programa plano, y revisar la regla operativa del día." logras="Saber, antes de que termine el día, si el programa deja el embalse donde se quiere y si el promedio regulado queda dentro de la banda de la Res. 1891." resultados="Nivel a las 24 h con bandas de sensibilidad, estado de cada hora (XM frente a RT), caudal regulado por hora y su promedio frente a la banda, apertura del distribuidor por hora (programa y, hoy, la estimada de cada unidad, en % y grados), tabla horaria y CSV. El nivel de las 00:00, el Q de ayer, el caudal de entrada y las horas ya cerradas se llenan con los datos en vivo; el despacho de XM se pega." />
       <div style={cardStyle}>
         <PanelDespachoIntradiario T={T} condDescarga={condDescarga} gammaMax={gammaMecanicoDeRango(rangoOptimo)} etiquetaTecho={etiquetaRango(rangoOptimo)} />
       </div>
       </>)}
 
       {tab === "operacion" && (<>
-        <Proposito T={T} id="operacion" titulo="Operación medida" fuente="LoggerNet (relay al repositorio privado, o un archivo .dat / CSV local)" para="Revisar, minuto a minuto, la generación y el caudal medidos frente al modelo de la colina, y validar el factor de conversión de Hidrometría." logras="Confirmar que los números de Hidrometría salen bien y medir cuánto se separa el modelo de lo operado, por unidad." resultados="Volúmenes por unidad (Hidrometría, Winter-Kennedy relativo y modelo), regla diaria, verificación de la columna de LoggerNet, gráficos interactivos y CSV." />
+        <Proposito T={T} id="operacion" titulo="Operación medida" fuente="LoggerNet (relay al repositorio privado, o un archivo .dat / CSV local)" para="Revisar, minuto a minuto, la generación y el caudal medidos frente al modelo de la colina, y validar el factor de conversión de Hidrometría." logras="Confirmar que los números de Hidrometría salen bien y medir cuánto se separa el modelo de lo operado, por unidad." resultados="Volúmenes por unidad (Hidrometría, Winter-Kennedy relativo y modelo), regla diaria, verificación de la columna de LoggerNet, apertura del distribuidor estimada por unidad (en % y grados), gráficos interactivos y CSV." />
         <div style={cardStyle}>
           <OperacionMedida T={T} condDescarga={condDescarga} />
         </div>
@@ -1831,7 +1854,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
               onChange={(p) => setGamma(degFromPct(p))} unit="%" T={T}
               tip={`Apertura de los álabes directrices, en % (100% = 30.2° = límite ampliado y garantizado por GE/EPM en 2023). Rango ensayado en el modelo físico: ${fx(pctFromDeg(GAMMAS_HILL[0]), 0)}%-${fx(pctFromDeg(GAMMA_ENSAYADO_MAX), 0)}%. Límite mecánico original: ${fx(pctFromDeg(GAMMA_ORIGINAL_MAX), 0)}%. Operación normal recomendada: hasta 97% (el ${MARGEN_FRECUENCIA_PCT}% restante hasta 100% se reserva para respuesta a frecuencia). Por encima de 100% (hasta el máximo ensayado, ~${fx(pctFromDeg(GAMMA_ENSAYADO_MAX), 0)}%) solo está disponible para exploración/investigación — no es un rango habilitado para operación continua.`} />
             <div style={{ fontSize: 11, color: T.inkFaint, fontFamily: FONT_BODY, marginTop: -10, marginBottom: 8 }}>
-              ≈ {fx(gamma, 2)}°
+              {fx(pctFromDeg(gamma), 1)} % ≈ {fx(gamma, 2)}° (100 % = 30,2°)
             </div>
             {gamma > GAMMA_NORMAL_MAX && gamma <= GAMMA_AMPLIADO_MAX && (
               <div style={{
@@ -1947,14 +1970,14 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
       </div>
 
       <div style={cardStyle}>
-        <ChartHeader titulo="Caudal por apertura constante — variables reducidas" subtitulo="Análogo a la Figura 4.1 (n₁₁-Q₁₁). Cada línea es una apertura γ realmente ensayada; la resaltada es la más cercana a tu selección." T={T}
-          accion={<BotonCSV data={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ gamma: l.gamma, ...p })))} filename="n11_q11.csv" T={T} />} />
+        <ChartHeader titulo="Caudal por apertura constante — variables reducidas" subtitulo={`Análogo a la Figura 4.1 (n₁₁-Q₁₁). Cada línea es una apertura γ realmente ensayada; la resaltada es la más cercana a tu selección (${fx(pctFromDeg(gammaCercana), 1)} % = ${fx(gammaCercana, 2)}°). Aperturas ensayadas: ${GAMMAS_HILL.map((g) => `${fx(pctFromDeg(g), 1)} %`).join(", ")} (100 % = 30,2°).`} T={T}
+          accion={<BotonCSV data={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ apertura_pct: +pctFromDeg(l.gamma).toFixed(2), gamma_grados: l.gamma, ...p })))} filename="n11_q11.csv" T={T} />} />
         <ChartFamilia ejeX="n11" ejeY="Q11_m3s" xLabel="n₁₁ (rpm)" yLabel="Q₁₁ (m³/s)" xDomain={[n11min, n11max]} yDomain={[0, dominioY(2)[1] / 1000]} waeCampoX={0} waeCampoY={1} waeEscala={0.001} bepXY={[51.96, 0.63245]} grid={gridModeloQ} niveles={NIVELES_MODELO} puntoActualXY={puntoActual ? [puntoActual.n11, puntoActual.Q11 / 1000] : null} lineasPorGamma={lineasPorGamma} gammaCercana={gammaCercana} T={T} />
       </div>
 
       <div style={cardStyle}>
         <ChartHeader titulo="Potencia por apertura constante — variables reducidas" subtitulo="Análogo a la Figura 4.2 (n₁₁-P₁₁)." T={T}
-          accion={<BotonCSV data={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ gamma: l.gamma, ...p })))} filename="n11_p11.csv" T={T} />} />
+          accion={<BotonCSV data={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ apertura_pct: +pctFromDeg(l.gamma).toFixed(2), gamma_grados: l.gamma, ...p })))} filename="n11_p11.csv" T={T} />} />
         <ChartFamilia ejeX="n11" ejeY="P11_MW" xLabel="n₁₁ (rpm)" yLabel="P₁₁ (MW)" xDomain={[n11min, n11max]} yDomain={[0, dominioY(3)[1] / 1000]} waeCampoX={0} waeCampoY={2} waeEscala={0.001} bepXY={[51.96, 0.00595]} grid={gridModeloP} niveles={NIVELES_MODELO} puntoActualXY={puntoActual ? [puntoActual.n11, puntoActual.P11 / 1000] : null} lineasPorGamma={lineasPorGamma} gammaCercana={gammaCercana} T={T} />
       </div>
 
@@ -1965,14 +1988,14 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
 
       <div style={cardStyle}>
         <ChartHeader titulo="Caudal por apertura constante — escala de prototipo" subtitulo="Análogo a la Figura 4.5 (H-proto vs. Q-proto)." T={T}
-          accion={<BotonCSV data={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ gamma: l.gamma, ...p })))} filename="H_Q_prototipo.csv" T={T} />} />
+          accion={<BotonCSV data={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ apertura_pct: +pctFromDeg(l.gamma).toFixed(2), gamma_grados: l.gamma, ...p })))} filename="H_Q_prototipo.csv" T={T} />} />
         <ChartFamilia ejeX="H" ejeY="Q" xLabel="H-proto (m)" yLabel="Q-proto (m³/s)" xDomain={[Hmin, Hmax]} yDomain={dominioY(6)} waeCampoX={5} waeCampoY={6} bepXY={[198.29, 146.67]} grid={gridProtoQ} niveles={NIVELES_PROTO} puntoActualXY={puntoActual ? [Hsel, puntoActual.Q] : null} lineasPorGamma={lineasPorGamma} gammaCercana={gammaCercana} T={T}
           puntosExtra={ESCENARIOS_2023_EPM_GE.map((e) => ({ x: e.saltoNeto_m, y: e.Q_m3s, label: e.id }))} />
       </div>
 
       <div style={cardStyle}>
         <ChartHeader titulo="Potencia por apertura constante — escala de prototipo" subtitulo="Análogo a la Figura 4.6 (H-proto vs. P-proto)." T={T}
-          accion={<BotonCSV data={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ gamma: l.gamma, ...p })))} filename="H_P_prototipo.csv" T={T} />} />
+          accion={<BotonCSV data={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ apertura_pct: +pctFromDeg(l.gamma).toFixed(2), gamma_grados: l.gamma, ...p })))} filename="H_P_prototipo.csv" T={T} />} />
         <ChartFamilia ejeX="H" ejeY="P" xLabel="H-proto (m)" yLabel="P-proto (MW)" xDomain={[Hmin, Hmax]} yDomain={dominioY(7)} waeCampoX={5} waeCampoY={7} bepXY={[198.29, 273.41]} grid={gridProtoP} niveles={NIVELES_PROTO} puntoActualXY={puntoActual ? [Hsel, puntoActual.P] : null} lineasPorGamma={lineasPorGamma} gammaCercana={gammaCercana} T={T}
           puntosExtra={ESCENARIOS_2023_EPM_GE.map((e) => ({ x: e.saltoNeto_m, y: e.P_turbina_MW, label: e.id }))} />
       </div>
@@ -2085,12 +2108,12 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
 
       <div style={cardStyle}>
         <ChartHeader titulo="Estudio de ampliación 2023" subtitulo="Los puntos morados (◆) en las gráficas de arriba son estos 6 escenarios reales, no proyecciones mías." T={T}
-          tip="Estudio de ampliación de GE (2023): extiende el límite mecánico del distribuidor de 26.5° a 30.2° (carrera del servomotor de 390 a 433 mm). Numeral 3.1.1 (2 escenarios, 1 unidad, evaluación exploratoria — NO garantizados) y (4 escenarios, condición de potencias en generador/subestación). Todos los valores de esta tarjeta están tomados directamente del documento, no calculados por mi modelo (aunque mi modelo los reproduce con error <0.15% en Q y P — ver validación)." />
+          tip="Estudio de ampliación de GE (2023): extiende el límite mecánico del distribuidor de 26.5° (87,7 %) a 30.2° (100 %) (carrera del servomotor de 390 a 433 mm). Numeral 3.1.1 (2 escenarios, 1 unidad, evaluación exploratoria — NO garantizados) y (4 escenarios, condición de potencias en generador/subestación). Todos los valores de esta tarjeta están tomados directamente del documento, no calculados por mi modelo (aunque mi modelo los reproduce con error <0.15% en Q y P — ver validación)." />
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, fontFamily: FONT_BODY }}>
             <thead>
               <tr style={{ borderBottom: `1px solid ${T.line}` }}>
-                {["", "Caudal", "Salto neto", "Apertura γ", "P. turbina", "P. bornes generador", "P. subestación"].map((h, i) => (
+                {["", "Caudal", "Salto neto", "Apertura (% · γ)", "P. turbina", "P. bornes generador", "P. subestación"].map((h, i) => (
                   <th key={i} style={{ textAlign: i === 0 ? "left" : "right", padding: "6px 8px", color: T.inkFaint, fontWeight: 600 }}>{h}</th>
                 ))}
               </tr>
@@ -2104,7 +2127,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
                   </td>
                   <td style={{ padding: "6px 8px", textAlign: "right", color: T.ink }}>{fxa(e.Q_m3s)} m³/s</td>
                   <td style={{ padding: "6px 8px", textAlign: "right", color: T.ink }}>{fxa(e.saltoNeto_m)} m</td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", color: T.ink }}>{fxa(e.gamma_deg)}°</td>
+                  <td style={{ padding: "6px 8px", textAlign: "right", color: T.ink }}>{fx(pctFromDeg(e.gamma_deg), 1)} %<div style={{ color: T.inkFaint, fontSize: 10.5 }}>{fxa(e.gamma_deg)}°</div></td>
                   <td style={{ padding: "6px 8px", textAlign: "right", color: e.P_turbina_MW > P_MAXIMO_ESPERADO_MW ? T.red : T.ink, fontWeight: e.P_turbina_MW > P_MAXIMO_ESPERADO_MW ? 700 : 400 }}>{fxa(e.P_turbina_MW)} MW</td>
                   <td style={{ padding: "6px 8px", textAlign: "right", color: T.ink }}>{fxa(e.P_bornes_generador_MW)} MW <span style={{ color: T.inkMuted, fontSize: 10.5 }}>(η = {fxa(e.eta_generador_pct)} %)</span></td>
                   <td style={{ padding: "6px 8px", textAlign: "right", color: T.teal, fontWeight: 700 }}>
@@ -2127,7 +2150,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
         <div style={{ height: 1, background: T.line, margin: "14px 0" }} />
         <div style={{ fontSize: 12.5, color: T.ink, fontWeight: 700, marginBottom: 6, fontFamily: FONT_BODY }}>Modificación mecánica que habilita el rango ampliado</div>
         <div style={{ fontSize: 12, color: T.inkMuted, fontFamily: FONT_BODY, lineHeight: 1.6 }}>
-          Apertura máxima del distribuidor: {SERVOMOTOR_2023.aperturaOriginal_deg}° → {SERVOMOTOR_2023.aperturaModificada_deg}° (incremento de {SERVOMOTOR_2023.incrementoApertura_deg}°).
+          Apertura máxima del distribuidor: {SERVOMOTOR_2023.aperturaOriginal_deg}° ({fx(pctFromDeg(SERVOMOTOR_2023.aperturaOriginal_deg), 1)} %) → {SERVOMOTOR_2023.aperturaModificada_deg}° ({fx(pctFromDeg(SERVOMOTOR_2023.aperturaModificada_deg), 1)} %) (incremento de {SERVOMOTOR_2023.incrementoApertura_deg}° = {fx(pctFromDeg(SERVOMOTOR_2023.incrementoApertura_deg), 1)} puntos de %).
           Carrera del servomotor: {SERVOMOTOR_2023.carreraOriginal_mm} mm → {SERVOMOTOR_2023.carreraModificada_mm} mm (incremento de {SERVOMOTOR_2023.incrementoCarrera_mm} mm).
           Fuente: {SERVOMOTOR_2023.fuente}.
         </div>
@@ -2136,7 +2159,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
       <div style={{ fontSize: 12, color: T.inkFaint, lineHeight: 1.65, fontFamily: FONT_BODY, marginBottom: 30 }}>
         Fuente: ensayo de modelo físico (2013), transpuesto al prototipo según IEC 60193
         (N=180 rpm, D=4.05972 m — existe una discrepancia documentada con 4.0584 m en los pies de las Figuras 4.3/4.4).
-        186 puntos de la tabla final de transposición, 12 aperturas ensayadas (4.87°-31.98°), 6 puntos WAE
+        186 puntos de la tabla final de transposición, 12 aperturas ensayadas (4.87°-31.98°, es decir {fx(pctFromDeg(GAMMAS_HILL[0]), 1)} %-{fx(pctFromDeg(GAMMA_ENSAYADO_MAX), 1)} %), 6 puntos WAE
         (círculos ámbar) con sus pesos porcentuales de la Tabla 4.1. Punto resaltado en negro: tu selección actual
         de γ y H. Isolíneas de eficiencia (verde) trazadas con marching squares sobre una malla de 60×60 nodos,
         interpolada con el mismo método PCHIP (en el BEP publicado el modelo da Q −0,4 %, P −0,5 % y η −0,10 pp) — usan la eficiencia MEDIDA

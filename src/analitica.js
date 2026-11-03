@@ -36,7 +36,7 @@ import {
 } from "./modelo.js";
 import { P_EN_LINEA_MW, caudalRegulado, verificarColumnaLoggerNet } from "./operacion.js";
 
-const VERSION_ANALITICA = 3; // 2: estabilidad del WK continua entre horas; 3: calidad y validación por día
+const VERSION_ANALITICA = 4; // 2: estabilidad del WK continua entre horas; 3: calidad y validación por día; 4: apertura estimada por unidad en el horario
 const UMBRAL_VERTIMIENTO_M3S = 1; // > 1 m³/s en el vertedero = hay vertimiento (igual que la regla diaria)
 const GAMMA_MAX_MODELO = 31.98;
 const MIN_ESTABLE = 10; // minutos seguidos en línea antes de usar el Winter-Kennedy de una unidad
@@ -364,15 +364,37 @@ function estadisticasRegla(dias) {
 
 /* Serie horaria compacta (columnas) de un mes, a partir de los resúmenes diarios. */
 function serieHoraria(dias) {
-  const cols = { t: [], nivel: [], qReg: [], qVert: [], qDesc: [], fc: [], p: [], qFC: [], qWK: [], fcWK: [], qMod: [], etaWK: [], etaMod: [], linea: [], qComp: [], aComp: [] };
+  const cols = { t: [], nivel: [], qReg: [], qVert: [], qDesc: [], fc: [], p: [], qFC: [], qWK: [], fcWK: [], qMod: [], etaWK: [], etaMod: [], linea: [], qComp: [], aComp: [], gamma: [] };
   for (const d of dias) for (const h of d.horas) {
     if (!h) continue;
     cols.t.push(h.t); cols.nivel.push(h.nivel); cols.qReg.push(h.qReg); cols.qVert.push(h.qVert); cols.qDesc.push(h.qDesc); cols.fc.push(h.fc);
     cols.p.push(h.p); cols.qFC.push(h.qFC); cols.qWK.push(h.qWK); cols.fcWK.push(h.fcWK); cols.qMod.push(h.qMod); cols.etaWK.push(h.etaWK); cols.etaMod.push(h.etaMod); cols.linea.push(h.linea);
-    cols.qComp.push(h.qComp); cols.aComp.push(h.aComp);
+    cols.qComp.push(h.qComp); cols.aComp.push(h.aComp); cols.gamma.push(h.gamma ?? null);
   }
   return cols;
 }
+/* Apertura del distribuidor estimada por unidad en intervalos de `minutos`
+   (p. ej. 15) a partir de los datos de cada minuto. Usa exactamente el mismo
+   cálculo que el resumen horario (potencia media de cada unidad mientras
+   está en línea, nivel medio, caudal descargado del intervalo; la unidad
+   cuenta si estuvo en línea al menos la mitad del intervalo). LoggerNet no
+   mide la apertura: es la que da el modelo de la colina para esa potencia.
+   Devuelve [{ t (inicio del intervalo), min, gamma[] (grados o null), p[], linea[] }]. */
+function aperturaIntervalos(filas, nU, { minutos = 15, cond = null } = {}) {
+  const grupos = new Map();
+  for (const r of filas) {
+    const k = Math.floor(minutosDe(r.t) / minutos) * minutos;
+    if (!grupos.has(k)) grupos.set(k, []);
+    grupos.get(k).push(r);
+  }
+  const estado = nuevoEstado(nU);
+  return [...grupos.keys()].sort((a, b) => a - b).map((k) => {
+    const t = new Date(k * 60000).toISOString().slice(0, 16).replace("T", " ");
+    const h = resumenHora(t, grupos.get(k), nU, { cond, estado });
+    return { t, min: h.min, gamma: h.gamma || Array(nU).fill(null), p: h.p, linea: h.linea };
+  });
+}
+
 /* Fila diaria compacta para el histórico (sin el detalle horario). */
 function filaDiaria(d) {
   const { horas, ...resto } = d;
@@ -398,7 +420,7 @@ function indiceRelativoUnidades(dias, { minHoras = 6 } = {}) {
 export {
   VERSION_ANALITICA, UMBRAL_VERTIMIENTO_M3S, GAMMA_MAX_MODELO,
   resumirMinutos, resumenHora, resumenDia, resumirDias, agruparPorDia, numeroUnidades,
-  requeridoRestoDelDia, cierreProyectado, calidadDia, validarDespachoDia, tramosCumplimiento, estadisticasRegla, serieHoraria, filaDiaria, indiceRelativoUnidades,
+  requeridoRestoDelDia, cierreProyectado, calidadDia, validarDespachoDia, tramosCumplimiento, estadisticasRegla, serieHoraria, aperturaIntervalos, filaDiaria, indiceRelativoUnidades,
   diaSiguiente, diaAnterior, minutosDe,
 };
 export const BANDA_RES1891 = REGLA_OPERATIVA_RES1891.bandaRelativa;

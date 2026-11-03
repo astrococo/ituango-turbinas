@@ -49,7 +49,7 @@ function etiquetasTiempo(u, splits, a, e, incr) {
 }
 
 /* Plugin: tooltip flotante con todos los valores de la posición del cursor. */
-function pluginTooltip(T, decimales, unidad, fmtX) {
+function pluginTooltip(T, decimales, unidad, fmtX, equivalente = null) {
   let tip;
   return {
     hooks: {
@@ -82,6 +82,12 @@ function pluginTooltip(T, decimales, unidad, fmtX) {
           const val = document.createElement("b");
           val.textContent = `${fmtNum(v, s._dec ?? decimales)}${s._unidad ?? unidad ? " " + (s._unidad ?? unidad) : ""}`;
           Object.assign(val.style, { color: T.ink, fontVariantNumeric: "tabular-nums" });
+          if (equivalente && v != null && Number.isFinite(v) && !s._sinEquiv) {
+            const eq = document.createElement("span");
+            eq.textContent = ` (${fmtNum(equivalente.f(v), equivalente.decimales ?? 2)}${equivalente.unidad})`;
+            Object.assign(eq.style, { color: T.inkMuted, fontWeight: "400" });
+            val.appendChild(eq);
+          }
           const nom = document.createElement("span");
           nom.textContent = s.label;
           nom.style.color = T.inkMuted;
@@ -183,8 +189,12 @@ function pluginFranjas(tramos) {
    series: [{ nombre, datos:[...], color?, indice?, dash?, ancho?, unidad?, decimales?, area?, oculta?, puntos? }]
    bandas: [{ desde: i, hasta: j, relleno }] (índices de series: rellena entre ambas)
    referencias: [{ y, rotulo, color, dash } | { y1, y2, relleno }]
-   verticales: [{ x (mismo tipo que x), rotulo, color }] */
-function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales = 1, alto = 260, ejeY, ejeX, bandas = [], referencias = [], verticales = [], grupo, nombreArchivo = "serie", yMin, yMax, incluirCero = false, escalones = false, barras = false, tramos = null, leyendaTramos = null }) {
+   verticales: [{ x (mismo tipo que x), rotulo, color }]
+   equivalente: { f, unidad, decimales, rotulo } — otra unidad del mismo valor
+     (p. ej. apertura en % → grados): eje derecho, tooltip, tabla y CSV.
+     Debe ser un objeto estable (constante de módulo). Una serie con
+     sinEquiv: true no la muestra. */
+function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales = 1, alto = 260, ejeY, ejeX, bandas = [], referencias = [], verticales = [], grupo, nombreArchivo = "serie", yMin, yMax, incluirCero = false, escalones = false, barras = false, tramos = null, leyendaTramos = null, equivalente = null }) {
   const caja = useRef(null);
   const plot = useRef(null);
   const [ocultas, setOcultas] = useState(() => new Set(series.map((s, i) => (s.oculta ? i : null)).filter((i) => i != null)));
@@ -219,6 +229,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
       axes: [
         { ...ejeComun, label: tipoX === "tiempo" ? undefined : ejeX, values: tipoX === "tiempo" ? etiquetasTiempo : (u, v, a, e, incr) => v.map((n) => fmtNum(n, decimalesPaso(incr))) },
         { ...ejeComun, label: ejeY, size: 62, values: (u, v, a, e, incr) => v.map((n) => fmtNum(n, decimalesPaso(incr))) },
+        ...(equivalente ? [{ ...ejeComun, scale: "y", side: 1, grid: { show: false }, label: equivalente.rotulo, size: 58, values: (u, v) => v.map((n) => fmtNum(equivalente.f(n), equivalente.decimalesEje ?? 1)) }] : []),
       ],
       series: [
         {},
@@ -227,7 +238,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
           fill: s.area ? colores[i] + "22" : undefined, spanGaps: false,
           points: { show: s.puntos ?? false, size: s.soloPuntos ? 8 : 6, fill: colores[i], stroke: s.soloPuntos ? T.panel : colores[i] },
           paths: s.soloPuntos ? () => null : barras || s.barras ? uPlot.paths.bars({ size: [0.7, 40] }) : escalones || s.escalones ? uPlot.paths.stepped({ align: 1 }) : undefined,
-          _color: colores[i], _dash: s.dash, _unidad: s.unidad, _dec: s.decimales,
+          _color: colores[i], _dash: s.dash, _unidad: s.unidad, _dec: s.decimales, _sinEquiv: s.sinEquiv,
         })),
       ],
       // uPlot: [serie superior, serie inferior]
@@ -235,7 +246,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
       legend: { show: false },
       cursor: { sync: grupo ? { key: grupo } : undefined, drag: { x: true, y: false, setScale: true }, points: { size: 7 } },
       hooks: { setScale: [(u, k) => { if (k === "x") setZoom(u.scales.x.min > xs[0] + 1e-9 || u.scales.x.max < xs[xs.length - 1] - 1e-9); }] },
-      plugins: [pluginTooltip(T, decimales, unidad, fmtX), pluginReferencias(T, referencias), pluginVerticales(T, verticales.map((v) => ({ ...v, x: tipoX === "tiempo" && typeof v.x === "string" ? aSeg(v.x) : v.x }))), pluginFranjas(tramos ? tramos.map((t) => ({ ...t, x0: tipoX === "tiempo" && typeof t.x0 === "string" ? aSeg(t.x0) : t.x0, x1: tipoX === "tiempo" && typeof t.x1 === "string" ? aSeg(t.x1) : t.x1 })) : null)],
+      plugins: [pluginTooltip(T, decimales, unidad, fmtX, equivalente), pluginReferencias(T, referencias), pluginVerticales(T, verticales.map((v) => ({ ...v, x: tipoX === "tiempo" && typeof v.x === "string" ? aSeg(v.x) : v.x }))), pluginFranjas(tramos ? tramos.map((t) => ({ ...t, x0: tipoX === "tiempo" && typeof t.x0 === "string" ? aSeg(t.x0) : t.x0, x1: tipoX === "tiempo" && typeof t.x1 === "string" ? aSeg(t.x1) : t.x1 })) : null)],
     };
     const u = new uPlot(opts, datos, caja.current);
     plot.current = u;
@@ -244,7 +255,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
     ro.observe(caja.current);
     return () => { ro.disconnect(); u.destroy(); plot.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [xs, series, T, alto, tipoX, ejeY, ejeX, unidad, decimales, grupo, JSON.stringify(referencias), JSON.stringify(bandas), JSON.stringify(verticales), JSON.stringify(tramos), yMin, yMax, incluirCero, escalones, barras]);
+  }, [xs, series, T, alto, tipoX, ejeY, ejeX, unidad, decimales, grupo, JSON.stringify(referencias), JSON.stringify(bandas), JSON.stringify(verticales), JSON.stringify(tramos), yMin, yMax, incluirCero, escalones, barras, equivalente]);
 
   function alternar(i) {
     setOcultas((prev) => {
@@ -261,7 +272,11 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
     const g = c.getContext("2d"); g.fillStyle = T.panel; g.fillRect(0, 0, c.width, c.height); g.drawImage(u.ctx.canvas, 0, 0);
     const a = document.createElement("a"); a.href = c.toDataURL("image/png"); a.download = `${nombreArchivo}.png`; a.click();
   }
-  const filasCSV = () => x.map((t, k) => Object.fromEntries([[tipoX === "tiempo" ? "fecha_hora" : (ejeX || "x"), t], ...series.map((s) => [`${s.nombre}${s.unidad ?? unidad ? ` (${s.unidad ?? unidad})` : ""}`, s.datos[k]])]));
+  const valEq = (v) => (equivalente && v != null && Number.isFinite(v) ? +equivalente.f(v).toFixed(equivalente.decimales ?? 2) : null);
+  const filasCSV = () => x.map((t, k) => Object.fromEntries([[tipoX === "tiempo" ? "fecha_hora" : (ejeX || "x"), t], ...series.flatMap((s) => {
+    const col = [`${s.nombre}${s.unidad ?? unidad ? ` (${s.unidad ?? unidad})` : ""}`, s.datos[k]];
+    return equivalente && !s.sinEquiv ? [col, [`${s.nombre} (${equivalente.unidad})`, valEq(s.datos[k])]] : [col];
+  })]));
 
   const boton = { border: `1px solid ${T.line}`, background: T.panel, color: T.inkMuted, borderRadius: 6, padding: "3px 9px", fontSize: 12, cursor: "pointer", fontFamily: FONT_BODY };
   return (
@@ -280,7 +295,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
         <button style={boton} onClick={descargarPNG}>PNG</button>
       </div>
       <div ref={caja} style={{ width: "100%", display: verTabla ? "none" : "block", touchAction: "pan-y" }} />
-      {verTabla && <TablaSeries T={T} x={x} series={series} unidad={unidad} decimales={decimales} tipoX={tipoX} ejeX={ejeX} fmtX={fmtX} xs={xs} />}
+      {verTabla && <TablaSeries T={T} x={x} series={series} unidad={unidad} decimales={decimales} tipoX={tipoX} ejeX={ejeX} fmtX={fmtX} xs={xs} equivalente={equivalente} />}
       {!verTabla && leyendaTramos && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", marginTop: 6, fontSize: 12, color: T.inkMuted }}>
           {leyendaTramos.map((l) => (
@@ -296,7 +311,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
   );
 }
 
-function TablaSeries({ T, x, series, unidad, decimales, tipoX, ejeX, fmtX, xs }) {
+function TablaSeries({ T, x, series, unidad, decimales, tipoX, ejeX, fmtX, xs, equivalente }) {
   const filas = x.map((_, k) => k).reverse().slice(0, 500);
   return (
     <div className="itu-tabla" style={{ maxHeight: 320, overflowY: "auto", border: `1px solid ${T.lineSoft}`, borderRadius: 8 }}>
@@ -308,7 +323,7 @@ function TablaSeries({ T, x, series, unidad, decimales, tipoX, ejeX, fmtX, xs })
         <tbody>{filas.map((k) => (
           <tr key={k} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
             <td style={{ padding: "4px 8px", color: T.inkMuted }}>{fmtX(xs[k])}</td>
-            {series.map((s, i) => <td key={i} style={{ textAlign: "right", padding: "4px 8px", color: T.ink }}>{fmtNum(s.datos[k], s.decimales ?? decimales)}</td>)}
+            {series.map((s, i) => <td key={i} style={{ textAlign: "right", padding: "4px 8px", color: T.ink }}>{fmtNum(s.datos[k], s.decimales ?? decimales)}{equivalente && !s.sinEquiv && s.datos[k] != null && Number.isFinite(s.datos[k]) ? <span style={{ color: T.inkFaint }}> ({fmtNum(equivalente.f(s.datos[k]), equivalente.decimales ?? 2)}{equivalente.unidad})</span> : null}</td>)}
           </tr>
         ))}</tbody>
       </table>

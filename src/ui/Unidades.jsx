@@ -14,6 +14,7 @@ import { useDatos } from "../datos/fuentes.jsx";
 import { useHistoricoDiario, useHorario } from "../datos/historico.js";
 import { GraficoSeries, Estado, fmtNum, colorSerie } from "./graficos.jsx";
 import { Proposito, Tarjeta, RequiereConexion, SelectorRango, rangoUltimos, fechaCorta } from "./comunes.jsx";
+import { GraficoApertura } from "./Apertura.jsx";
 
 const mediana = (a) => { const b = a.filter((x) => x != null && Number.isFinite(x)).sort((x, y) => x - y); if (!b.length) return null; const n = b.length; return n % 2 ? b[(n - 1) / 2] : (b[n / 2 - 1] + b[n / 2]) / 2; };
 
@@ -83,11 +84,19 @@ export default function Unidades({ T }) {
     return { x: xs, series: Array.from({ length: nU }, (_, u) => ({ nombre: `U${u + 1}`, indice: u, puntos: true, datos: xs.map((b) => (tramos.get(b)[u].length >= 3 ? mediana(tramos.get(b)[u]) : null)), decimales: 3 })) };
   }, [horario.datos, nU]);
 
+  // Apertura del distribuidor estimada, hora a hora (mismo periodo que la curva)
+  const apertura = useMemo(() => {
+    const h = horario.datos;
+    if (!h || !h.t.length) return null;
+    const conDato = h.gamma.some((g) => g && g.some((x) => x != null));
+    return { t: h.t, filas: h.gamma, conDato };
+  }, [horario.datos]);
+
   const guia = (
     <Proposito T={T} id="unidades" titulo="Comportamiento de cada unidad" fuente="LoggerNet (cada minuto) · Winter-Kennedy sin calibrar como índice relativo · modelo de la colina"
       para="Comparar las máquinas entre sí: aunque las ocho comparten el mismo diagrama colinar (U1–U4 casa de máquinas norte; U5–U8 sur, desde 2028), cada una rinde distinto en eficiencia y caudal."
       logras="Saber qué unidad entrega más energía por metro cúbico, en qué orden conviene ponerlas en línea, cómo cambia su rendimiento con la carga y si la diferencia entre el caudal de Hidrometría (P / F.C.) y el Winter-Kennedy se reduce con el tiempo (por ejemplo, con los dragados del río)."
-      resultados="Tabla por unidad (horas, energía, arranques, F.C. WK, factor relativo, η aparente frente al modelo), orden de mérito y gráficos diarios y por tramo de potencia. El WK no está calibrado: todo índice con WK es relativo." />
+      resultados="Tabla por unidad (horas, energía, arranques, F.C. WK, factor relativo, η aparente frente al modelo), orden de mérito, gráficos diarios y por tramo de potencia, y la apertura del distribuidor de cada unidad hora a hora (en % y grados, estimada con el modelo). El WK no está calibrado: todo índice con WK es relativo." />
   );
   if (!d.conectado) return <>{guia}<RequiereConexion T={T} que="el histórico por unidad" /></>;
   const th = { padding: "6px 8px", textAlign: "right", whiteSpace: "nowrap" };
@@ -150,6 +159,11 @@ export default function Unidades({ T }) {
               <GraficoSeries T={T} x={s.t} series={s.horas} unidad="h" ejeY="h" decimales={1} grupo="unid" alto={220} nombreArchivo="horas_unidades" incluirCero yMax={24} />
             </Tarjeta>
           </div>
+          <Tarjeta T={T} titulo="Apertura del distribuidor por unidad, hora a hora" subtitulo={`Apertura estimada (en % y su equivalente en grados) de cada unidad en línea, promedio de cada hora, entre ${fechaCorta(rangoCurva[0])} y ${fechaCorta(rangoCurva[1])}${dias.length > 92 ? " (últimos 92 días del periodo)" : ""}. Con la misma potencia, una unidad que pide más apertura que otra está rindiendo distinto, o el nivel y el salto cambiaron.`}>
+            {horario.cargando && !apertura && <div style={{ fontSize: 13, color: T.inkFaint }}>Cargando series horarias…</div>}
+            {apertura && apertura.conDato && <GraficoApertura T={T} x={apertura.t} filas={apertura.filas} nU={nU} pasoH={1} grupo="unidH" nombreArchivo="apertura_unidades_horaria" />}
+            {apertura && !apertura.conDato && <div style={{ fontSize: 13, color: T.inkFaint }}>El histórico de este periodo todavía no tiene la apertura por hora; el proceso automático la agrega en su próximo recálculo.</div>}
+          </Tarjeta>
           <Tarjeta T={T} titulo="Rendimiento relativo al modelo según la carga" subtitulo={`Q modelo / Q Winter-Kennedy por tramo de 10 MW (mediana de las horas completas en línea, al menos 3 por tramo) entre ${fechaCorta(rangoCurva[0])} y ${fechaCorta(rangoCurva[1])}. Al dividir por el modelo se descuenta el efecto del nivel del embalse: queda cuánto rinde cada máquina frente a la colina común, carga por carga. Más alto = turbina menos agua de la que predice el modelo (relativo: WK sin calibrar).`}>
             {horario.cargando && !curva && <div style={{ fontSize: 13, color: T.inkFaint }}>Cargando series horarias…</div>}
             {curva && curva.x.length > 0 && <GraficoSeries T={T} x={curva.x} tipoX="numero" ejeX="MW en bornes" series={curva.series} unidad="" ejeY="Q modelo / Q WK" decimales={3} nombreArchivo="curva_rendimiento_unidades" referencias={[{ y: 1, rotulo: "1,00 = como el modelo" }]} />}

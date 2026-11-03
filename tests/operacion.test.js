@@ -90,6 +90,8 @@ describe("Agregación y caudal del modelo", () => {
     expect(iv[0].qMod[0]).toBeCloseTo(r.resultado.Q, 9);
     expect(iv[0].qMod[1]).toBe(0);
     expect(iv[0].qModTotal).toBeCloseTo(2 * r.resultado.Q, 9);
+    expect(iv[0].gamma[0]).toBeCloseTo(r.gamma, 9); // apertura estimada (grados) de la unidad en línea
+    expect(iv[0].gamma[1]).toBeNull();
     const res = resumenPorUnidad(iv);
     expect(res[0].energiaMWh).toBeCloseTo(290 * 0.5, 6);
     expect(res[0].volModHm3).toBeCloseTo((r.resultado.Q * 1800) / 1e6, 9);
