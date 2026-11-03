@@ -10,6 +10,7 @@ import { Estado } from "./graficos.jsx";
 
 const CLAVE_API = "ituango-asistente-clave";
 const CLAVE_MODELO = "ituango-asistente-modelo";
+const CLAVE_ESPACIO = "ituango-asistente-espacio";
 const leerLocal = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const escribirLocal = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* sin almacenamiento */ } };
 
@@ -53,6 +54,7 @@ export default function Asistente({ T }) {
   const [borrador, setBorrador] = useState(clave);
   const [recordar, setRecordar] = useState(() => !!leerLocal(CLAVE_API));
   const [modelo, setModelo] = useState(() => leerLocal(CLAVE_MODELO) || MODELOS[0][0]);
+  const [espacio, setEspacio] = useState(() => leerLocal(CLAVE_ESPACIO) || "");
   const [historial, setHistorial] = useState([]); // mensajes de la API
   const [vista, setVista] = useState([]); // [{ rol, texto, pasos }]
   const [pregunta, setPregunta] = useState("");
@@ -63,6 +65,7 @@ export default function Asistente({ T }) {
 
   useEffect(() => { escribirLocal(CLAVE_API, recordar && clave ? clave : null); }, [recordar, clave]);
   useEffect(() => { escribirLocal(CLAVE_MODELO, modelo); }, [modelo]);
+  useEffect(() => { escribirLocal(CLAVE_ESPACIO, espacio.trim() || null); }, [espacio]);
   useEffect(() => { if (fin.current) fin.current.scrollIntoView({ block: "nearest" }); }, [vista, ocupado]);
 
   async function enviar(texto) {
@@ -75,7 +78,7 @@ export default function Asistente({ T }) {
     try {
       const ctx = { vivo, leerJSON: datos.conectado ? datos.leerJSON : () => Promise.reject(new Error("Sin conexión al repositorio de datos.")), ahora: ahoraColombia() };
       const res = await preguntar({
-        clave, modelo, ctx, senal: ctrl.current.signal,
+        clave, espacio: espacio.trim() || null, modelo, ctx, senal: ctrl.current.signal,
         historial: [...historial, { role: "user", content: q }],
         onPaso: (p) => { pasos.push(p); setVista((v) => { const c = v.slice(); c[c.length - 1] = { ...c[c.length - 1], pasos: pasos.slice() }; return c; }); },
       });
@@ -113,6 +116,9 @@ export default function Asistente({ T }) {
             <select value={modelo} onChange={(e) => setModelo(e.target.value)} style={{ ...entrada, width: "100%", marginTop: 4 }}>
               {MODELOS.map(([id, n]) => <option key={id} value={id}>{n}</option>)}
             </select>
+          </label>
+          <label style={{ fontSize: 12.5, color: T.inkMuted, flex: "1 1 220px" }}>ID del espacio de trabajo (opcional)
+            <input value={espacio} onChange={(e) => setEspacio(e.target.value)} placeholder="wrkspc_… (solo si la clave no es de un espacio)" style={{ ...entrada, width: "100%", marginTop: 4 }} />
           </label>
           <label style={{ fontSize: 12.5, color: T.inkMuted, display: "flex", gap: 6, alignItems: "center", paddingBottom: 9 }}>
             <input type="checkbox" checked={recordar} onChange={(e) => setRecordar(e.target.checked)} /> Recordar en este equipo

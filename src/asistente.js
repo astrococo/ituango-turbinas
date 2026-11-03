@@ -184,18 +184,21 @@ async function ejecutarHerramienta(ctx, nombre, entrada) {
 /* Bucle del agente: llama a la API, ejecuta las herramientas que pida y
    repite hasta que responda (o MAX_VUELTAS). onPaso informa cada llamada
    a herramienta. fetchFn se puede reemplazar en las pruebas. */
-async function preguntar({ clave, modelo, historial, ctx, onPaso = () => {}, fetchFn = fetch, senal }) {
+async function preguntar({ clave, espacio = null, modelo, historial, ctx, onPaso = () => {}, fetchFn = fetch, senal }) {
   const mensajes = historial.slice();
   for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
     const resp = await fetchFn(URL_API, {
       method: "POST", signal: senal,
-      headers: { "content-type": "application/json", "x-api-key": clave, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+      headers: { "content-type": "application/json", "x-api-key": clave, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true", ...(espacio ? { "anthropic-workspace-id": espacio } : {}) },
       body: JSON.stringify({ model: modelo, max_tokens: 2048, system: `${SISTEMA}\nFecha y hora actual (Colombia): ${ctx.ahora || "desconocida"}.`, tools: HERRAMIENTAS, messages: mensajes }),
     });
     const cuerpo = await resp.json().catch(() => null);
     if (!resp.ok) {
       const msg = cuerpo && cuerpo.error ? cuerpo.error.message : `HTTP ${resp.status}`;
-      throw new Error(resp.status === 401 ? "La clave de API no es válida (401)." : `Error de la API: ${msg}`);
+      throw new Error(resp.status === 401 ? "La clave de API no es válida (401)."
+        : resp.status === 400 && /workspace/i.test(msg) ? `La clave no está asociada a un espacio de trabajo: cree la clave dentro de un espacio de trabajo o escriba su ID en la configuración (${msg}).`
+        : resp.status === 404 && /workspace/i.test(msg) ? `El ID del espacio de trabajo no existe o la clave no tiene acceso (${msg}).`
+        : `Error de la API (${resp.status}): ${msg}`);
     }
     mensajes.push({ role: "assistant", content: cuerpo.content });
     if (cuerpo.stop_reason !== "tool_use") return { mensajes, uso: cuerpo.usage };
