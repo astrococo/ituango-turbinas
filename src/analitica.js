@@ -310,6 +310,27 @@ function validarDespachoDia(res, { qEntradaAyer = null, cond = null } = {}) {
   return { errCmMismoDia: mismo.errCm, errCmEntradaAyer: ayer ? ayer.errCm : null, qEntradaAyer: r1(qEntradaAyer), qEntrada: res.balance.qEntrada, qTurbModelo: mismo.qTurbMedio, qRegulado: res.regla.qReg };
 }
 
+
+/* Tramos de cumplimiento: dado x (ordenado), un valor y una banda por punto,
+   agrupa los puntos seguidos con el mismo estado (dentro, encima, debajo).
+   Cada tramo dura hasta el punto siguiente. Devuelve también la duración
+   total de cada estado en las unidades de x. */
+function tramosCumplimiento(x, valor, min, max) {
+  const tramos = [], total = { dentro: 0, encima: 0, debajo: 0 };
+  let act = null;
+  for (let i = 0; i < x.length; i++) {
+    const v = valor[i], a = min[i], b = max[i];
+    const tipo = v == null || a == null || b == null ? null : v > b ? "encima" : v < a ? "debajo" : "dentro";
+    const x1 = i + 1 < x.length ? x[i + 1] : x[i] + (i > 0 ? x[i] - x[i - 1] : 0);
+    if (tipo) total[tipo] += x1 - x[i];
+    if (act && act.tipo === tipo) { act.x1 = x1; continue; }
+    if (act && act.tipo) tramos.push(act);
+    act = { tipo, x0: x[i], x1 };
+  }
+  if (act && act.tipo) tramos.push(act);
+  return { tramos, total };
+}
+
 /* Día en curso: qué promedio debe tener el resto del día para cerrar dentro
    de la banda. qAcum = promedio regulado hasta ahora, minutos = minutos con
    dato, minutosDia = minutos con dato + minutos que faltan del día (1440 si
@@ -377,7 +398,7 @@ function indiceRelativoUnidades(dias, { minHoras = 6 } = {}) {
 export {
   VERSION_ANALITICA, UMBRAL_VERTIMIENTO_M3S, GAMMA_MAX_MODELO,
   resumirMinutos, resumenHora, resumenDia, resumirDias, agruparPorDia, numeroUnidades,
-  requeridoRestoDelDia, cierreProyectado, calidadDia, validarDespachoDia, estadisticasRegla, serieHoraria, filaDiaria, indiceRelativoUnidades,
+  requeridoRestoDelDia, cierreProyectado, calidadDia, validarDespachoDia, tramosCumplimiento, estadisticasRegla, serieHoraria, filaDiaria, indiceRelativoUnidades,
   diaSiguiente, diaAnterior, minutosDe,
 };
 export const BANDA_RES1891 = REGLA_OPERATIVA_RES1891.bandaRelativa;

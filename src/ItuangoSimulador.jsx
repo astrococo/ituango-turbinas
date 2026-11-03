@@ -13,6 +13,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { ResponsiveContainer, LineChart, CartesianGrid, XAxis, YAxis, Tooltip as RTooltip, ReferenceLine, Line, Legend } from "recharts";
 import OperacionMedida from "./ui/OperacionMedida.jsx";
 import { useVivo, ProveedorVivo } from "./datos/vivo.jsx";
+import { tramosCumplimiento } from "./analitica.js";
 import { ProveedorDatos, useDatos } from "./datos/fuentes.jsx";
 import { Proposito, PanelConexion } from "./ui/comunes.jsx";
 import { GraficoSeries } from "./ui/graficos.jsx";
@@ -595,6 +596,93 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
     return { modo, prog, progs, principal, inf, sup, qMenos, qMas, comparar, grafica, errMedido, regla, energia: resumenEnergiaDespacho(hayXM ? filas : filas.map((f) => ({ ...f, despacho: null }))), estados: filas.map((f) => estadoHoraDespacho(hayXM ? f.despacho : null, f.rt, bandaPct)), hayXM };
   }, [filas, nivelInicial, qEntrada, sensQ, bandaPct, unidadesDisp, condDescarga, gammaMax, programa, qAyer, fcInicio, fecha]);
 
+  /* Banda operacional del día (Res. 1891): caudal regulado medido (minuto a
+     minuto, si la fecha es hoy y hay datos en vivo), total descargado, promedio
+     acumulado medido y su proyección con el programa en las horas que faltan,
+     frente a la banda. La franja inferior muestra cuándo el promedio acumulado
+     queda dentro o fuera (la regla se juzga con el promedio final del día). */
+  const bandaDia = useMemo(() => {
+    const banda = calc.regla.banda;
+    const medido = vivo && vivo.hoy === fecha && vivo.filas ? vivo.filas.filter((r) => r.t.startsWith(fecha)) : [];
+    const PASO = 5; // minutos entre puntos del gráfico
+    const n = 1440 / PASO;
+    const qMin = new Map(), qVertMin = new Map();
+    for (const r of medido) {
+      const m = +r.t.slice(11, 13) * 60 + +r.t.slice(14, 16);
+      if (r.p.every((x) => x == null)) continue;
+      const P = r.p.reduce((a2, x2) => a2 + (x2 != null && x2 > 0 ? x2 : 0), 0);
+      qMin.set(m, P / factorConversionHidrometria(r.nivel, r.t));
+      qVertMin.set(m, r.qVert != null ? Math.max(0, r.qVert) : 0);
+    }
+    const ultimoMin = qMin.size ? Math.max(...qMin.keys()) : -1;
+    // Promedios acumulados minuto a minuto: medido hasta el último dato; después, el programa
+    const cumMed = new Array(1440).fill(null), cumProy = new Array(1440).fill(null);
+    let sMed = 0, cMed = 0, sProg = 0, cProg = 0;
+    for (let j = 0; j < 1440; j++) {
+      if (qMin.has(j)) { sMed += qMin.get(j); cMed++; }
+      else if (j > ultimoMin) { const qp = calc.regla.porHora[Math.floor(j / 60)].principal; if (qp != null) { sProg += qp; cProg++; } }
+      if (j <= ultimoMin && cMed) cumMed[j] = sMed / cMed;
+      if (j >= ultimoMin && cMed + cProg) cumProy[j] = (sMed + sProg) / (cMed + cProg);
+    }
+    const x = [], qReg = [], qDesc = [], acumMed = [], acumProy = [], qProg = [], bMin = [], bMax = [];
+    for (let k = 0; k <= n; k++) {
+      const m = Math.min(1439, k * PASO);
+      x.push((k * PASO) / 60);
+      qReg.push(qMin.has(m) ? qMin.get(m) : null);
+      qDesc.push(qMin.has(m) ? qMin.get(m) + (qVertMin.get(m) || 0) : null);
+      acumMed.push(cumMed[m]);
+      acumProy.push(cumProy[m]);
+      qProg.push(calc.regla.porHora[Math.floor(m / 60)].principal);
+      bMin.push(banda ? banda.min : null); bMax.push(banda ? banda.max : null);
+    }
+    // tramos: medido (sólido) y proyectado (tenue)
+    const valor = x.map((_, i) => acumMed[i] ?? acumProy[i]);
+    const { tramos } = tramosCumplimiento(x, valor, bMin, bMax);
+    const corte = ultimoMin >= 0 ? (ultimoMin + 1) / 60 : 0;
+    const partidos = [];
+    for (const t of tramos) {
+      if (t.x1 <= corte) partidos.push(t);
+      else if (t.x0 >= corte) partidos.push({ ...t, proyectado: true });
+      else { partidos.push({ ...t, x1: corte }); partidos.push({ ...t, x0: corte, proyectado: true }); }
+    }
+    const dur = (tipo, proy) => partidos.filter((t) => t.tipo === tipo && !!t.proyectado === proy).reduce((a2, t) => a2 + (t.x1 - t.x0), 0);
+    const hm = (h) => `${Math.floor(h)} h ${String(Math.round((h % 1) * 60)).padStart(2, "0")} min`;
+    // tiempo con el caudal instantáneo dentro de la banda (seguimiento)
+    let dentroInst = 0;
+    if (banda) for (const q of qMin.values()) if (q >= banda.min && q <= banda.max) dentroInst++;
+    const leyenda = [
+      { tipo: "dentro", rotulo: "Promedio acumulado dentro de la banda", duracion: hm(dur("dentro", false)) },
+      { tipo: "encima", rotulo: "Por encima", duracion: hm(dur("encima", false)) },
+      { tipo: "debajo", rotulo: "Por debajo", duracion: hm(dur("debajo", false)) },
+    ];
+    if (corte < 24) leyenda.push({ tipo: "proyectado", proyectado: true, rotulo: `Proyección con el programa (${nombrePrograma(calc.modo, calc.progs)}) desde las ${String(Math.floor(corte)).padStart(2, "0")}:${String(Math.round((corte % 1) * 60)).padStart(2, "0")}` });
+    const series = [
+      { nombre: "Banda mín.", datos: bMin, color: T.inkFaint, dash: true, ancho: 1.2 },
+      { nombre: "Banda máx.", datos: bMax, color: T.inkFaint, dash: true, ancho: 1.2 },
+      { nombre: "Q regulado medido", datos: qReg, indice: 0, ancho: 1.2 },
+      { nombre: "Total descargado medido", datos: qDesc, indice: 2, ancho: 1.2, oculta: true },
+      { nombre: "Q regulado del programa", datos: qProg, indice: 1, ancho: 1.4, dash: true, escalones: true },
+      { nombre: "Promedio acumulado medido", datos: acumMed, indice: 6, ancho: 2.6 },
+      { nombre: "Promedio acumulado proyectado", datos: acumProy, indice: 6, ancho: 2.2, dash: true },
+    ];
+    return { x, series, tramos: partidos, leyenda, cierre: acumProy[acumProy.length - 1], minutosMedidos: qMin.size, dentroInst, banda, corte };
+  }, [calc, vivo, fecha, T]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* Potencia por hora: despacho de XM, generación real y programa simulado. */
+  const seriesPotencia = useMemo(() => {
+    const x = [...HORAS_DIA, 24];
+    const ext = (arr) => [...arr, arr[arr.length - 1]];
+    const s = [];
+    if (calc.hayXM) s.push({ nombre: "Despacho XM", datos: ext(filas.map((f) => (f.despacho > 0 ? f.despacho : null))), indice: 1, ancho: 1.8, escalones: true });
+    if (filas.some((f) => f.rt != null)) s.push({ nombre: "Generación real (RT)", datos: ext(filas.map((f) => f.rt)), indice: 0, ancho: 2.2, escalones: true });
+    s.push({ nombre: `Programa simulado (${nombrePrograma(calc.modo, calc.progs)})`, datos: ext(calc.prog.potencias), indice: 6, ancho: 1.6, dash: true, escalones: true });
+    if (calc.regla.banda) {
+      s.push({ nombre: "Banda 1891 mín. (MW, F.C. de las 00:00)", datos: x.map(() => calc.regla.banda.min * fcInicio), color: T.inkFaint, dash: true, ancho: 1 });
+      s.push({ nombre: "Banda 1891 máx. (MW)", datos: x.map(() => calc.regla.banda.max * fcInicio), color: T.inkFaint, dash: true, ancho: 1 });
+    }
+    return { x, s };
+  }, [calc, filas, fcInicio, T]);
+
   const seriesNivel = useMemo(() => {
     const g = calc.grafica;
     const s = [
@@ -754,8 +842,25 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
         {sobreDisponibles.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {sobreDisponibles.map((f) => f.hora).join(", ")}: más unidades que las disponibles ({unidadesDisp}).</div>}
       </div>
 
+      {calc.regla.banda && (
+        <>
+          <ChartHeader titulo="Banda operacional del día (Res. 1891)" T={T}
+            subtitulo={`Caudal regulado y total descargado frente a la banda (promedio de ayer ${fx(qAyer, 1)} m³/s ± 4,70 %). La regla se cumple si el promedio acumulado al final del día queda dentro; la franja de abajo muestra cuándo estuvo dentro o fuera${bandaDia.corte < 24 ? " y, tenue, la proyección con el programa" : ""}.`} />
+          <GraficoSeries T={T} tipoX="numero" ejeX="Hora" x={bandaDia.x} series={bandaDia.series} unidad="m³/s" ejeY="m³/s" decimales={1} alto={290} grupo="desp" nombreArchivo={`banda_1891_${fecha}`}
+            bandas={[{ desde: 0, hasta: 1, relleno: "rgba(12,163,12,0.10)" }]} tramos={bandaDia.tramos} leyendaTramos={bandaDia.leyenda}
+            verticales={bandaDia.corte > 0 && bandaDia.corte < 24 ? [{ x: bandaDia.corte, rotulo: "último dato" }] : []} />
+          <div className="itu-kpis" style={{ margin: "4px 0 18px" }}>
+            <div style={{ ...resumen, padding: "8px 12px" }}><b style={{ color: T.ink }}>Cierre proyectado:</b> {fx(bandaDia.cierre, 1)} m³/s → <b style={{ color: colorRegla[estadoReglaOperativa(bandaDia.cierre, bandaDia.banda)] }}>{ETIQUETA_ESTADO_REGLA[estadoReglaOperativa(bandaDia.cierre, bandaDia.banda)]}</b></div>
+            {bandaDia.minutosMedidos > 0 && <div style={{ ...resumen, padding: "8px 12px" }}><b style={{ color: T.ink }}>Caudal instantáneo dentro de la banda:</b> {fx(bandaDia.dentroInst / 60, 1)} h de {fx(bandaDia.minutosMedidos / 60, 1)} h medidas ({fx((100 * bandaDia.dentroInst) / bandaDia.minutosMedidos, 0)} %). Es seguimiento: la regla se juzga con el promedio del día.</div>}
+          </div>
+        </>
+      )}
+
+      <ChartHeader titulo="Potencia por hora: despacho, generación real y programa" T={T} subtitulo="MW en bornes. Las líneas punteadas grises son la banda de la regla expresada en MW con el F.C. de las 00:00." />
+      <GraficoSeries T={T} tipoX="numero" ejeX="Hora" x={seriesPotencia.x} series={seriesPotencia.s} unidad="MW" ejeY="MW" decimales={0} alto={240} grupo="desp" nombreArchivo={`potencia_horaria_${fecha}`} />
+
       <ChartHeader titulo="Nivel del embalse — evolución intradiaria" T={T} accion={<BotonCSV data={csv} filename="despacho_intradiario.csv" T={T} />} />
-      <GraficoSeries T={T} tipoX="numero" ejeX="Hora" x={seriesNivel.x} series={seriesNivel.s} unidad="msnm" ejeY="msnm" decimales={3} alto={300} nombreArchivo="despacho_nivel" bandas={[{ desde: 0, hasta: 1, relleno: "rgba(148,163,184,0.10)" }, { desde: 2, hasta: 3 }]} />
+      <GraficoSeries T={T} tipoX="numero" ejeX="Hora" grupo="desp" x={seriesNivel.x} series={seriesNivel.s} unidad="msnm" ejeY="msnm" decimales={3} alto={300} nombreArchivo="despacho_nivel" bandas={[{ desde: 0, hasta: 1, relleno: "rgba(148,163,184,0.10)" }, { desde: 2, hasta: 3 }]} />
 
       <div style={{ marginTop: 14, overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: FONT_BODY, color: T.ink }}>

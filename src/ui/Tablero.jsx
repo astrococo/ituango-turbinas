@@ -7,8 +7,8 @@ import { useHorario } from "../datos/historico.js";
 import { useVivo } from "../datos/vivo.jsx";
 import { useDatos } from "../datos/fuentes.jsx";
 import { ETIQUETA_ESTADO_REGLA, NAMO, repartoPorUnidad, CONDICION_DESCARGA_DEFECTO, factorConversionHidrometria } from "../modelo.js";
-import { minutosDe } from "../analitica.js";
-import { GraficoSeries, Estado, BarraBanda, fmtNum, colorSerie } from "./graficos.jsx";
+import { minutosDe, tramosCumplimiento } from "../analitica.js";
+import { GraficoSeries, Estado, BarraBanda, fmtNum, colorSerie, aSeg } from "./graficos.jsx";
 import { Proposito, Tarjeta, Kpi, PanelConexion, hace, fechaCorta, SelectorRango, rangoUltimos } from "./comunes.jsx";
 
 const TIPO_ESTADO = { cumple: "bien", por_encima: "critico", por_debajo: "serio", excepcion: "aviso", sin_base: "neutro" };
@@ -69,6 +69,25 @@ export default function Tablero({ T, condDescarga }) {
     const qReg = filas.map((r) => r.qReg), qVert = filas.map((r) => (r.qVert != null ? Math.max(0, r.qVert) : null));
     return { paso: "hora", t, nU, pTot, qReg, qVert, qDesc: qReg.map((q, i) => (q == null ? null : q + (qVert[i] || 0))), acum: acumular(t, qReg), bMin: t.map((x) => bandaDe(x.slice(0, 10))?.min ?? null), bMax: t.map((x) => bandaDe(x.slice(0, 10))?.max ?? null), nivel: filas.map((r) => r.nivel), p: pU };
   }, [v, porMinuto, rango.desde, rango.hasta, horario.datos]);
+
+  // Franja de cumplimiento: promedio acumulado de cada día frente a su banda
+  const cumplimiento = useMemo(() => {
+    if (!series) return null;
+    const xs = series.t.map(aSeg);
+    const { tramos, total } = tramosCumplimiento(xs, series.acum, series.bMin, series.bMax);
+    const h = (seg) => `${Math.floor(seg / 3600)} h ${String(Math.round((seg % 3600) / 60)).padStart(2, "0")} min`;
+    let dentroInst = 0, conDato = 0;
+    series.qReg.forEach((q, i) => { if (q != null && series.bMin[i] != null) { conDato++; if (q >= series.bMin[i] && q <= series.bMax[i]) dentroInst++; } });
+    return {
+      tramos,
+      leyenda: [
+        { tipo: "dentro", rotulo: "Promedio del día dentro de la banda", duracion: h(total.dentro) },
+        { tipo: "encima", rotulo: "Por encima", duracion: h(total.encima) },
+        { tipo: "debajo", rotulo: "Por debajo", duracion: h(total.debajo) },
+      ],
+      pctInst: conDato ? (100 * dentroInst) / conDato : null,
+    };
+  }, [series]);
 
   const sNivel = useMemo(() => series && [{ nombre: "Nivel del embalse (radar)", datos: series.nivel, decimales: 3 }], [series]);
   const sPot = useMemo(() => series && [
@@ -234,8 +253,8 @@ export default function Tablero({ T, condDescarga }) {
       )}
       {series && (
         <>
-          <Tarjeta T={T} titulo={`Caudales (${fechaCorta(rango.desde)} – ${fechaCorta(rango.hasta)})`} subtitulo="La regla se juzga con el promedio acumulado del día (línea gruesa), no con el valor de cada minuto. La banda (líneas punteadas) es la de cada día.">
-            <GraficoSeries T={T} x={series.t} series={sQ} unidad="m³/s" ejeY="m³/s" grupo="vivo" nombreArchivo={`caudales_${rango.desde}_${rango.hasta}`} bandas={[{ desde: 4, hasta: 5, relleno: "rgba(12,163,12,0.08)" }]} />
+          <Tarjeta T={T} titulo={`Caudales (${fechaCorta(rango.desde)} – ${fechaCorta(rango.hasta)})`} subtitulo={`La regla se juzga con el promedio acumulado del día (línea gruesa), no con el valor de cada minuto. La banda (líneas punteadas) es la de cada día; la franja de abajo marca cuándo el promedio estuvo dentro o fuera.${cumplimiento && cumplimiento.pctInst != null ? ` El caudal instantáneo estuvo dentro de la banda el ${fmtNum(cumplimiento.pctInst, 0)} % del tiempo (seguimiento).` : ""}`}>
+            <GraficoSeries T={T} x={series.t} series={sQ} unidad="m³/s" ejeY="m³/s" grupo="vivo" tramos={cumplimiento ? cumplimiento.tramos : null} leyendaTramos={cumplimiento ? cumplimiento.leyenda : null} nombreArchivo={`caudales_${rango.desde}_${rango.hasta}`} bandas={[{ desde: 4, hasta: 5, relleno: "rgba(12,163,12,0.08)" }]} />
           </Tarjeta>
           <div className="itu-2col">
             <Tarjeta T={T} titulo="Nivel del embalse"><GraficoSeries T={T} x={series.t} series={sNivel} unidad="msnm" ejeY="msnm" decimales={3} grupo="vivo" alto={220} nombreArchivo={`nivel_${rango.desde}_${rango.hasta}`} referencias={[{ y: NAMO, rotulo: `NAMO ${NAMO}` }]} /></Tarjeta>

@@ -152,13 +152,39 @@ function pluginVerticales(T, xs) {
   };
 }
 
+/* Plugin: franja de estado al pie del área del gráfico (p. ej. dentro / fuera de la banda).
+   tramos: [{ x0, x1, tipo }] en las unidades del eje X (segundos si es tiempo). */
+const COLOR_TRAMO = { dentro: ESTADO.bien, encima: ESTADO.critico, debajo: ESTADO.serio, excepcion: ESTADO.aviso, proyectado: "#94a3b8" };
+function pluginFranjas(tramos) {
+  return {
+    hooks: {
+      draw: (u) => {
+        if (!tramos || !tramos.length) return;
+        const ctx = u.ctx, dpr = devicePixelRatio || 1, h = 9 * dpr;
+        const y = u.bbox.top + u.bbox.height - h;
+        for (const t of tramos) {
+          const a = Math.max(u.bbox.left, u.valToPos(t.x0, "x", true)), b = Math.min(u.bbox.left + u.bbox.width, u.valToPos(t.x1, "x", true));
+          if (b <= a) continue;
+          ctx.save(); ctx.fillStyle = COLOR_TRAMO[t.tipo] || "#94a3b8";
+          if (t.proyectado) {
+            // proyección: segmentos cortados (se distingue de lo medido sin depender solo del color)
+            ctx.globalAlpha = 0.75;
+            for (let xx = a; xx < b; xx += 9 * dpr) ctx.fillRect(xx, y, Math.min(6 * dpr, b - xx), h);
+          } else { ctx.globalAlpha = 0.9; ctx.fillRect(a, y, b - a, h); }
+          ctx.restore();
+        }
+      },
+    },
+  };
+}
+
 /* Gráfico de series.
    x: arreglo de "AAAA-MM-DD HH:MM" (tipo "tiempo") o números (tipo "numero").
    series: [{ nombre, datos:[...], color?, indice?, dash?, ancho?, unidad?, decimales?, area?, oculta?, puntos? }]
    bandas: [{ desde: i, hasta: j, relleno }] (índices de series: rellena entre ambas)
    referencias: [{ y, rotulo, color, dash } | { y1, y2, relleno }]
    verticales: [{ x (mismo tipo que x), rotulo, color }] */
-function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales = 1, alto = 260, ejeY, ejeX, bandas = [], referencias = [], verticales = [], grupo, nombreArchivo = "serie", yMin, yMax, incluirCero = false, escalones = false, barras = false }) {
+function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales = 1, alto = 260, ejeY, ejeX, bandas = [], referencias = [], verticales = [], grupo, nombreArchivo = "serie", yMin, yMax, incluirCero = false, escalones = false, barras = false, tramos = null, leyendaTramos = null }) {
   const caja = useRef(null);
   const plot = useRef(null);
   const [ocultas, setOcultas] = useState(() => new Set(series.map((s, i) => (s.oculta ? i : null)).filter((i) => i != null)));
@@ -209,7 +235,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
       legend: { show: false },
       cursor: { sync: grupo ? { key: grupo } : undefined, drag: { x: true, y: false, setScale: true }, points: { size: 7 } },
       hooks: { setScale: [(u, k) => { if (k === "x") setZoom(u.scales.x.min > xs[0] + 1e-9 || u.scales.x.max < xs[xs.length - 1] - 1e-9); }] },
-      plugins: [pluginTooltip(T, decimales, unidad, fmtX), pluginReferencias(T, referencias), pluginVerticales(T, verticales.map((v) => ({ ...v, x: tipoX === "tiempo" && typeof v.x === "string" ? aSeg(v.x) : v.x })))],
+      plugins: [pluginTooltip(T, decimales, unidad, fmtX), pluginReferencias(T, referencias), pluginVerticales(T, verticales.map((v) => ({ ...v, x: tipoX === "tiempo" && typeof v.x === "string" ? aSeg(v.x) : v.x }))), pluginFranjas(tramos ? tramos.map((t) => ({ ...t, x0: tipoX === "tiempo" && typeof t.x0 === "string" ? aSeg(t.x0) : t.x0, x1: tipoX === "tiempo" && typeof t.x1 === "string" ? aSeg(t.x1) : t.x1 })) : null)],
     };
     const u = new uPlot(opts, datos, caja.current);
     plot.current = u;
@@ -218,7 +244,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
     ro.observe(caja.current);
     return () => { ro.disconnect(); u.destroy(); plot.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [xs, series, T, alto, tipoX, ejeY, ejeX, unidad, decimales, grupo, JSON.stringify(referencias), JSON.stringify(bandas), JSON.stringify(verticales), yMin, yMax, incluirCero, escalones, barras]);
+  }, [xs, series, T, alto, tipoX, ejeY, ejeX, unidad, decimales, grupo, JSON.stringify(referencias), JSON.stringify(bandas), JSON.stringify(verticales), JSON.stringify(tramos), yMin, yMax, incluirCero, escalones, barras]);
 
   function alternar(i) {
     setOcultas((prev) => {
@@ -255,6 +281,16 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
       </div>
       <div ref={caja} style={{ width: "100%", display: verTabla ? "none" : "block", touchAction: "pan-y" }} />
       {verTabla && <TablaSeries T={T} x={x} series={series} unidad={unidad} decimales={decimales} tipoX={tipoX} ejeX={ejeX} fmtX={fmtX} xs={xs} />}
+      {!verTabla && leyendaTramos && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", marginTop: 6, fontSize: 12, color: T.inkMuted }}>
+          {leyendaTramos.map((l) => (
+            <span key={l.tipo} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span aria-hidden="true" style={{ width: 14, height: 8, borderRadius: 2, background: l.proyectado ? `repeating-linear-gradient(90deg, ${COLOR_TRAMO.dentro} 0 4px, transparent 4px 6px)` : COLOR_TRAMO[l.tipo], opacity: 0.9 }} />
+              {l.rotulo}{l.duracion ? <b style={{ color: T.ink, fontWeight: 600 }}>&nbsp;{l.duracion}</b> : null}
+            </span>
+          ))}
+        </div>
+      )}
       {!verTabla && tipoX === "tiempo" && <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 2 }}>Arrastre sobre el gráfico para acercar; doble clic para volver.</div>}
     </div>
   );
@@ -315,4 +351,4 @@ function BarraBanda({ T, valor, min, max, rango, marcas = [], unidad = "m³/s", 
   );
 }
 
-export { GraficoSeries, Estado, BarraBanda, colorSerie, ESTADO, SERIE, aSeg, deSeg, fmtNum, MESES };
+export { COLOR_TRAMO, GraficoSeries, Estado, BarraBanda, colorSerie, ESTADO, SERIE, aSeg, deSeg, fmtNum, MESES };
