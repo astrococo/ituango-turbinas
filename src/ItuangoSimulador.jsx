@@ -425,7 +425,7 @@ function InputNumeroLibre({ value, onChange, className, style, min, max, step, d
    hora), despacho XM por hora (se puede pegar el "Resumen horario"),
    Promedio RT (opcional), unidades por hora (por defecto, el mínimo
    que entrega la potencia sin pasar de 307 MW) y nivel medido
-   (opcional, para comparar). Escenarios: despacho, banda ±b %, RT y
+   (opcional, para comparar). Escenarios: despacho, banda XM ±b % (banda operativa de la generación RT), RT y
    caudal de entrada ± sensibilidad. Cálculo: simularDespachoHorario
    (modelo.js). Validación con la operación ene-oct 2026:
    el script de validación del repositorio de datos.
@@ -530,7 +530,8 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
       setMsgCarga({ ok: false, txt: "No se reconoció ninguna fila horaria. Pega las filas tal como salen del resumen (\"00:00 - 00:59  700.0 MW ...\") o en dos o tres columnas: hora, despacho, Promedio RT." });
       return;
     }
-    setFilas((prev) => prev.map((f) => { const x = r.horas[f.hora]; return x ? { ...f, despacho: x.despacho, rt: x.rt } : f; }));
+    // Si la tabla pegada no trae Promedio RT para una hora, se conserva el que ya había (p. ej. el de los datos en vivo).
+    setFilas((prev) => prev.map((f) => { const x = r.horas[f.hora]; return x ? { ...f, despacho: x.despacho, rt: x.rt != null ? x.rt : f.rt } : f; }));
     if (r.fecha) setFecha(r.fecha);
     const conRT = leidas.filter((x) => x.rt != null).length;
     const conBanda = leidas.find((x) => x.bandaSup != null && x.despacho > 0);
@@ -567,15 +568,18 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
         return { potenciaMW: P, unidades: f.unidades != null ? f.unidades : unidadesMinimasParaPotencia(P, unidadesDisp), qEntrada: f.qEntrada == null ? undefined : f.qEntrada + (qin - qEntrada) };
       }),
     });
-    const escala = (k) => prog.potencias.map((p) => p * k);
     const principal = esc(prog.potencias, qEntrada);
-    const inf = esc(escala(1 - b), qEntrada);
-    const sup = esc(escala(1 + b), qEntrada);
+    // Banda operativa de la generación: el despacho de XM ± banda (la misma
+    // con la que se juzga el Promedio RT de cada hora). Se define con XM,
+    // sea cual sea el programa simulado; sin despacho de XM no hay banda.
+    // inf = generación XM −b (turbina menos, el nivel queda más alto); sup = XM +b.
+    const inf = hayXM ? esc(progXMBase.potencias.map((p) => p * (1 - b)), qEntrada) : null;
+    const sup = hayXM ? esc(progXMBase.potencias.map((p) => p * (1 + b)), qEntrada) : null;
     const qMenos = esc(prog.potencias, qEntrada - sensQ);
     const qMas = esc(prog.potencias, qEntrada + sensQ);
     const comparar = Object.fromEntries(Object.entries(progs).filter(([k, v]) => v && k !== modo).map(([k, v]) => [k, esc(v.potencias, qEntrada)]));
     const grafica = Array.from({ length: 25 }, (_, i) => ({
-      hora: i, principal: principal.serie[i].nivel, bandaInf: inf.serie[i].nivel, bandaSup: sup.serie[i].nivel,
+      hora: i, principal: principal.serie[i].nivel, bandaInf: inf ? inf.serie[i].nivel : null, bandaSup: sup ? sup.serie[i].nivel : null,
       xm: comparar.xm ? comparar.xm.serie[i].nivel : null, rt: comparar.rt ? comparar.rt.serie[i].nivel : null, plano: comparar.plano ? comparar.plano.serie[i].nivel : null,
       qMenos: qMenos.serie[i].nivel, qMas: qMas.serie[i].nivel,
       medido: i < 24 ? filas[i].nivelMedido : null,
@@ -674,23 +678,30 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
     const x = [...HORAS_DIA, 24];
     const ext = (arr) => [...arr, arr[arr.length - 1]];
     const s = [];
-    if (calc.hayXM) s.push({ nombre: "Despacho XM", datos: ext(filas.map((f) => (f.despacho > 0 ? f.despacho : null))), indice: 1, ancho: 1.8, escalones: true });
+    const bandas = [];
+    if (calc.hayXM) {
+      const k = bandaPct / 100;
+      s.push({ nombre: `XM −${bandaPct} %`, datos: ext(filas.map((f) => (f.despacho != null ? f.despacho * (1 - k) : null))), indice: 1, dash: true, ancho: 1, escalones: true });
+      s.push({ nombre: `XM +${bandaPct} %`, datos: ext(filas.map((f) => (f.despacho != null ? f.despacho * (1 + k) : null))), indice: 1, dash: true, ancho: 1, escalones: true });
+      bandas.push({ desde: 0, hasta: 1, relleno: "rgba(235,104,52,0.10)" });
+      s.push({ nombre: "Despacho XM", datos: ext(filas.map((f) => (f.despacho != null ? f.despacho : null))), indice: 1, ancho: 1.8, escalones: true });
+    }
     if (filas.some((f) => f.rt != null)) s.push({ nombre: "Generación real (RT)", datos: ext(filas.map((f) => f.rt)), indice: 0, ancho: 2.2, escalones: true });
     s.push({ nombre: `Programa simulado (${nombrePrograma(calc.modo, calc.progs)})`, datos: ext(calc.prog.potencias), indice: 6, ancho: 1.6, dash: true, escalones: true });
     if (calc.regla.banda) {
       s.push({ nombre: "Banda 1891 mín. (MW, F.C. de las 00:00)", datos: x.map(() => calc.regla.banda.min * fcInicio), color: T.inkFaint, dash: true, ancho: 1 });
       s.push({ nombre: "Banda 1891 máx. (MW)", datos: x.map(() => calc.regla.banda.max * fcInicio), color: T.inkFaint, dash: true, ancho: 1 });
     }
-    return { x, s };
-  }, [calc, filas, fcInicio, T]);
+    return { x, s, bandas };
+  }, [calc, filas, fcInicio, T, bandaPct]);
 
   const seriesNivel = useMemo(() => {
     const g = calc.grafica;
     const s = [
       { nombre: `Entrada −${sensQ} m³/s`, datos: g.map((x) => x.qMenos), color: T.inkFaint, dash: true, ancho: 1.2 },
       { nombre: `Entrada +${sensQ} m³/s`, datos: g.map((x) => x.qMas), color: T.inkFaint, dash: true, ancho: 1.2 },
-      { nombre: `Programa −${bandaPct} %`, datos: g.map((x) => x.bandaInf), indice: 0, dash: true, ancho: 1.2 },
-      { nombre: `Programa +${bandaPct} %`, datos: g.map((x) => x.bandaSup), indice: 0, dash: true, ancho: 1.2 },
+      { nombre: `Despacho XM −${bandaPct} %`, datos: g.map((x) => x.bandaInf), indice: 1, dash: true, ancho: 1.2 },
+      { nombre: `Despacho XM +${bandaPct} %`, datos: g.map((x) => x.bandaSup), indice: 1, dash: true, ancho: 1.2 },
       { nombre: nombrePrograma(calc.modo, calc.progs), datos: g.map((x) => x.principal), indice: 0, ancho: 2.6 },
     ];
     if (calc.comparar.xm) s.push({ nombre: "Despacho XM", datos: g.map((x) => x.xm), indice: 1, ancho: 1.6 });
@@ -735,14 +746,14 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
     p_bornes_unidad_mw: +d.pBornesUnidad.toFixed(2), p_eje_unidad_mw: +d.pEjeUnidad.toFixed(2), apertura_pct: +pctFromDeg(d.gamma).toFixed(2), apertura_grados: +d.gamma.toFixed(3),
     eta_pct: d.eta != null ? +d.eta.toFixed(2) : null, q_turbinado_modelo_m3s: +d.qTurbinado.toFixed(2),
     q_regulado_hidrometria_m3s: calc.regla.porHora[i].principal != null ? +calc.regla.porHora[i].principal.toFixed(2) : null, q_entrada_m3s: d.qEntrada,
-    nivel_fin: +d.Hfin.toFixed(4), nivel_fin_banda_inf: +calc.inf.serie[i + 1].nivel.toFixed(4), nivel_fin_banda_sup: +calc.sup.serie[i + 1].nivel.toFixed(4),
+    nivel_fin: +d.Hfin.toFixed(4), [`nivel_fin_xm_menos_${bandaPct}pct`]: calc.inf ? +calc.inf.serie[i + 1].nivel.toFixed(4) : null, [`nivel_fin_xm_mas_${bandaPct}pct`]: calc.sup ? +calc.sup.serie[i + 1].nivel.toFixed(4) : null,
     nivel_medido_inicio_hora: filas[i].nivelMedido,
   }));
   const resumen = { padding: "10px 12px", background: T.panelSoft, borderRadius: 8, fontSize: 12.5, fontFamily: FONT_BODY, color: T.inkMuted, lineHeight: 1.6 };
 
   return (
     <div>
-      <ChartHeader titulo="Variación del nivel del embalse según despacho de potencia (intradiario)" subtitulo="Nivel del embalse hora a hora con el programa de XM, la banda de tolerancia, la generación real (Promedio RT) y el caudal de entrada pronosticado." T={T}
+      <ChartHeader titulo="Variación del nivel del embalse según despacho de potencia (intradiario)" subtitulo="Nivel del embalse hora a hora con el programa de XM, la banda operativa de la generación (despacho XM ± banda), la generación real (Promedio RT) y el caudal de entrada pronosticado." T={T}
         tip={`Cada hora: la potencia total (en bornes) se reparte en partes iguales entre las unidades de esa hora, se pasa al eje de la turbina con el rendimiento del generador (98,55-98,91 %, estudio de ampliación de GE, 2023), se busca en la colina la apertura que la entrega con el nivel al inicio de la hora y la condición de descarga elegida arriba, con el techo de ${etiquetaTecho} y ${P_MAXIMO_ESPERADO_MW} MW por unidad. El caudal turbinado y el caudal de entrada dan el cambio de volumen (curvas cota-volumen) y el nivel al final de la hora. No incluye vertimiento. Validado con la operación de enero a octubre de 2026: con las unidades reales y el caudal de entrada correcto, el error es de pocos centímetros por día; lo que más pesa es el caudal de entrada (unos 2,5 cm por día por cada 10 m³/s).`} />
 
       {vivo && vivo.resHoy && (
@@ -777,7 +788,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
           <InputNumeroLibre step={5} min={0} value={sensQ} onChange={(n) => setSensQ(Math.max(0, n))} className="itu-num-input" />
         </div>
         <div>
-          <Etiqueta T={T} tip="Banda de tolerancia alrededor del despacho XM (por defecto ±5 %).">Banda ± (%)</Etiqueta>
+          <Etiqueta T={T} tip="Banda operativa de la generación, alrededor del despacho de XM (por defecto ±5 %): el Promedio RT de cada hora debe quedar entre XM × (1 − banda) y XM × (1 + banda). Con ella se marca el estado de cada hora, se dibuja la franja en el gráfico de potencia y se calcula el rango de nivel a las 24 h. Siempre se aplica al despacho de XM, no al programa simulado.">Banda RT vs XM ± (%)</Etiqueta>
           <InputNumeroLibre step={0.5} min={0} max={50} value={bandaPct} onChange={(n) => setBandaPct(Math.max(0, Math.min(50, n)))} className="itu-num-input" />
         </div>
         <div>
@@ -834,7 +845,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
         <div style={{ fontSize: 13, fontWeight: 700, color: T.teal }}>
           Nivel a las 24 h ({nombrePrograma(calc.modo, calc.progs)}): {fx(calc.principal.Hfinal, 3)} msnm ({calc.principal.deltaH >= 0 ? "+" : ""}{fx(calc.principal.deltaH * 100, 1)} cm)
         </div>
-        <div>Banda ±{bandaPct} % de ese programa: {fx(calc.sup.Hfinal, 3)} a {fx(calc.inf.Hfinal, 3)} msnm · caudal de entrada ±{sensQ} m³/s: {fx(calc.qMenos.Hfinal, 3)} a {fx(calc.qMas.Hfinal, 3)} msnm
+        <div>{calc.inf ? <>Banda operativa de la generación (despacho XM ±{bandaPct} %): {fx(calc.sup.Hfinal, 3)} a {fx(calc.inf.Hfinal, 3)} msnm</> : <>Banda operativa de la generación: pegue el despacho de XM (se define como XM ±{bandaPct} %)</>} · caudal de entrada ±{sensQ} m³/s: {fx(calc.qMenos.Hfinal, 3)} a {fx(calc.qMas.Hfinal, 3)} msnm
           {Object.entries(calc.comparar).map(([k, v]) => <span key={k}> · {nombrePrograma(k, calc.progs)}: {fx(v.Hfinal, 3)} msnm</span>)}</div>
         <div>Caudal turbinado medio (modelo): {fx(calc.principal.qTurbMedio, 1)} m³/s frente a {fx(qEntrada, 0)} m³/s de entrada pronosticada{calc.prog.rellenadas.length > 0 && <> · horas sin dato propio (se repite la anterior): {calc.prog.rellenadas.join(", ")}</>}.</div>
         <div>
@@ -875,8 +886,8 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
         </>
       )}
 
-      <ChartHeader titulo="Potencia por hora: despacho, generación real y programa" T={T} subtitulo="MW en bornes. Las líneas punteadas grises son la banda de la regla expresada en MW con el F.C. de las 00:00." />
-      <GraficoSeries T={T} tipoX="numero" ejeX="Hora" x={seriesPotencia.x} series={seriesPotencia.s} unidad="MW" ejeY="MW" decimales={0} alto={240} grupo="desp" nombreArchivo={`potencia_horaria_${fecha}`} />
+      <ChartHeader titulo="Potencia por hora: despacho, generación real y programa" T={T} subtitulo={`MW en bornes. Franja = banda operativa de la generación: despacho de XM ±${bandaPct} % (solo en las horas con dato de XM); el Promedio RT de cada hora debe quedar dentro. Las líneas punteadas grises son la banda de la regla 1891 expresada en MW con el F.C. de las 00:00.`} />
+      <GraficoSeries T={T} tipoX="numero" ejeX="Hora" x={seriesPotencia.x} series={seriesPotencia.s} bandas={seriesPotencia.bandas} unidad="MW" ejeY="MW" decimales={0} alto={240} grupo="desp" nombreArchivo={`potencia_horaria_${fecha}`} />
 
       <ChartHeader titulo="Apertura del distribuidor por hora" T={T} subtitulo={seriesApertura.conReal ? "Programa simulado (todas las unidades en línea con la misma apertura) frente a la apertura estimada de cada unidad con su potencia medida en las horas ya transcurridas. En % y su equivalente en grados (eje derecho y tooltip)." : "Apertura de cada unidad en línea con el programa simulado (todas con la misma apertura). En % y su equivalente en grados (eje derecho y tooltip). Para la fecha de hoy se agrega la estimada de cada unidad con lo medido."} />
       <GraficoSeries T={T} tipoX="numero" ejeX="Hora" x={seriesApertura.x} series={seriesApertura.s} unidad="%" ejeY="apertura (%)" decimales={1} alto={240} grupo="desp" nombreArchivo={`apertura_horaria_${fecha}`} referencias={referenciasApertura(T)} equivalente={EQUIV_APERTURA} />
@@ -889,7 +900,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: FONT_BODY, color: T.ink }}>
           <thead>
             <tr style={{ color: T.inkFaint, textAlign: "left" }}>
-              {["Hora", "Despacho XM (MW)", `Banda ±${bandaPct} %`, "Promedio RT (MW)", "Desv.", "Estado", "Programa (MW)", "Unidades", "MW/unidad", "Apertura", "η (%)", "Q turbinado (modelo)", "Q regulado (Hidrometría)", "Q entrada", "Nivel fin", "Nivel medido (hh:00)"].map((h) => (
+              {["Hora", "Despacho XM (MW)", `Banda XM ±${bandaPct} % (MW)`, "Promedio RT (MW)", "Desv.", "Estado", "Programa (MW)", "Unidades", "MW/unidad", "Apertura", "η (%)", "Q turbinado (modelo)", "Q regulado (Hidrometría)", "Q entrada", "Nivel fin", "Nivel medido (hh:00)"].map((h) => (
                 <th key={h} style={{ ...celda, borderBottom: `1px solid ${T.line}`, fontWeight: 600 }}>{h}</th>
               ))}
             </tr>
