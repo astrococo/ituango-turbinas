@@ -72,3 +72,12 @@ Segunda auditoría completa con un objetivo distinto: que la app sirva para deci
 | ✅ Mejorado | Gráficos | Series de tiempo con uPlot: zoom arrastrando, doble clic para volver, cursor sincronizado entre gráficos del mismo módulo, tooltip con todos los valores, leyenda que prende y apaga series, franjas (banda de la regla, rango del pronóstico), tabla de datos y descarga CSV o PNG. Un solo eje Y por gráfico. Paleta categórica validada para daltonismo; los estados llevan siempre ícono y texto. |
 | ⚠️ Atención | Winter-Kennedy sin calibrar | El η aparente con WK puede pasar de 100 %: se lee como comparación y tendencia. Con el WK calibrado, los mismos gráficos darán valores absolutos. |
 | ⚠️ Atención | F.C. sobre 420 msnm | La regla de Hidrometría está cargada como válida entre 390 y 420 msnm; fuera de ese rango usa 1,80. Si el embalse pasa de 420, confirmar con Hidrometría qué aplican. |
+
+### Validación automática y rangos de fechas (3-nov-2026)
+
+| Estado | Punto | Detalle |
+|---|---|---|
+| ✅ Nuevo | Módulo Validación | Cada día que llega se verifica solo: completitud y huecos, nivel del radar congelado, segundo sensor de nivel, columna de caudal de LoggerNet frente a la regla del F.C., vertedero frente a la Tabla 10.6 con las aperturas medidas, modelo de la turbina frente a Hidrometría y una prueba del despacho con el día cerrado (nivel proyectado a 24 h frente al medido, con la entrada del día anterior y con la del mismo día). Cada resultado sale con su nivel de confianza. |
+| ✅ Nuevo | Unidades de las compuertas | LoggerNet no trae unidad para esas columnas. Por operación: posición en %, medición en mm, apertura en m y caudal en m³/s. Con la apertura en metros, la Tabla 10.6 reproduce el caudal que reporta LoggerNet con diferencia media menor a 1 %: LoggerNet calcula el caudal con la misma calibración, no lo mide de forma independiente. |
+| ✅ Nuevo | Rango de fechas | Todos los gráficos permiten elegir el rango (atajos y desde/hasta). Hasta 48 h se muestra el dato de cada minuto; más días, los promedios horarios del histórico. |
+| ⚠️ Atención | Segundo sensor de nivel | `Nivel_embalse_msnm_Avg` difiere decenas de metros del radar: parece fuera de servicio o descalibrado. La app usa solo el radar. |

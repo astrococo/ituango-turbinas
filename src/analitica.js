@@ -27,14 +27,16 @@ import {
   factorConversionHidrometria,
   rendimientoGenerador,
   resolverUnidadesConPotencias,
+  simularDespachoHorario,
+  caudalVertederoDetallado,
   volumenExtrapolado,
   RHO_AGUA_PROTOTIPO,
   G_SITIO,
   REGLA_OPERATIVA_RES1891,
 } from "./modelo.js";
-import { P_EN_LINEA_MW, caudalRegulado } from "./operacion.js";
+import { P_EN_LINEA_MW, caudalRegulado, verificarColumnaLoggerNet } from "./operacion.js";
 
-const VERSION_ANALITICA = 2; // 2: estabilidad del WK continua entre horas
+const VERSION_ANALITICA = 3; // 2: estabilidad del WK continua entre horas; 3: calidad y validación por día
 const UMBRAL_VERTIMIENTO_M3S = 1; // > 1 m³/s en el vertedero = hay vertimiento (igual que la regla diaria)
 const GAMMA_MAX_MODELO = 31.98;
 const MIN_ESTABLE = 10; // minutos seguidos en línea antes de usar el Winter-Kennedy de una unidad
@@ -201,7 +203,18 @@ function resumenDia(dia, horasFilas, { qRegAnterior = null, nivelSiguiente = nul
       etaWK: cE ? r2(sEw / cE) : null, etaMod: cE ? r2(sEm / cE) : null,
     };
   });
+  const calidad = calidadDia(todas, dia);
+  // Modelo de la colina frente al caudal de Hidrometría (central completa, horas con modelo)
+  let sMod = 0, sHid = 0;
+  for (const h of horas) {
+    if (!h || !h.qMod || h.qReg == null) continue;
+    const ok = h.p.every((p, u) => !(h.linea[u] >= 0.5) || h.qMod[u] != null);
+    if (!ok) continue;
+    sMod += h.qMod.reduce((a, x) => a + (x || 0), 0); sHid += h.qReg;
+  }
+  calidad.modeloVsHidrometria = sHid > 0 ? r3(sMod / sHid) : null;
   return {
+    calidad,
     v: VERSION_ANALITICA, dia, minutos: m.minutos, parcial: m.minutos < 0.9 * 1440, primero: m.primero, ultimo: m.ultimo,
     regla: {
       qReg: r2(qReg), banda: banda ? { base: r2(banda.base), min: r2(banda.min), max: r2(banda.max) } : null,
@@ -235,6 +248,66 @@ function resumirDias(filas, { cond = null, conModelo = true, anterior = null } =
     prev = { dia: d, qReg: res.regla.qReg };
   }
   return out;
+}
+
+
+/* Calidad de los datos de un día y verificaciones que no dependen del modelo:
+   - completitud (minutos de generación y con nivel), hueco más largo;
+   - nivel del radar "congelado" (mismo valor seguido) y diferencia con el 2.º sensor;
+   - columna QTurbinadoUx_FC de LoggerNet frente a la regla del F.C.;
+   - vertedero: caudal medido frente a la Tabla 10.6 con las aperturas medidas (m). */
+function calidadDia(filas, dia) {
+  let maxHueco = 0, conNivel = 0, congelado = 0, run = 0, prevN = null, prevT = null;
+  const errVert = [];
+  for (const r of filas) {
+    const t = minutosDe(r.t);
+    if (prevT != null && t - prevT - 1 > maxHueco) maxHueco = t - prevT - 1;
+    prevT = t;
+    if (r.nivel != null) {
+      conNivel++;
+      if (prevN != null && r.nivel === prevN) { run++; if (run > congelado) congelado = run; } else run = 0;
+      prevN = r.nivel;
+    }
+    if (r.qVert != null && r.qVert > 5 && r.aComp && r.nivel != null && r.aComp.every((a) => a != null)) {
+      const calc = caudalVertederoDetallado(r.nivel, r.aComp.map((a) => (a > 0.02 ? a : 0))).total;
+      errVert.push((calc - r.qVert) / r.qVert);
+    }
+  }
+  if (filas.length) {
+    const ini = minutosDe(`${dia} 00:00`), fin = minutosDe(`${dia} 23:59`);
+    maxHueco = Math.max(maxHueco, minutosDe(filas[0].t) - ini, fin - minutosDe(filas[filas.length - 1].t));
+  }
+  const vc = verificarColumnaLoggerNet(filas);
+  errVert.sort((a, b) => a - b);
+  return {
+    minutosGen: filas.length, minutosNivel: conNivel, maxHuecoMin: maxHueco, nivelCongeladoMin: congelado,
+    columnaFC: vc.minutos ? { minutos: vc.minutos, coinciden: vc.coinciden } : null,
+    vertedero: errVert.length ? { minutos: errVert.length, errMedianaPct: r2(100 * errVert[Math.floor(errVert.length / 2)]), errMaxAbsPct: r2(100 * Math.max(Math.abs(errVert[0]), Math.abs(errVert[errVert.length - 1]))) } : null,
+  };
+}
+
+/* Prueba del despacho intradiario con un día ya cerrado: se simula el nivel
+   hora a hora con la potencia y las unidades reales (lo que hace la app) y
+   se compara con el nivel medido a las 24 h.
+   - qEntradaAyer: caudal de entrada del día anterior (balance), como
+     "pronóstico" sencillo: es el error que vería el operador.
+   - con la entrada del propio día, el error mide solo el modelo de la
+     turbina frente al caudal de Hidrometría con el que se hizo el balance. */
+function validarDespachoDia(res, { qEntradaAyer = null, cond = null } = {}) {
+  if (!res || res.parcial || res.vertedero.conVertimiento || res.nivel.ini == null || res.nivel.fin == null || res.balance.qEntrada == null || res.balance.horas < 23.9) return null;
+  if (res.horas.some((h) => !h || h.min < 50)) return null;
+  const horas = res.horas.map((h) => ({
+    potenciaMW: h.e.reduce((a, x) => a + (x || 0), 0) / (h.min / 60),
+    unidades: h.linea.filter((x) => x >= 0.5).length,
+    qRio: h.qDesc,
+  }));
+  const sim = (q) => {
+    const s = simularDespachoHorario({ nivelInicial: res.nivel.ini, horas, qEntrada: q, cond: cond || undefined });
+    return { errCm: r1((s.Hfinal - res.nivel.fin) * 100), qTurbMedio: r1(s.qTurbMedio) };
+  };
+  const mismo = sim(res.balance.qEntrada);
+  const ayer = qEntradaAyer != null ? sim(qEntradaAyer) : null;
+  return { errCmMismoDia: mismo.errCm, errCmEntradaAyer: ayer ? ayer.errCm : null, qEntradaAyer: r1(qEntradaAyer), qEntrada: res.balance.qEntrada, qTurbModelo: mismo.qTurbMedio, qRegulado: res.regla.qReg };
 }
 
 /* Día en curso: qué promedio debe tener el resto del día para cerrar dentro
@@ -304,7 +377,7 @@ function indiceRelativoUnidades(dias, { minHoras = 6 } = {}) {
 export {
   VERSION_ANALITICA, UMBRAL_VERTIMIENTO_M3S, GAMMA_MAX_MODELO,
   resumirMinutos, resumenHora, resumenDia, resumirDias, agruparPorDia, numeroUnidades,
-  requeridoRestoDelDia, cierreProyectado, estadisticasRegla, serieHoraria, filaDiaria, indiceRelativoUnidades,
+  requeridoRestoDelDia, cierreProyectado, calidadDia, validarDespachoDia, estadisticasRegla, serieHoraria, filaDiaria, indiceRelativoUnidades,
   diaSiguiente, diaAnterior, minutosDe,
 };
 export const BANDA_RES1891 = REGLA_OPERATIVA_RES1891.bandaRelativa;

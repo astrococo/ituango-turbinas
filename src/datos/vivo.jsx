@@ -85,6 +85,7 @@ function calcularVivo(c) {
   v.ultima = ultima;
   v.edadMin = minutosDe(ahoraColombia()) - minutosDe(ultima.t);
   v.actual = promedioUltimos(filas, 15);
+  v.actual.t = ultima.t;
   v.ultimaHora = promedioUltimos(filas, 60);
   const pTot = (p) => p.reduce((a, x) => a + (x != null && x > 0 ? x : 0), 0);
   v.actual.pTotal = pTot(v.actual.p);

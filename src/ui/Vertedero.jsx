@@ -6,11 +6,13 @@
    canal del proyecto (izquierdo C1, derecho C2–C4).
    ============================================================ */
 import { useCallback, useMemo, useState } from "react";
+import { useHorario, useHistoricoDiario } from "../datos/historico.js";
 import { decidirCanalYAperturas, caudalVertederoDetallado, caudalCompuerta, aperturaMax, qLibreTotal, ZV, A_MAX_ESTRUCTURAL, C1_MIN_OPERATIVO, UMBRAL_CANAL_IZQ_MAX, UMBRAL_CANAL_DER_MAX, NIVEL_MIN_TEC, NAME } from "../modelo.js";
 import { useVivo } from "../datos/vivo.jsx";
+import { unidadColumna } from "../operacion.js";
 import { useDatos, useCargaPeriodica } from "../datos/fuentes.jsx";
 import { GraficoSeries, Estado, fmtNum } from "./graficos.jsx";
-import { Proposito, Tarjeta, Kpi } from "./comunes.jsx";
+import { Proposito, Tarjeta, Kpi, SelectorRango, fechaCorta } from "./comunes.jsx";
 
 export default function Vertedero({ T }) {
   const { vivo } = useVivo();
@@ -31,17 +33,39 @@ export default function Vertedero({ T }) {
   }, [H]);
 
   // Medido por compuerta (si el relay ya sube esas columnas)
-  const unidadApertura = meta.datos?.columnas?.find((c) => /^Open_Gate1/i.test(c.nombre))?.unidad ?? null;
+  const unidadApertura = unidadColumna("Open_Gate1_Avg", meta.datos?.columnas?.find((c) => /^Open_Gate1/i.test(c.nombre))?.unidad);
+  // Rango de los gráficos: hasta 2 días con el dato de cada minuto; más, promedios horarios
+  const [rangoSel, setRango] = useState(null);
+  const rango = rangoSel || (vivo ? { desde: vivo.ayer, hasta: vivo.hoy } : { desde: null, hasta: null });
+  const porMinuto = vivo && rango.desde >= vivo.ayer;
+  const horario = useHorario(!porMinuto ? rango.desde : null, !porMinuto ? rango.hasta : null);
+  const hist = useHistoricoDiario();
+  const enMetros = unidadApertura != null && /^m$|metro/i.test(unidadApertura.trim());
   const medido = useMemo(() => {
-    const f = vivo?.filas;
-    if (!f || !f.length || !f.some((r) => r.qComp || r.aComp)) return null;
-    const t = f.map((r) => r.t);
-    const qC = [0, 1, 2, 3].map((g) => f.map((r) => (r.qComp ? r.qComp[g] : null)));
-    const aC = [0, 1, 2, 3].map((g) => f.map((r) => (r.aComp ? r.aComp[g] : null)));
-    const enMetros = unidadApertura != null && /^m$|metro/i.test(unidadApertura.trim());
-    const qCalc = enMetros ? f.map((r) => (r.aComp && r.nivel != null ? caudalVertederoDetallado(r.nivel, r.aComp.map((a) => (a != null && a > 0.05 ? a : 0))).total : null)) : null;
-    return { t, qC, aC, qTot: f.map((r) => r.qVert), qCalc, enMetros };
-  }, [vivo, unidadApertura]);
+    let filas;
+    if (porMinuto) {
+      const f = (vivo?.filas || []).filter((r) => r.t.slice(0, 10) >= rango.desde && r.t.slice(0, 10) <= rango.hasta);
+      filas = f.map((r) => ({ t: r.t, nivel: r.nivel, qVert: r.qVert, qComp: r.qComp, aComp: r.aComp }));
+    } else {
+      const h = horario.datos;
+      if (!h) return null;
+      filas = h.t.map((t, i) => ({ t, nivel: h.nivel[i], qVert: h.qVert[i], qComp: h.qComp[i], aComp: h.aComp[i] }));
+    }
+    if (!filas.length || !filas.some((r) => r.qComp || r.aComp)) return null;
+    const t = filas.map((r) => r.t);
+    const qC = [0, 1, 2, 3].map((g) => filas.map((r) => (r.qComp ? r.qComp[g] : null)));
+    const aC = [0, 1, 2, 3].map((g) => filas.map((r) => (r.aComp ? r.aComp[g] : null)));
+    const qCalc = enMetros && porMinuto ? filas.map((r) => (r.aComp && r.nivel != null ? caudalVertederoDetallado(r.nivel, r.aComp.map((a) => (a != null && a > 0.05 ? a : 0))).total : null)) : null;
+    return { t, qC, aC, qTot: filas.map((r) => r.qVert), qCalc, enMetros };
+  }, [vivo, porMinuto, rango.desde, rango.hasta, horario.datos, enMetros]);
+  // Validación con el histórico: Tabla 10.6 con las aperturas medidas frente al caudal medido
+  const validacion = useMemo(() => {
+    const d = (hist.datos?.dias || []).filter((x) => x.calidad && x.calidad.vertedero);
+    if (!d.length) return null;
+    const min = d.reduce((a, x) => a + x.calidad.vertedero.minutos, 0);
+    const pond = d.reduce((a, x) => a + x.calidad.vertedero.errMedianaPct * x.calidad.vertedero.minutos, 0) / min;
+    return { dias: d.length, minutos: min, errMedio: pond, errMax: Math.max(...d.map((x) => x.calidad.vertedero.errMaxAbsPct)), ultimo: d[d.length - 1].dia, primero: d[0].dia };
+  }, [hist.datos]);
   const sQ = useMemo(() => medido && [
     ...medido.qC.map((x, g) => ({ nombre: `C${g + 1}`, datos: x, indice: g, ancho: 1.6 })),
     { nombre: "Total medido", datos: medido.qTot, color: T.ink, ancho: 2.2 },
@@ -55,7 +79,7 @@ export default function Vertedero({ T }) {
       <Proposito T={T} id="vertedero" titulo="Vertedero" fuente="LoggerNet (posición, apertura y caudal por compuerta) · fórmulas del Simulador de crecientes"
         para="Seguir el vertedero en vivo (caudal y apertura de cada compuerta) y calcular qué aperturas dan un caudal de vertimiento a un nivel dado, con las mismas fórmulas del Simulador de crecientes."
         logras="Estimar el caudal vertido cuando falte la medición, revisar la medición contra la curva de calibración y preparar la maniobra (canal, número de compuertas, apertura y régimen)."
-        resultados="Gráficos de 48 h por compuerta, comparación medido frente a calculado y la calculadora: canal, apertura por compuerta, régimen (a presión o libre) y caudal logrado." />
+        resultados="Gráficos por compuerta en el rango de fechas que se elija, comparación medido frente a calculado y la calculadora: canal, apertura por compuerta, régimen (a presión o libre) y caudal logrado." />
       <Tarjeta T={T} titulo="Calculadora de aperturas" subtitulo={`Reglas de canal del proyecto: menos de ${C1_MIN_OPERATIVO} m³/s no se abre (se prefiere embalsar); izquierdo (C1) hasta ${UMBRAL_CANAL_IZQ_MAX}; derecho (C2–C4) hasta ${UMBRAL_CANAL_DER_MAX}; ambos por encima. Si el canal asignado pasa de la apertura máxima a presión Amax(H), se prueba el siguiente.`}>
         <div className="itu-grid-form">
           <div><label style={{ fontSize: 12.5, color: T.inkMuted, fontWeight: 600 }}>Nivel del embalse (msnm)</label>
@@ -89,12 +113,27 @@ export default function Vertedero({ T }) {
           </>
         )}
       </Tarjeta>
+      {validacion && (
+        <Tarjeta T={T} titulo="¿Qué tan confiable es el caudal del vertedero?" subtitulo="LoggerNet no mide el caudal del vertedero directamente: lo calcula con la apertura de cada compuerta y el nivel. Por eso se compara con la Tabla 10.6 de calibración (la que usa esta app) con las mismas aperturas medidas.">
+          <div className="itu-kpis">
+            <Kpi T={T} rotulo="Diferencia media (Tabla 10.6 − LoggerNet)" valor={validacion.errMedio} decimales={2} unidad="%" estado={<Estado T={T} compacto tipo={Math.abs(validacion.errMedio) < 1 ? "bien" : "aviso"}>{Math.abs(validacion.errMedio) < 1 ? "Coinciden (< 1 %)" : "Revisar"}</Estado>} nota={`${validacion.minutos.toLocaleString("es-CO")} minutos con vertimiento en ${validacion.dias} días (${fechaCorta(validacion.primero)} – ${fechaCorta(validacion.ultimo)})`} />
+            <Kpi T={T} rotulo="Diferencia máxima en un minuto" valor={validacion.errMax} decimales={1} unidad="%" nota="Suele darse en los minutos en que se mueve la compuerta" />
+          </div>
+        </Tarjeta>
+      )}
+      {d.conectado && vivo && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", margin: "4px 0 14px" }}>
+          <b style={{ fontSize: 13.5, color: T.ink }}>Gráficos:</b>
+          <SelectorRango T={T} min={vivo.estadoProceso?.primerDia || vivo.ayer} max={vivo.hoy} valor={rango} onChange={setRango} atajos={[["1", "Hoy"], ["2", "48 h"], ["7", "7 días"], ["30", "30 días"], ["90", "90 días"]]} />
+          <span style={{ fontSize: 12, color: T.inkFaint }}>{porMinuto ? "Dato de cada minuto." : horario.cargando ? "Cargando promedios horarios…" : "Promedios horarios."}</span>
+        </div>
+      )}
       {medido ? (
         <>
-          <Tarjeta T={T} titulo="Caudal por compuerta (48 h)" subtitulo={medido.qCalc ? "La línea punteada es el caudal que da la Tabla 10.6 con las aperturas medidas y el nivel del radar: si se separa del medido, revisar la medición o la calibración." : `Para comparar con la Tabla 10.6 hace falta que la apertura venga en metros${unidadApertura ? ` (el archivo dice "${unidadApertura}")` : " (unidad aún no conocida: llega con los metadatos del relay)"}.`}>
+          <Tarjeta T={T} titulo={`Caudal por compuerta (${fechaCorta(rango.desde)} – ${fechaCorta(rango.hasta)})`} subtitulo={medido.qCalc ? "La línea punteada es el caudal que da la Tabla 10.6 con las aperturas medidas y el nivel del radar: si se separa del medido, revisar la medición o la calibración." : !porMinuto ? "Promedios horarios. La comparación con la Tabla 10.6 se muestra con el dato de cada minuto (rangos de hasta 48 h)." : `Para comparar con la Tabla 10.6 hace falta que la apertura venga en metros (unidad conocida: ${unidadApertura || "ninguna"}).`}>
             <GraficoSeries T={T} x={medido.t} series={sQ} unidad="m³/s" ejeY="m³/s" grupo="vert" nombreArchivo="vertedero_compuertas" incluirCero />
           </Tarjeta>
-          <Tarjeta T={T} titulo="Apertura por compuerta (48 h)" subtitulo={`Columna Open_GateX de LoggerNet${unidadApertura ? ` (${unidadApertura})` : ""}.`}>
+          <Tarjeta T={T} titulo="Apertura por compuerta" subtitulo={`Columna Open_GateX de LoggerNet${unidadApertura ? ` (${unidadApertura})` : ""}.`}>
             <GraficoSeries T={T} x={medido.t} series={sA} unidad={unidadApertura || ""} ejeY={unidadApertura || "apertura"} decimales={2} grupo="vert" alto={200} nombreArchivo="vertedero_aperturas" incluirCero />
           </Tarjeta>
         </>

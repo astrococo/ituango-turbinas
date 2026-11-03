@@ -25,6 +25,9 @@ La app tiene tres grupos de módulos. Cada módulo empieza con una guía corta: 
 | Unidades | Cada máquina por separado: horas, energía, arranques, F.C. Winter-Kennedy, factor relativo y orden de mérito, η aparente frente al modelo y rendimiento relativo por tramo de carga. |
 | Hidrología y pronóstico | Pronóstico de 90 días, cómo cambió entre emisiones y su error a 1, 3 y 7 días, histórico desde 2015, aguas arriba y lluvia. |
 | Operación medida | Minuto a minuto: Hidrometría, Winter-Kennedy y modelo; verificación de la columna de LoggerNet. |
+| Validación | Qué tan confiable es cada resultado: completitud y calidad de los datos, caudal regulado frente a la columna de Hidrometría, vertedero frente a la Tabla 10.6, modelo frente a Hidrometría, error del nivel proyectado a 24 h con cada día cerrado y error del pronóstico. |
+
+Todos los gráficos permiten elegir el rango de fechas (atajos y fechas desde/hasta) y acercar arrastrando.
 
 **Ingeniería**: Colina, Curvas y F.C., Descarga (almenaras N°1 y N°2), Referencia (escenarios 2023).
 

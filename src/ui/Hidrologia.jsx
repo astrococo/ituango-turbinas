@@ -8,7 +8,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useDatos, useCargaPeriodica, sumarDias } from "../datos/fuentes.jsx";
 import { useVivo } from "../datos/vivo.jsx";
 import { GraficoSeries, Estado, fmtNum } from "./graficos.jsx";
-import { Proposito, Tarjeta, SelectorPeriodo, fechaCorta } from "./comunes.jsx";
+import { Proposito, Tarjeta, SelectorRango, rangoUltimos, fechaCorta } from "./comunes.jsx";
 
 const dia = (x) => String(x).slice(0, 10);
 
@@ -22,11 +22,15 @@ function leerCSVHistorico(texto) {
 export default function Hidrologia({ T }) {
   const d = useDatos();
   const { vivo } = useVivo();
-  const [periodo, setPeriodo] = useState("365");
+  const [rangoHist, setRangoHist] = useState(null);
+  const [rangoAA, setRangoAA] = useState(null);
+  const [horizonte, setHorizonte] = useState(90);
   const extra = useCargaPeriodica(useCallback(async () => {
     const r = {};
     const [pl, lm] = await Promise.all([d.leerHF("/api/precipitation/pluviometros?days=14", "pluviometros.json").catch(() => null), d.leerHF("/api/precipitation/modelo", "lluvia_modelo.json").catch(() => null)]);
     r.pluv = pl?.datos; r.modelo = lm?.datos;
+    const aa = await d.leerHF("/api/aguas_arriba?hours=720", "aguas_arriba.json").catch(() => null);
+    r.aguasArriba = aa?.datos;
     if (d.conectado) {
       r.tendencia = await d.leerJSON("hf/tendencia.json").catch(() => null);
       const csv = await d.leerTexto("hf/historico_diario.csv").catch(() => null);
@@ -35,17 +39,17 @@ export default function Hidrologia({ T }) {
     return r;
   }, [d]), [d], 30 * 60e3);
 
-  const pron = vivo?.hf?.pronostico?.datos, obs = vivo?.hf?.observado?.datos, aa = vivo?.hf?.aguasArriba?.datos;
+  const pron = vivo?.hf?.pronostico?.datos, obs = vivo?.hf?.observado?.datos, aa = extra.datos?.aguasArriba || vivo?.hf?.aguasArriba?.datos;
   const sPron = useMemo(() => {
     if (!pron || !pron.data) return null;
-    const x = pron.data;
+    const x = pron.data.slice(0, horizonte);
     return { t: x.map((r) => `${dia(r.timestamp)} 12:00`), s: [
       { nombre: "Sitio Presa (media)", datos: x.map((r) => r.QSitioPresa_pred_mean), indice: 0, ancho: 2.2 },
       { nombre: "Sitio Presa mín.", datos: x.map((r) => r.QSitioPresa_pred_min), color: T.inkFaint, ancho: 0.8 },
       { nombre: "Sitio Presa máx.", datos: x.map((r) => r.QSitioPresa_pred_max), color: T.inkFaint, ancho: 0.8 },
       { nombre: "Olaya (media)", datos: x.map((r) => r.QOlaya_pred_mean), indice: 1, ancho: 1.8, dash: true },
     ] };
-  }, [pron, T]);
+  }, [pron, T, horizonte]);
 
   // Tendencia: últimas 4 emisiones sobre las fechas objetivo + observado
   const tend = useMemo(() => {
@@ -72,21 +76,26 @@ export default function Hidrologia({ T }) {
     const h = extra.datos?.historico || [];
     const mapa = new Map(h.map((r) => [r.d, { ...r }]));
     for (const r of obs?.data || []) { const k = dia(r.timestamp); const x = mapa.get(k) || { d: k }; x.ol = r.QOlaya_obs ?? x.ol; x.sp = r.QSitioPresa_obs ?? x.sp; x.pi = r.QPintada_obs ?? x.pi; mapa.set(k, x); }
-    let filas = [...mapa.values()].sort((a, b) => (a.d < b.d ? -1 : 1));
-    if (!filas.length) return null;
-    if (periodo !== "todo") { const desde = sumarDias(filas[filas.length - 1].d, -(+periodo - 1)); filas = filas.filter((r) => r.d >= desde); }
-    return { t: filas.map((r) => `${r.d} 12:00`), s: [
+    const todas = [...mapa.values()].sort((a, b) => (a.d < b.d ? -1 : 1));
+    if (!todas.length) return null;
+    const min = todas[0].d, max = todas[todas.length - 1].d;
+    const r = rangoHist || rangoUltimos(max, "365", min);
+    const filas = todas.filter((x) => x.d >= r.desde && x.d <= r.hasta);
+    return { min, max, rango: r, t: filas.map((r) => `${r.d} 12:00`), s: [
       { nombre: "Sitio Presa", datos: filas.map((r) => r.sp), indice: 0, ancho: 1.8 },
       { nombre: "Olaya", datos: filas.map((r) => r.ol), indice: 1, ancho: 1.4 },
       { nombre: "La Pintada", datos: filas.map((r) => r.pi), indice: 2, ancho: 1.2 },
     ] };
-  }, [extra.datos, obs, periodo]);
+  }, [extra.datos, obs, rangoHist]);
 
   const sAA = useMemo(() => {
     if (!aa || !aa.serie) return null;
     const cols = (aa.estaciones || []).map((e) => e.col);
-    return { t: aa.serie.map((x) => x.timestamp), s: cols.map((c, i) => ({ nombre: (aa.estaciones.find((e) => e.col === c) || {}).nombre || c, datos: aa.serie.map((x) => x[c] ?? null), indice: i, ancho: 1.6 })) };
-  }, [aa]);
+    const min = String(aa.serie[0]?.timestamp || "").slice(0, 10), max = String(aa.serie[aa.serie.length - 1]?.timestamp || "").slice(0, 10);
+    const r = rangoAA || rangoUltimos(max, "7", min);
+    const serie = aa.serie.filter((x) => String(x.timestamp).slice(0, 10) >= r.desde && String(x.timestamp).slice(0, 10) <= r.hasta);
+    return { min, max, rango: r, t: serie.map((x) => x.timestamp), s: cols.map((c, i) => ({ nombre: (aa.estaciones.find((e) => e.col === c) || {}).nombre || c, datos: serie.map((x) => x[c] ?? null), indice: i, ancho: 1.6 })) };
+  }, [aa, rangoAA]);
 
   const lluviaModelo = extra.datos?.modelo;
   const pluv = extra.datos?.pluv;
@@ -97,8 +106,8 @@ export default function Hidrologia({ T }) {
         logras="Anticipar el caudal de entrada para planear el despacho y la regla operativa de los próximos días, y saber cuánto confiar en el pronóstico según su acierto reciente."
         resultados="Pronóstico vigente con su rango, comparación de las últimas emisiones con lo observado, error medio a 1, 3 y 7 días, histórico desde 2015, aguas arriba y lluvia observada y pronosticada por zona." />
       {sPron && (
-        <Tarjeta T={T} titulo="Pronóstico vigente (90 días)" subtitulo={`Emitido ${fechaCorta(String(pron.generated_at).slice(0, 16).replace("T", " "))} · ${vivo.hf.pronostico.origen}. Franja = mínimo y máximo de Sitio Presa.`}>
-          <GraficoSeries T={T} x={sPron.t} series={sPron.s} unidad="m³/s" ejeY="m³/s" decimales={0} nombreArchivo="pronostico_90d" bandas={[{ desde: 1, hasta: 2 }]} />
+        <Tarjeta T={T} titulo={`Pronóstico vigente (${horizonte} días)`} accion={<div style={{ display: "inline-flex", border: `1px solid ${T.line}`, borderRadius: 8, overflow: "hidden" }}>{[15, 30, 90].map((n) => <button key={n} onClick={() => setHorizonte(n)} aria-pressed={horizonte === n} style={{ padding: "6px 11px", fontSize: 12.5, border: "none", borderRight: `1px solid ${T.line}`, background: horizonte === n ? T.accentSoft : T.panel, color: horizonte === n ? T.teal : T.inkMuted, fontWeight: horizonte === n ? 700 : 500, cursor: "pointer" }}>{n} días</button>)}</div>} subtitulo={`Emitido ${fechaCorta(String(pron.generated_at).slice(0, 16).replace("T", " "))} · ${vivo.hf.pronostico.origen}. Franja = mínimo y máximo de Sitio Presa.`}>
+          <GraficoSeries T={T} x={sPron.t} series={sPron.s} unidad="m³/s" ejeY="m³/s" decimales={0} nombreArchivo={`pronostico_${horizonte}d`} bandas={[{ desde: 1, hasta: 2 }]} />
         </Tarjeta>
       )}
       {tend && (
@@ -115,13 +124,13 @@ export default function Hidrologia({ T }) {
         </Tarjeta>
       )}
       {hist && (
-        <Tarjeta T={T} titulo="Caudal observado (diario)" accion={<SelectorPeriodo T={T} valor={periodo} onChange={setPeriodo} opciones={[["90", "90 días"], ["365", "1 año"], ["1825", "5 años"], ["todo", "Desde 2015"]]} />}
+        <Tarjeta T={T} titulo="Caudal observado (diario)" accion={<SelectorRango T={T} min={hist.min} max={hist.max} valor={hist.rango} onChange={setRangoHist} atajos={[["90", "90 días"], ["365", "1 año"], ["1825", "5 años"], ["todo", "Desde 2015"]]} />}
           subtitulo={d.conectado ? "Histórico de HydroForecast (media diaria de datos de 15 min) completado con el observado reciente." : "Últimos 120 días (conecte el repositorio de datos para ver el histórico desde 2015)."}>
           <GraficoSeries T={T} x={hist.t} series={hist.s} unidad="m³/s" ejeY="m³/s" decimales={0} nombreArchivo="caudal_observado_diario" />
         </Tarjeta>
       )}
       {sAA && (
-        <Tarjeta T={T} titulo="Aguas arriba (horario)" subtitulo={aa.nota}>
+        <Tarjeta T={T} titulo="Aguas arriba (horario)" subtitulo={aa.nota} accion={<SelectorRango T={T} min={sAA.min} max={sAA.max} valor={sAA.rango} onChange={setRangoAA} atajos={[["1", "Hoy"], ["3", "3 días"], ["7", "7 días"], ["todo", "30 días"]]} />}>
           <GraficoSeries T={T} x={sAA.t} series={sAA.s} unidad="m³/s" ejeY="m³/s" decimales={0} nombreArchivo="aguas_arriba_horario" />
         </Tarjeta>
       )}

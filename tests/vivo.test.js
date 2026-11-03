@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { calcularVivo } from "../src/datos/vivo.jsx";
 import { leerLoggerNet, unirNivel } from "../src/operacion.js";
-import { resumirDias, filaDiaria, requeridoRestoDelDia, cierreProyectado } from "../src/analitica.js";
+import { resumirDias, filaDiaria, requeridoRestoDelDia, cierreProyectado, validarDespachoDia } from "../src/analitica.js";
 
 /* Datos sintéticos (sin cifras de operación): dos días de 4 unidades. */
 function csvGen(dia, pU) {
@@ -55,5 +55,24 @@ describe("analítica y estado en vivo", () => {
     expect(v.actual.pTotal).toBeCloseTo(615, 6);
     expect(v.tendencia[0].cmPorHora).toBeGreaterThan(0);
     expect(v.indiceUnidades[0].factor).toBeLessThan(v.indiceUnidades[2].factor);
+  });
+});
+
+describe("calidad y validación por día", () => {
+  const g = leerLoggerNet(csvGen("2026-11-20", [200, 200, 0, 0])).filas.filter((r) => !(r.t >= "2026-11-20 10:00" && r.t < "2026-11-20 10:30"));
+  const n = leerLoggerNet(csvNivel("2026-11-20", 410, 0.1)).filas;
+  const filas = unirNivel(g, n).filas;
+  const [dia] = resumirDias(filas, { conModelo: false });
+  it("cuenta minutos y el hueco más largo", () => {
+    expect(dia.calidad.minutosGen).toBe(1410);
+    expect(dia.calidad.maxHuecoMin).toBe(30);
+    expect(dia.calidad.vertedero).toBeNull();
+  });
+  it("la columna de LoggerNet hecha con 1,8 no coincide con la regla por nivel", () => {
+    expect(dia.calidad.columnaFC.minutos).toBe(1410);
+    expect(dia.calidad.columnaFC.coinciden).toBe(0);
+  });
+  it("no valida el despacho con un día incompleto", () => {
+    expect(validarDespachoDia({ ...dia, parcial: true })).toBeNull();
   });
 });

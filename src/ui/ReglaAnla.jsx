@@ -4,12 +4,12 @@
    caudal total descargado, con el estado regulatorio del periodo.
    ============================================================ */
 import { useMemo, useState } from "react";
-import { ETIQUETA_ESTADO_REGLA } from "../modelo.js";
+import { ETIQUETA_ESTADO_REGLA, textoHoraColombia } from "../modelo.js";
 import { estadisticasRegla } from "../analitica.js";
 import { useDatos } from "../datos/fuentes.jsx";
-import { useHistoricoDiario, filtrarPeriodo } from "../datos/historico.js";
+import { useHistoricoDiario } from "../datos/historico.js";
 import { GraficoSeries, Estado, fmtNum, ESTADO } from "./graficos.jsx";
-import { Proposito, Tarjeta, Kpi, RequiereConexion, SelectorPeriodo, fechaCorta } from "./comunes.jsx";
+import { Proposito, Tarjeta, Kpi, RequiereConexion, SelectorRango, rangoUltimos, fechaCorta } from "./comunes.jsx";
 import { descargarCSV } from "./base.jsx";
 import { TIPO_ESTADO } from "./Tablero.jsx";
 
@@ -49,8 +49,11 @@ function Calendario({ T, dias }) {
 export default function ReglaAnla({ T }) {
   const d = useDatos();
   const { datos, error, cargando } = useHistoricoDiario();
-  const [periodo, setPeriodo] = useState("90");
-  const dias = useMemo(() => filtrarPeriodo(datos?.dias, periodo), [datos, periodo]);
+  const minD = datos?.dias?.[0]?.dia, maxD = datos?.dias?.[datos.dias.length - 1]?.dia;
+  const [rangoSel, setRango] = useState(null);
+  const rango = rangoSel || rangoUltimos(maxD, "90", minD);
+  const periodo = `${rango.desde}_${rango.hasta}`;
+  const dias = useMemo(() => (datos?.dias || []).filter((x) => x.dia >= rango.desde && x.dia <= rango.hasta), [datos, rango.desde, rango.hasta]);
   const est = useMemo(() => estadisticasRegla(dias), [dias]);
   const s = useMemo(() => {
     if (!dias.length) return null;
@@ -84,8 +87,8 @@ export default function ReglaAnla({ T }) {
     <>
       {guia}
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
-        <SelectorPeriodo T={T} valor={periodo} onChange={setPeriodo} />
-        {datos && <span style={{ fontSize: 12.5, color: T.inkFaint }}>Histórico desde {fechaCorta(datos.estado.primerDia)} · actualizado {fechaCorta(String(datos.estado.generado).slice(0, 16).replace("T", " "))} UTC</span>}
+        <SelectorRango T={T} min={minD} max={maxD} valor={rango} onChange={setRango} />
+        {datos && <span style={{ fontSize: 12.5, color: T.inkFaint }}>Histórico desde {fechaCorta(datos.estado.primerDia)} {datos.estado.primerDia.slice(0, 4)} · último dato {fechaCorta(datos.estado.ultimoDato)} · histórico actualizado {fechaCorta(textoHoraColombia(new Date(datos.estado.generado)))}</span>}
         {cargando && <span style={{ fontSize: 12.5, color: T.inkFaint }}>Cargando…</span>}
         {error && <Estado T={T} tipo="critico" compacto>{error.message}</Estado>}
       </div>

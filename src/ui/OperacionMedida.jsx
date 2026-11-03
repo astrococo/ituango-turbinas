@@ -12,6 +12,7 @@ import { leerLoggerNet, unirNivel, agregarIntervalos, caudalModeloIntervalos, ve
 import { BotonCSV, ChartHeader, Etiqueta, FONT_BODY } from "./base.jsx";
 import { useDatos } from "../datos/fuentes.jsx";
 import { GraficoSeries } from "./graficos.jsx";
+import { SelectorRango, rangoUltimos, sumarDiasTxt } from "./comunes.jsx";
 
 const CARPETA_GEN = "loggernet";
 const CARPETA_NIVEL = "nivel";
@@ -67,7 +68,9 @@ export default function OperacionMedida({ T, condDescarga }) {
   const [tokenTxt, setTokenTxt] = useState(token);
   useEffect(() => { setRepoTxt(repo); }, [repo]);
   useEffect(() => { setTokenTxt(token); }, [token]);
-  const [dias, setDias] = useState(3);
+  // Rango de fechas a cargar (por defecto, los últimos 3 días). Se baja también el día anterior al primero: es la base de su banda.
+  const hoyTxt = new Date(Date.now() - 5 * 3600e3).toISOString().slice(0, 10);
+  const [rango, setRango] = useState(() => rangoUltimos(hoyTxt, "3"));
   const [estado, setEstado] = useState(null); // {tipo:'info'|'error'|'ok', txt}
   const [lectura, setLectura] = useState(null); // {filas, avisos, origen, columnaNivel}
   const [modoNivel, setModoNivel] = useState("auto"); // auto | columna | fc | fijo
@@ -84,7 +87,10 @@ export default function OperacionMedida({ T, condDescarga }) {
     setEstado({ tipo: "info", txt: "Consultando GitHub…" }); setLectura(null); setCalculo(null);
     try {
       const hoy = new Date(Date.now() - 5 * 3600e3);
-      const anios = [...new Set([new Date(hoy.getTime() - (dias + 1) * 864e5).getUTCFullYear(), hoy.getUTCFullYear()])];
+      const base = sumarDiasTxt(rango.desde, -1);
+      const anios = [];
+      for (let a = +base.slice(0, 4); a <= +rango.hasta.slice(0, 4); a++) anios.push(a);
+      void hoy;
       // GitHub responde 404 tanto si falta la carpeta como si el token no ve el repositorio:
       // primero se comprueba el repositorio, para dar el error correcto.
       try { await gh(`https://api.github.com/repos/${rp}`, tk); }
@@ -98,7 +104,9 @@ export default function OperacionMedida({ T, condDescarga }) {
         return out.sort((a, b) => (a.name < b.name ? -1 : 1));
       };
       // un día más: es la base de la banda de la regla operativa del primer día mostrado
-      const gen = (await listar(CARPETA_GEN)).slice(-(dias + 1));
+      const enRango = (f) => { const d = f.name.slice(0, 10); return d >= base && d <= rango.hasta; };
+      const gen = (await listar(CARPETA_GEN)).filter(enRango);
+      if (gen.length > 32) throw new Error("Para más de 31 días use Analítica → Regla 1891 o Unidades (histórico precalculado): aquí se descarga el dato de cada minuto.");
       if (!gen.length) throw new Error(`El repositorio no tiene todavía archivos en ${CARPETA_GEN}/: revise que el relay esté corriendo.`);
       const nombres = new Set(gen.map((f) => f.name));
       const niv = (await listar(CARPETA_NIVEL)).filter((f) => nombres.has(f.name));
@@ -258,10 +266,10 @@ export default function OperacionMedida({ T, condDescarga }) {
               <input type="checkbox" checked={recordar} onChange={(e) => setRecordar(e.target.checked)} /> Recordar en este equipo
             </label>
           </div>
-          <div>
-            <Etiqueta T={T}>Días</Etiqueta>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <Etiqueta T={T} tip="Días a descargar (dato de cada minuto). Se baja también el día anterior al primero, que es la base de la banda de la regla.">Fechas</Etiqueta>
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-              {[1, 3, 7, 14].map((d) => <button key={d} style={boton(dias === d)} onClick={() => setDias(d)}>{d}</button>)}
+              <SelectorRango T={T} max={hoyTxt} valor={rango} onChange={setRango} atajos={[["1", "Hoy"], ["3", "3 días"], ["7", "7 días"], ["14", "14 días"], ["31", "31 días"]]} />
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "flex-end" }}>

@@ -8,32 +8,35 @@
    - el modelo de la colina con la condición de descarga actual.
    ============================================================ */
 import { useMemo, useState } from "react";
-import { UNIDADES_CENTRAL, ordenDeMerito } from "../modelo.js";
+import { UNIDADES_CENTRAL, ordenDeMerito, textoHoraColombia } from "../modelo.js";
 import { indiceRelativoUnidades } from "../analitica.js";
 import { useDatos } from "../datos/fuentes.jsx";
-import { useHistoricoDiario, useHorario, filtrarPeriodo } from "../datos/historico.js";
+import { useHistoricoDiario, useHorario } from "../datos/historico.js";
 import { GraficoSeries, Estado, fmtNum, colorSerie } from "./graficos.jsx";
-import { Proposito, Tarjeta, RequiereConexion, SelectorPeriodo, fechaCorta } from "./comunes.jsx";
+import { Proposito, Tarjeta, RequiereConexion, SelectorRango, rangoUltimos, fechaCorta } from "./comunes.jsx";
 
 const mediana = (a) => { const b = a.filter((x) => x != null && Number.isFinite(x)).sort((x, y) => x - y); if (!b.length) return null; const n = b.length; return n % 2 ? b[(n - 1) / 2] : (b[n / 2 - 1] + b[n / 2]) / 2; };
 
 export default function Unidades({ T }) {
   const d = useDatos();
   const { datos, error } = useHistoricoDiario();
-  const [periodo, setPeriodo] = useState("30");
-  const dias = useMemo(() => filtrarPeriodo(datos?.dias, periodo), [datos, periodo]);
+  const minD = datos?.dias?.[0]?.dia, maxD = datos?.dias?.[datos.dias.length - 1]?.dia;
+  const [rangoSel, setRango] = useState(null);
+  const rango = rangoSel || rangoUltimos(maxD, "30", minD);
+  const periodo = `${rango.desde}_${rango.hasta}`;
+  const dias = useMemo(() => (datos?.dias || []).filter((x) => x.dia >= rango.desde && x.dia <= rango.hasta), [datos, rango.desde, rango.hasta]);
   const nU = dias.reduce((k, x) => Math.max(k, x.unidades.length), 0);
   const cerrados = useMemo(() => dias.filter((x) => !x.parcial), [dias]);
   const indice = useMemo(() => (cerrados.length ? indiceRelativoUnidades(cerrados) : []), [cerrados]);
   const merito = useMemo(() => ordenDeMerito(indice.filter((x) => x.factor != null).map((x) => x.unidad), indice.map((x) => x.factor)), [indice]);
   // Curva de rendimiento relativo: horario del periodo (máx. 92 días para no descargar de más)
-  const rango = useMemo(() => {
+  const rangoCurva = useMemo(() => {
     if (!dias.length) return [null, null];
     const hasta = dias[dias.length - 1].dia;
     const desde = dias.length > 92 ? dias[dias.length - 92].dia : dias[0].dia;
     return [desde, hasta];
   }, [dias]);
-  const horario = useHorario(rango[0], rango[1]);
+  const horario = useHorario(rangoCurva[0], rangoCurva[1]);
 
   const resumen = useMemo(() => Array.from({ length: nU }, (_, u) => {
     const us = dias.map((x) => x.unidades[u]).filter(Boolean);
@@ -92,7 +95,8 @@ export default function Unidades({ T }) {
     <>
       {guia}
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
-        <SelectorPeriodo T={T} valor={periodo} onChange={setPeriodo} />
+        <SelectorRango T={T} min={minD} max={maxD} valor={rango} onChange={setRango} />
+        {datos && <span style={{ fontSize: 12.5, color: T.inkFaint }}>Último dato {fechaCorta(datos.estado.ultimoDato)} · histórico actualizado {fechaCorta(textoHoraColombia(new Date(datos.estado.generado)))}</span>}
         {error && <Estado T={T} tipo="critico" compacto>{error.message}</Estado>}
       </div>
       {dias.length > 0 && (
@@ -146,7 +150,7 @@ export default function Unidades({ T }) {
               <GraficoSeries T={T} x={s.t} series={s.horas} unidad="h" ejeY="h" decimales={1} grupo="unid" alto={220} nombreArchivo="horas_unidades" incluirCero yMax={24} />
             </Tarjeta>
           </div>
-          <Tarjeta T={T} titulo="Rendimiento relativo al modelo según la carga" subtitulo={`Q modelo / Q Winter-Kennedy por tramo de 10 MW (mediana de las horas completas en línea, al menos 3 por tramo) entre ${fechaCorta(rango[0])} y ${fechaCorta(rango[1])}. Al dividir por el modelo se descuenta el efecto del nivel del embalse: queda cuánto rinde cada máquina frente a la colina común, carga por carga. Más alto = turbina menos agua de la que predice el modelo (relativo: WK sin calibrar).`}>
+          <Tarjeta T={T} titulo="Rendimiento relativo al modelo según la carga" subtitulo={`Q modelo / Q Winter-Kennedy por tramo de 10 MW (mediana de las horas completas en línea, al menos 3 por tramo) entre ${fechaCorta(rangoCurva[0])} y ${fechaCorta(rangoCurva[1])}. Al dividir por el modelo se descuenta el efecto del nivel del embalse: queda cuánto rinde cada máquina frente a la colina común, carga por carga. Más alto = turbina menos agua de la que predice el modelo (relativo: WK sin calibrar).`}>
             {horario.cargando && !curva && <div style={{ fontSize: 13, color: T.inkFaint }}>Cargando series horarias…</div>}
             {curva && curva.x.length > 0 && <GraficoSeries T={T} x={curva.x} tipoX="numero" ejeX="MW en bornes" series={curva.series} unidad="" ejeY="Q modelo / Q WK" decimales={3} nombreArchivo="curva_rendimiento_unidades" referencias={[{ y: 1, rotulo: "1,00 = como el modelo" }]} />}
             {curva && !curva.x.length && <div style={{ fontSize: 13, color: T.inkFaint }}>Sin horas suficientes en el periodo.</div>}

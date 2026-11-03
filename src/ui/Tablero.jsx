@@ -2,13 +2,14 @@
    Tablero en vivo: estado actual de la central y de la regla
    operativa, para decidir en caliente.
    ============================================================ */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { useHorario } from "../datos/historico.js";
 import { useVivo } from "../datos/vivo.jsx";
 import { useDatos } from "../datos/fuentes.jsx";
 import { ETIQUETA_ESTADO_REGLA, NAMO, repartoPorUnidad, CONDICION_DESCARGA_DEFECTO, factorConversionHidrometria } from "../modelo.js";
 import { minutosDe } from "../analitica.js";
 import { GraficoSeries, Estado, BarraBanda, fmtNum, colorSerie } from "./graficos.jsx";
-import { Proposito, Tarjeta, Kpi, PanelConexion, hace, fechaCorta } from "./comunes.jsx";
+import { Proposito, Tarjeta, Kpi, PanelConexion, hace, fechaCorta, SelectorRango, rangoUltimos } from "./comunes.jsx";
 
 const TIPO_ESTADO = { cumple: "bien", por_encima: "critico", por_debajo: "serio", excepcion: "aviso", sin_base: "neutro" };
 const P_LINEA = 20;
@@ -23,23 +24,51 @@ export default function Tablero({ T, condDescarga }) {
   const datos = useDatos();
   const v = vivo;
 
-  // Series de las últimas 48 h (dato de cada minuto)
+  // Rango de los gráficos: hasta 2 días con el dato de cada minuto (hoy y ayer,
+  // ya cargados); más días, con los promedios horarios del histórico más las
+  // horas de hoy.
+  const hoy = v ? v.hoy : null;
+  const minD = v && v.estadoProceso ? v.estadoProceso.primerDia : null;
+  const [rangoSel, setRango] = useState(null);
+  const rango = rangoSel || (v ? { desde: v.ayer, hasta: v.hoy } : { desde: null, hasta: null });
+  const porMinuto = v && rango.desde >= v.ayer;
+  const horario = useHorario(!porMinuto ? rango.desde : null, !porMinuto ? rango.hasta : null);
+
   const series = useMemo(() => {
-    if (!v || !v.filas || !v.filas.length) return null;
-    const f = v.filas;
-    const t = f.map((r) => r.t);
-    const nU = f[0].p.length;
-    const pTot = f.map((r) => r.p.reduce((a, x) => a + (x != null && x > 0 ? x : 0), 0));
-    const qReg = f.map((r, i) => (r.p.every((x) => x == null) ? null : pTot[i] / factorConversionHidrometria(r.nivel, r.t)));
-    const qVert = f.map((r) => (r.qVert != null ? Math.max(0, r.qVert) : null));
-    const qDesc = qReg.map((q, i) => (q == null ? null : q + (qVert[i] || 0)));
-    // promedio acumulado del día (se reinicia a las 00:00): es lo que se compara con la banda
-    let dia = null, s = 0, c = 0;
-    const acum = qReg.map((q, i) => { const d = t[i].slice(0, 10); if (d !== dia) { dia = d; s = 0; c = 0; } if (q != null) { s += q; c++; } return c ? s / c : null; });
+    if (!v) return null;
     const bandaDe = (d) => (d === v.hoy ? v.banda : (v.diario || []).find((x) => x.dia === d)?.regla.banda);
-    const bMin = t.map((x) => bandaDe(x.slice(0, 10))?.min ?? null), bMax = t.map((x) => bandaDe(x.slice(0, 10))?.max ?? null);
-    return { t, nU, pTot, qReg, qVert, qDesc, acum, bMin, bMax, nivel: f.map((r) => r.nivel), p: Array.from({ length: nU }, (_, u) => f.map((r) => (r.p[u] != null ? Math.max(0, r.p[u]) : null))) };
-  }, [v]);
+    const acumular = (t, qReg, pesos) => {
+      let dia = null, s = 0, c = 0;
+      return qReg.map((q, i) => { const d = t[i].slice(0, 10); if (d !== dia) { dia = d; s = 0; c = 0; } if (q != null) { const w = pesos ? pesos[i] : 1; s += q * w; c += w; } return c ? s / c : null; });
+    };
+    if (porMinuto) {
+      if (!v.filas || !v.filas.length) return null;
+      const f = v.filas.filter((r) => r.t.slice(0, 10) >= rango.desde && r.t.slice(0, 10) <= rango.hasta);
+      if (!f.length) return null;
+      const t = f.map((r) => r.t);
+      const nU = f[0].p.length;
+      const pTot = f.map((r) => r.p.reduce((a, x) => a + (x != null && x > 0 ? x : 0), 0));
+      const qReg = f.map((r, i) => (r.p.every((x) => x == null) ? null : pTot[i] / factorConversionHidrometria(r.nivel, r.t)));
+      const qVert = f.map((r) => (r.qVert != null ? Math.max(0, r.qVert) : null));
+      const qDesc = qReg.map((q, i) => (q == null ? null : q + (qVert[i] || 0)));
+      return { paso: "minuto", t, nU, pTot, qReg, qVert, qDesc, acum: acumular(t, qReg), bMin: t.map((x) => bandaDe(x.slice(0, 10))?.min ?? null), bMax: t.map((x) => bandaDe(x.slice(0, 10))?.max ?? null), nivel: f.map((r) => r.nivel), p: Array.from({ length: nU }, (_, u) => f.map((r) => (r.p[u] != null ? Math.max(0, r.p[u]) : null))) };
+    }
+    const h = horario.datos;
+    if (!h) return null;
+    // filas horarias: histórico + horas de hoy que aún no estén
+    const filas = h.t.map((t, i) => ({ t, nivel: h.nivel[i], p: h.p[i] || [], linea: h.linea[i] || [], qReg: h.qReg[i], qVert: h.qVert[i] }));
+    if (v.resHoy && rango.hasta >= v.hoy) {
+      const ya = new Set(filas.map((r) => r.t));
+      v.resHoy.horas.forEach((x) => { if (x && !ya.has(x.t)) filas.push({ t: x.t, nivel: x.nivel, p: x.p, linea: x.linea, qReg: x.qReg, qVert: x.qVert }); });
+    }
+    if (!filas.length) return null;
+    const t = filas.map((r) => r.t);
+    const nU = filas.reduce((k, r) => Math.max(k, r.p.length), 0);
+    const pU = Array.from({ length: nU }, (_, u) => filas.map((r) => (r.p[u] != null ? Math.max(0, r.p[u]) * (r.linea[u] ?? 0) : 0)));
+    const pTot = filas.map((_, i) => pU.reduce((a, s) => a + (s[i] || 0), 0));
+    const qReg = filas.map((r) => r.qReg), qVert = filas.map((r) => (r.qVert != null ? Math.max(0, r.qVert) : null));
+    return { paso: "hora", t, nU, pTot, qReg, qVert, qDesc: qReg.map((q, i) => (q == null ? null : q + (qVert[i] || 0))), acum: acumular(t, qReg), bMin: t.map((x) => bandaDe(x.slice(0, 10))?.min ?? null), bMax: t.map((x) => bandaDe(x.slice(0, 10))?.max ?? null), nivel: filas.map((r) => r.nivel), p: pU };
+  }, [v, porMinuto, rango.desde, rango.hasta, horario.datos]);
 
   const sNivel = useMemo(() => series && [{ nombre: "Nivel del embalse (radar)", datos: series.nivel, decimales: 3 }], [series]);
   const sPot = useMemo(() => series && [
@@ -131,15 +160,15 @@ export default function Tablero({ T, condDescarga }) {
 
       {a && (
         <div className="itu-kpis" style={{ marginBottom: 16 }}>
-          <Kpi T={T} grande rotulo="Nivel del embalse" valor={a.nivel} decimales={2} unidad="msnm"
+          <Kpi T={T} grande rotulo="Nivel del embalse" actualizado={a.t} valor={a.nivel} decimales={2} unidad="msnm"
             nota={a.nivel == null ? "Sin dato del radar" : <>{v.tendencia[2].cmPorHora != null ? `${v.tendencia[2].cmPorHora >= 0 ? "Sube" : "Baja"} ${fmtNum(Math.abs(v.tendencia[2].cmPorHora), 1)} cm/h (6 h)` : ""}{v.tendencia[3].delta != null ? ` · ${fmtNum(v.tendencia[3].delta * 100, 0)} cm en 24 h` : ""}<br />A {fmtNum(NAMO - a.nivel, 2)} m del NAMO ({NAMO}){v.horasANAMO != null ? `; al ritmo de 6 h, en ${fmtNum(v.horasANAMO, 0)} h` : ""}</>} />
-          <Kpi T={T} grande rotulo="Potencia" valor={a.pTotal} decimales={0} unidad="MW" nota={`${nUA} unidad(es) en línea · promedio de 15 min`} />
-          <Kpi T={T} grande rotulo="Q regulado ahora" valor={a.qReg} decimales={1} unidad="m³/s" nota={`P / F.C. ${fmtNum(a.fc, 3)} (Hidrometría, nivel del radar)`} tip="Caudal regulado de Hidrometría: potencia total en bornes dividida por el factor de conversión vigente (0,0119·Nivel − 3,178 desde el 29-oct-2026)." />
-          <Kpi T={T} grande rotulo="Vertedero" valor={a.qVert != null ? Math.max(0, a.qVert) : null} decimales={1} unidad="m³/s"
+          <Kpi T={T} grande rotulo="Potencia" actualizado={a.t} valor={a.pTotal} decimales={0} unidad="MW" nota={`${nUA} unidad(es) en línea · promedio de 15 min`} />
+          <Kpi T={T} grande rotulo="Q regulado ahora" actualizado={a.t} valor={a.qReg} decimales={1} unidad="m³/s" nota={`P / F.C. ${fmtNum(a.fc, 3)} (Hidrometría, nivel del radar)`} tip="Caudal regulado de Hidrometría: potencia total en bornes dividida por el factor de conversión vigente (0,0119·Nivel − 3,178 desde el 29-oct-2026)." />
+          <Kpi T={T} grande rotulo="Vertedero" actualizado={a.t} valor={a.qVert != null ? Math.max(0, a.qVert) : null} decimales={1} unidad="m³/s"
             estado={a.qVert != null ? <Estado T={T} tipo={a.qVert > 1 ? "aviso" : "bien"} compacto>{a.qVert > 1 ? "Vertiendo" : "Sin vertimiento"}</Estado> : null}
             nota={a.aComp ? `Aperturas: ${a.aComp.map((x, g) => `C${g + 1} ${fmtNum(x, 2)}`).join(" · ")}` : undefined} />
-          <Kpi T={T} grande rotulo="Total descargado" valor={a.qDesc} decimales={1} unidad="m³/s" nota="Turbinado (Hidrometría) + vertedero" />
-          {v.resHoy && <Kpi T={T} grande rotulo="Entrada al embalse hoy" valor={v.resHoy.balance.qEntrada} decimales={0} unidad="m³/s" nota={v.resHoy.balance.qEntrada != null ? `Balance de masa en ${fmtNum(v.resHoy.balance.horas, 1)} h: descargado + cambio de volumen` : "Faltan al menos 6 h de datos de hoy"} />}
+          <Kpi T={T} grande rotulo="Total descargado" actualizado={a.t} valor={a.qDesc} decimales={1} unidad="m³/s" nota="Turbinado (Hidrometría) + vertedero" />
+          {v.resHoy && <Kpi T={T} grande rotulo="Entrada al embalse hoy" actualizado={v.resHoy.ultimo} valor={v.resHoy.balance.qEntrada} decimales={0} unidad="m³/s" nota={v.resHoy.balance.qEntrada != null ? `Balance de masa en ${fmtNum(v.resHoy.balance.horas, 1)} h: descargado + cambio de volumen` : "Faltan al menos 6 h de datos de hoy"} />}
         </div>
       )}
 
@@ -196,14 +225,21 @@ export default function Tablero({ T, condDescarga }) {
         </Tarjeta>
       )}
 
+      {v && v.filas && v.filas.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", margin: "4px 0 14px" }}>
+          <b style={{ fontSize: 13.5, color: T.ink }}>Gráficos:</b>
+          <SelectorRango T={T} min={minD || v.ayer} max={v.hoy} valor={rango} onChange={setRango} atajos={[["1", "Hoy"], ["2", "48 h"], ["7", "7 días"], ["30", "30 días"], ["90", "90 días"]]} />
+          <span style={{ fontSize: 12, color: T.inkFaint }}>{porMinuto ? "Dato de cada minuto." : horario.cargando ? "Cargando promedios horarios…" : "Promedios horarios (histórico + horas de hoy)."}</span>
+        </div>
+      )}
       {series && (
         <>
-          <Tarjeta T={T} titulo="Caudales de las últimas 48 h" subtitulo="La regla se juzga con el promedio acumulado del día (línea gruesa), no con el valor de cada minuto. La banda (líneas punteadas) es la de cada día.">
-            <GraficoSeries T={T} x={series.t} series={sQ} unidad="m³/s" ejeY="m³/s" grupo="vivo" nombreArchivo="caudales_48h" bandas={[{ desde: 4, hasta: 5, relleno: "rgba(12,163,12,0.08)" }]} />
+          <Tarjeta T={T} titulo={`Caudales (${fechaCorta(rango.desde)} – ${fechaCorta(rango.hasta)})`} subtitulo="La regla se juzga con el promedio acumulado del día (línea gruesa), no con el valor de cada minuto. La banda (líneas punteadas) es la de cada día.">
+            <GraficoSeries T={T} x={series.t} series={sQ} unidad="m³/s" ejeY="m³/s" grupo="vivo" nombreArchivo={`caudales_${rango.desde}_${rango.hasta}`} bandas={[{ desde: 4, hasta: 5, relleno: "rgba(12,163,12,0.08)" }]} />
           </Tarjeta>
           <div className="itu-2col">
-            <Tarjeta T={T} titulo="Nivel del embalse (48 h)"><GraficoSeries T={T} x={series.t} series={sNivel} unidad="msnm" ejeY="msnm" decimales={3} grupo="vivo" alto={220} nombreArchivo="nivel_48h" referencias={[{ y: NAMO, rotulo: `NAMO ${NAMO}` }]} /></Tarjeta>
-            <Tarjeta T={T} titulo="Potencia por unidad (48 h)"><GraficoSeries T={T} x={series.t} series={sPot} unidad="MW" ejeY="MW" decimales={1} grupo="vivo" alto={220} nombreArchivo="potencia_48h" incluirCero /></Tarjeta>
+            <Tarjeta T={T} titulo="Nivel del embalse"><GraficoSeries T={T} x={series.t} series={sNivel} unidad="msnm" ejeY="msnm" decimales={3} grupo="vivo" alto={220} nombreArchivo={`nivel_${rango.desde}_${rango.hasta}`} referencias={[{ y: NAMO, rotulo: `NAMO ${NAMO}` }]} /></Tarjeta>
+            <Tarjeta T={T} titulo="Potencia por unidad"><GraficoSeries T={T} x={series.t} series={sPot} unidad="MW" ejeY="MW" decimales={1} grupo="vivo" alto={220} nombreArchivo={`potencia_${rango.desde}_${rango.hasta}`} incluirCero /></Tarjeta>
           </div>
         </>
       )}
@@ -222,7 +258,7 @@ export default function Tablero({ T, condDescarga }) {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 8, marginTop: 10 }}>
                 {(hf.aa.estaciones || []).map((e) => (
                   <div key={e.col} style={{ fontSize: 12, color: T.inkMuted, background: T.panelSoft, borderRadius: 8, padding: "7px 9px" }}>
-                    <b style={{ color: T.ink }}>{e.nombre}</b> {fmtNum(e.q, 0)} m³/s<br />24 h: {e.cambio_24h >= 0 ? "+" : ""}{fmtNum(e.cambio_24h, 0)} m³/s{e.viaje_texto ? ` · ${e.viaje_texto}` : e.viaje_h ? ` · ~${e.viaje_h} h a Olaya` : ""}
+                    <b style={{ color: T.ink }}>{e.nombre}</b> {fmtNum(e.q, 0)} m³/s <span style={{ color: T.inkFaint }}>({fechaCorta(String(e.timestamp || ""))})</span><br />24 h: {e.cambio_24h >= 0 ? "+" : ""}{fmtNum(e.cambio_24h, 0)} m³/s{e.viaje_texto ? ` · ${e.viaje_texto}` : e.viaje_h ? ` · ~${e.viaje_h} h a Olaya` : ""}
                   </div>
                 ))}
               </div>

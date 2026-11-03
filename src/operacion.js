@@ -22,6 +22,23 @@ import {
 } from "./modelo.js";
 
 const UNIDADES_LOGGERNET = [1, 2, 3, 4];
+/* Unidades de las columnas que en LoggerNet vienen sin unidad (informadas por
+   operación, 3-nov-2026). Se usan cuando meta/*.json no trae la unidad. */
+const UNIDAD_COLUMNA = [
+  [/^Pos[12]Comp\d/i, "%"],
+  [/^MedComp\d/i, "mm"],
+  [/^Open_Gate\d/i, "m"],
+  [/^Caudal_Comp\d/i, "m³/s"],
+  [/^Caudal_Total/i, "m³/s"],
+  [/^QTurbinado/i, "m³/s"],
+  [/^Generacion/i, "MW"],
+  [/^Nivel_.*msnm/i, "msnm"],
+];
+function unidadColumna(nombre, unidadMeta) {
+  if (unidadMeta && String(unidadMeta).trim()) return String(unidadMeta).trim();
+  const u = UNIDAD_COLUMNA.find(([re]) => re.test(nombre));
+  return u ? u[1] : null;
+}
 const P_EN_LINEA_MW = 20; // por debajo, la unidad se considera detenida (igual que el monitoreo)
 
 /* Separa una línea CSV/TOA5 (campos de texto entre comillas, sin comillas escapadas). */
@@ -315,4 +332,4 @@ function resumenPorUnidad(intervalos) {
   });
 }
 
-export { UNIDADES_LOGGERNET, P_EN_LINEA_MW, separarCampos, leerLoggerNet, unirNivel, caudalRegulado, caudalColumnaLoggerNet, verificarColumnaLoggerNet, reglaOperativaDiaria, fcImplicito, nivelDesdeFC, agregarIntervalos, caudalModeloIntervalos, verificarFC, resumenPorUnidad };
+export { UNIDAD_COLUMNA, unidadColumna, UNIDADES_LOGGERNET, P_EN_LINEA_MW, separarCampos, leerLoggerNet, unirNivel, caudalRegulado, caudalColumnaLoggerNet, verificarColumnaLoggerNet, reglaOperativaDiaria, fcImplicito, nivelDesdeFC, agregarIntervalos, caudalModeloIntervalos, verificarFC, resumenPorUnidad };

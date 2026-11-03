@@ -63,7 +63,7 @@ function Tarjeta({ T, titulo, subtitulo, tip, accion, children, id }) {
 }
 
 /* Indicador: valor grande, unidad, rótulo y nota. */
-function Kpi({ T, rotulo, valor, unidad, decimales = 1, nota, estado, tip, grande = false }) {
+function Kpi({ T, rotulo, valor, unidad, decimales = 1, nota, estado, tip, grande = false, actualizado }) {
   return (
     <div style={{ background: T.panelSoft, border: `1px solid ${T.lineSoft}`, borderRadius: 10, padding: "11px 13px", minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "center", fontSize: 12, color: T.inkMuted, fontWeight: 600 }}>{rotulo}{tip && <InfoTip T={T} text={tip} />}</div>
@@ -73,6 +73,7 @@ function Kpi({ T, rotulo, valor, unidad, decimales = 1, nota, estado, tip, grand
       </div>
       {estado && <div style={{ marginTop: 6 }}>{estado}</div>}
       {nota && <div style={{ marginTop: 5, fontSize: 12, color: T.inkFaint, lineHeight: 1.4 }}>{nota}</div>}
+      {actualizado && <Actualizado T={T} cuando={actualizado} />}
     </div>
   );
 }
@@ -147,4 +148,49 @@ function hace(min) {
 }
 const fechaCorta = (d) => { if (!d) return "—"; const [a, m, dd] = d.slice(0, 10).split("-"); return `${+dd} ${["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"][+m - 1]}${d.length > 10 ? " " + d.slice(11, 16) : ""}`; };
 
+
+/* Selector de rango de fechas: atajos (últimos N días) y fechas desde/hasta.
+   min y max: primer y último día con datos ("AAAA-MM-DD"). valor: {desde, hasta}. */
+const sumarDiasTxt = (d, n) => new Date(Date.parse(d + "T00:00:00Z") + n * 864e5).toISOString().slice(0, 10);
+function rangoUltimos(max, dias, min) {
+  if (!max) return { desde: null, hasta: null };
+  if (dias === "todo") return { desde: min || max, hasta: max };
+  const desde = sumarDiasTxt(max, -(+dias - 1));
+  return { desde: min && desde < min ? min : desde, hasta: max };
+}
+function SelectorRango({ T, min, max, valor, onChange, atajos = [["7", "7 días"], ["30", "30 días"], ["90", "90 días"], ["365", "1 año"], ["todo", "Todo"]], etiqueta = "Rango" }) {
+  const activo = atajos.find(([k]) => { const r = rangoUltimos(max, k, min); return r.desde === valor.desde && r.hasta === valor.hasta; })?.[0];
+  const fecha = { padding: "5px 8px", fontSize: 12.5, background: T.panelSoft, border: `1px solid ${T.line}`, borderRadius: 7, color: T.ink, fontFamily: FONT_BODY, colorScheme: T.esOscuro ? "dark" : "light" };
+  const fijar = (desde, hasta) => {
+    if (!desde || !hasta) return;
+    let a = desde, b = hasta;
+    if (min && a < min) a = min; if (max && b > max) b = max; if (a > b) [a, b] = [b, a];
+    onChange({ desde: a, hasta: b });
+  };
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }} role="group" aria-label={etiqueta}>
+      <div style={{ display: "inline-flex", flexWrap: "wrap", border: `1px solid ${T.line}`, borderRadius: 8, overflow: "hidden" }}>
+        {atajos.map(([k, nombre]) => (
+          <button key={k} onClick={() => onChange(rangoUltimos(max, k, min))} aria-pressed={activo === k}
+            style={{ padding: "6px 11px", fontSize: 12.5, border: "none", borderRight: `1px solid ${T.line}`, background: activo === k ? T.accentSoft : T.panel, color: activo === k ? T.teal : T.inkMuted, fontWeight: activo === k ? 700 : 500, cursor: "pointer", fontFamily: FONT_BODY }}>
+            {nombre}
+          </button>
+        ))}
+      </div>
+      <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, color: T.inkMuted }}>Desde
+        <input type="date" value={valor.desde || ""} min={min || undefined} max={max || undefined} onChange={(e) => fijar(e.target.value, valor.hasta)} style={fecha} />
+      </label>
+      <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, color: T.inkMuted }}>Hasta
+        <input type="date" value={valor.hasta || ""} min={min || undefined} max={max || undefined} onChange={(e) => fijar(valor.desde, e.target.value)} style={fecha} />
+      </label>
+    </div>
+  );
+}
+/* Rótulo "Actualizado …" para fichas. */
+function Actualizado({ T, cuando, prefijo = "Actualizado" }) {
+  if (!cuando) return null;
+  return <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 5 }}>{prefijo} {fechaCorta(String(cuando).slice(0, 16).replace("T", " "))}</div>;
+}
+
+export { SelectorRango, rangoUltimos, Actualizado, sumarDiasTxt };
 export { Proposito, Tarjeta, Kpi, PanelConexion, RequiereConexion, SelectorPeriodo, estiloTarjeta, hace, fechaCorta };
