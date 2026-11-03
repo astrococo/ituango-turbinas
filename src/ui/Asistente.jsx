@@ -104,7 +104,7 @@ export default function Asistente({ T }) {
         logras="Respuestas en segundos que cruzan varios módulos, con las cifras sacadas de los datos (el asistente no tiene cifras propias: consulta herramientas y dice cuáles usó)."
         resultados="Respuesta escrita con las cifras y la hora del dato, y la lista de consultas que hizo (estado en vivo, histórico, serie horaria, HydroForecast, simulación de nivel, colina)." />
 
-      <Tarjeta T={T} titulo="Configuración" subtitulo="Necesita una clave de la API de Anthropic (console.anthropic.com), de pago por uso. La clave se guarda solo en este navegador si marca «Recordar».">
+      <Tarjeta T={T} titulo="Configuración" subtitulo="Necesita una clave de la API de Anthropic (Claude Console: platform.claude.com), de pago por uso. Créela dentro de un espacio de trabajo con límite de gasto. La clave se guarda solo en este navegador si marca «Recordar».">
         <div style={{ padding: "10px 12px", borderRadius: 8, background: T.panelSoft, border: `1px solid ${T.amber}`, color: T.ink, fontSize: 12.5, lineHeight: 1.5, marginBottom: 12 }}>
           <b>Datos que salen de la app.</b> Cada pregunta, y las cifras de operación que el asistente consulte para responderla, se envían a la API de Anthropic con su clave. Úselo solo si la política de EPM lo permite para estos datos. Nada se envía hasta que usted haga una pregunta; el resto de la app no usa la IA.
         </div>
