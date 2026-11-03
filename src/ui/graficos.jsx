@@ -75,13 +75,14 @@ function pluginTooltip(T, decimales, unidad, fmtX, equivalente = null) {
         u.series.forEach((s, k) => {
           if (k === 0 || !s.show || s._oculta) return;
           const v = u.data[k][i];
+          const motivoNulo = v == null && s._nulos ? s._nulos[i] : null;
           const fila = document.createElement("div");
           Object.assign(fila.style, { display: "flex", alignItems: "center", gap: "8px", lineHeight: "1.55" });
           const clave = document.createElement("span");
           Object.assign(clave.style, { width: "14px", height: "3px", borderRadius: "2px", background: s._dash ? `repeating-linear-gradient(90deg, ${s._color} 0 4px, transparent 4px 7px)` : s._color, flexShrink: 0 });
           const val = document.createElement("b");
-          val.textContent = `${fmtNum(v, s._dec ?? decimales)}${s._unidad ?? unidad ? " " + (s._unidad ?? unidad) : ""}`;
-          Object.assign(val.style, { color: T.ink, fontVariantNumeric: "tabular-nums" });
+          val.textContent = motivoNulo || `${fmtNum(v, s._dec ?? decimales)}${s._unidad ?? unidad ? " " + (s._unidad ?? unidad) : ""}`;
+          Object.assign(val.style, { color: motivoNulo ? T.inkMuted : T.ink, fontWeight: motivoNulo ? "500" : "700", fontVariantNumeric: "tabular-nums" });
           if (equivalente && v != null && Number.isFinite(v) && !s._sinEquiv) {
             const eq = document.createElement("span");
             eq.textContent = ` (${fmtNum(equivalente.f(v), equivalente.decimales ?? 2)}${equivalente.unidad})`;
@@ -186,7 +187,8 @@ function pluginFranjas(tramos) {
 
 /* Gráfico de series.
    x: arreglo de "AAAA-MM-DD HH:MM" (tipo "tiempo") o números (tipo "numero").
-   series: [{ nombre, datos:[...], color?, indice?, dash?, ancho?, unidad?, decimales?, area?, oculta?, puntos? }]
+   series: [{ nombre, datos:[...], color?, indice?, dash?, ancho?, unidad?, decimales?, area?, oculta?, puntos?,
+              nulos?: [...] texto que explica un valor vacío (p. ej. "detenida"), en tooltip, tabla y CSV }]
    bandas: [{ desde: i, hasta: j, relleno }] (índices de series: rellena entre ambas)
    referencias: [{ y, rotulo, color, dash } | { y1, y2, relleno }]
    verticales: [{ x (mismo tipo que x), rotulo, color }]
@@ -238,7 +240,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
           fill: s.area ? colores[i] + "22" : undefined, spanGaps: false,
           points: { show: s.puntos ?? false, size: s.soloPuntos ? 8 : 6, fill: colores[i], stroke: s.soloPuntos ? T.panel : colores[i] },
           paths: s.soloPuntos ? () => null : barras || s.barras ? uPlot.paths.bars({ size: [0.7, 40] }) : escalones || s.escalones ? uPlot.paths.stepped({ align: 1 }) : undefined,
-          _color: colores[i], _dash: s.dash, _unidad: s.unidad, _dec: s.decimales, _sinEquiv: s.sinEquiv,
+          _color: colores[i], _dash: s.dash, _unidad: s.unidad, _dec: s.decimales, _sinEquiv: s.sinEquiv, _nulos: s.nulos,
         })),
       ],
       // uPlot: [serie superior, serie inferior]
@@ -275,7 +277,9 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
   const valEq = (v) => (equivalente && v != null && Number.isFinite(v) ? +equivalente.f(v).toFixed(equivalente.decimales ?? 2) : null);
   const filasCSV = () => x.map((t, k) => Object.fromEntries([[tipoX === "tiempo" ? "fecha_hora" : (ejeX || "x"), t], ...series.flatMap((s) => {
     const col = [`${s.nombre}${s.unidad ?? unidad ? ` (${s.unidad ?? unidad})` : ""}`, s.datos[k]];
-    return equivalente && !s.sinEquiv ? [col, [`${s.nombre} (${equivalente.unidad})`, valEq(s.datos[k])]] : [col];
+    const cols = equivalente && !s.sinEquiv ? [col, [`${s.nombre} (${equivalente.unidad})`, valEq(s.datos[k])]] : [col];
+    if (s.nulos) cols.push([`${s.nombre} (estado)`, s.datos[k] == null ? s.nulos[k] || "" : ""]);
+    return cols;
   })]));
 
   const boton = { border: `1px solid ${T.line}`, background: T.panel, color: T.inkMuted, borderRadius: 6, padding: "3px 9px", fontSize: 12, cursor: "pointer", fontFamily: FONT_BODY };
@@ -323,7 +327,7 @@ function TablaSeries({ T, x, series, unidad, decimales, tipoX, ejeX, fmtX, xs, e
         <tbody>{filas.map((k) => (
           <tr key={k} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
             <td style={{ padding: "4px 8px", color: T.inkMuted }}>{fmtX(xs[k])}</td>
-            {series.map((s, i) => <td key={i} style={{ textAlign: "right", padding: "4px 8px", color: T.ink }}>{fmtNum(s.datos[k], s.decimales ?? decimales)}{equivalente && !s.sinEquiv && s.datos[k] != null && Number.isFinite(s.datos[k]) ? <span style={{ color: T.inkFaint }}> ({fmtNum(equivalente.f(s.datos[k]), equivalente.decimales ?? 2)}{equivalente.unidad})</span> : null}</td>)}
+            {series.map((s, i) => <td key={i} style={{ textAlign: "right", padding: "4px 8px", color: T.ink }}>{s.datos[k] == null && s.nulos && s.nulos[k] ? <span style={{ color: T.inkFaint }}>{s.nulos[k]}</span> : fmtNum(s.datos[k], s.decimales ?? decimales)}{equivalente && !s.sinEquiv && s.datos[k] != null && Number.isFinite(s.datos[k]) ? <span style={{ color: T.inkFaint }}> ({fmtNum(equivalente.f(s.datos[k]), equivalente.decimales ?? 2)}{equivalente.unidad})</span> : null}</td>)}
           </tr>
         ))}</tbody>
       </table>

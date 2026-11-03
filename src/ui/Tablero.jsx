@@ -11,6 +11,7 @@ import { minutosDe, tramosCumplimiento, aperturaIntervalos } from "../analitica.
 import { GraficoSeries, Estado, BarraBanda, fmtNum, colorSerie, aSeg } from "./graficos.jsx";
 import { Proposito, Tarjeta, Kpi, PanelConexion, hace, fechaCorta, SelectorRango, rangoUltimos } from "./comunes.jsx";
 import { GraficoApertura } from "./Apertura.jsx";
+import { evaluarAlertas } from "../alertas.js";
 
 const TIPO_ESTADO = { cumple: "bien", por_encima: "critico", por_debajo: "serio", excepcion: "aviso", sin_base: "neutro" };
 const P_LINEA = 20;
@@ -115,18 +116,18 @@ export default function Tablero({ T, condDescarga }) {
       if (!f.length) return null;
       const nU = f[0].p.length;
       const iv = aperturaIntervalos(f, nU, { minutos: 15, cond: CONDICION_DESCARGA_DEFECTO });
-      return { paso: "15 min", t: iv.map((x) => x.t), filas: iv.map((x) => x.gamma), pasoH: iv.map((x) => x.min / 60), nU };
+      return { paso: "15 min", t: iv.map((x) => x.t), filas: iv.map((x) => x.gamma), lineas: iv.map((x) => x.linea), pasoH: iv.map((x) => x.min / 60), nU };
     }
     const h = horario.datos;
     if (!h) return null;
-    const filas = h.t.map((t, i) => ({ t, g: h.gamma[i] }));
+    const filas = h.t.map((t, i) => ({ t, g: h.gamma[i], l: h.linea[i] }));
     if (v.resHoy && rango.hasta >= v.hoy) {
       const ya = new Set(filas.map((r) => r.t));
-      v.resHoy.horas.forEach((x) => { if (x && !ya.has(x.t)) filas.push({ t: x.t, g: x.gamma }); });
+      v.resHoy.horas.forEach((x) => { if (x && !ya.has(x.t)) filas.push({ t: x.t, g: x.gamma, l: x.linea }); });
     }
     if (!filas.length) return null;
     const nU = filas.reduce((k, r) => Math.max(k, r.g ? r.g.length : 0), 0);
-    return { paso: "hora", t: filas.map((r) => r.t), filas: filas.map((r) => r.g), pasoH: 1, nU };
+    return { paso: "hora", t: filas.map((r) => r.t), filas: filas.map((r) => r.g), lineas: filas.map((r) => r.l), pasoH: 1, nU };
   }, [v, porMinuto, rango.desde, rango.hasta, horario.datos]);
 
   // Modelo por unidad con el promedio de los últimos 15 min
@@ -187,6 +188,7 @@ export default function Tablero({ T, condDescarga }) {
   );
   if (!datos.conectado && !(v && v.hf && (v.hf.pronostico || v.hf.observado))) return <>{guia}<PanelConexion T={T} /></>;
 
+  const alertas = v && v.ultima ? evaluarAlertas(v) : null;
   const reg = v && v.resHoy ? v.resHoy.regla : null;
   const a = v && v.actual;
   const nUA = a ? a.enLinea.filter(Boolean).length : 0;
@@ -202,6 +204,19 @@ export default function Tablero({ T, condDescarga }) {
         {v && v.errores && v.errores.length > 0 && <span style={{ fontSize: 12, color: T.inkFaint }}>{v.errores.join(" · ")}</span>}
         {v && v.edadMin > 90 && <span style={{ fontSize: 12, color: T.inkMuted }}>Si el dato tiene más de 1 h, revise que el relay siga corriendo en el equipo corporativo (tarea "EPM Relay LoggerNet").</span>}
       </div>
+
+      {alertas && (
+        <Tarjeta T={T} titulo="Agente de vigilancia" subtitulo="Reglas fijas sobre el dato en vivo (sin IA): frescura del dato, regla 1891 del día, vertimiento, nivel frente al NAMO y apertura estimada > 97 %. El proceso automático evalúa lo mismo en cada corrida y, si aparece una alerta nueva, la publica en el issue «Alertas de operación» del repositorio de datos (GitHub avisa por correo)."
+          accion={<Estado T={T} tipo={alertas.some((x) => x.nivel === "critico") ? "critico" : alertas.some((x) => x.nivel === "aviso") ? "aviso" : "bien"}>{alertas.filter((x) => x.nivel !== "info").length ? `${alertas.filter((x) => x.nivel !== "info").length} alerta(s)` : "Sin alertas"}</Estado>}>
+          {alertas.length === 0 && <p style={{ fontSize: 13, color: T.inkMuted, margin: 0 }}>Todo dentro de lo esperado con el último dato ({v.ultima.t}).</p>}
+          {alertas.map((x) => (
+            <div key={x.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "6px 0", borderTop: `1px solid ${T.lineSoft}` }}>
+              <Estado T={T} compacto tipo={x.nivel === "info" ? "neutro" : x.nivel}>{x.nivel === "critico" ? "Crítica" : x.nivel === "aviso" ? "Aviso" : "Nota"}</Estado>
+              <div style={{ fontSize: 13, color: T.inkMuted, lineHeight: 1.5 }}><b style={{ color: T.ink }}>{x.titulo}.</b> {x.detalle}</div>
+            </div>
+          ))}
+        </Tarjeta>
+      )}
 
       {a && (
         <div className="itu-kpis" style={{ marginBottom: 16 }}>
@@ -289,7 +304,7 @@ export default function Tablero({ T, condDescarga }) {
           {apertura && apertura.nU > 0 && (
             <Tarjeta T={T} titulo={`Apertura del distribuidor por unidad (${fechaCorta(rango.desde)} – ${fechaCorta(rango.hasta)})`}
               subtitulo={apertura.paso === "15 min" ? "Promedio de cada 15 minutos (la hora marca el inicio del intervalo), en % y su equivalente en grados (eje derecho y tooltip). Se cuenta la unidad si estuvo en línea al menos la mitad del intervalo." : "Promedio de cada hora, en % y su equivalente en grados (eje derecho y tooltip). Se cuenta la unidad si estuvo en línea al menos media hora."}>
-              <GraficoApertura T={T} x={apertura.t} filas={apertura.filas} nU={apertura.nU} pasoH={apertura.pasoH} grupo="vivo" nombreArchivo={`apertura_${rango.desde}_${rango.hasta}`} mensajeVacio="Sin apertura calculable en el periodo (ninguna unidad en línea, o días del histórico anteriores al cálculo de la apertura)." />
+              <GraficoApertura T={T} x={apertura.t} filas={apertura.filas} lineas={apertura.lineas} nU={apertura.nU} pasoH={apertura.pasoH} grupo="vivo" nombreArchivo={`apertura_${rango.desde}_${rango.hasta}`} mensajeVacio="Sin apertura calculable en el periodo (ninguna unidad en línea, o días del histórico anteriores al cálculo de la apertura)." />
             </Tarjeta>
           )}
         </>

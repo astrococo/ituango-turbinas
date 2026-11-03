@@ -3,6 +3,7 @@ import { calcularVivo } from "../src/datos/vivo.jsx";
 import { leerLoggerNet, unirNivel } from "../src/operacion.js";
 import { resumirDias, filaDiaria, requeridoRestoDelDia, cierreProyectado, validarDespachoDia, aperturaIntervalos, resumenHora, serieHoraria } from "../src/analitica.js";
 import { pctFromDeg, degFromPct, CONDICION_DESCARGA_DEFECTO } from "../src/modelo.js";
+import { ejecutarHerramienta, preguntar, HERRAMIENTAS } from "../src/asistente.js";
 
 /* Datos sintéticos (sin cifras de operación): dos días de 4 unidades. */
 function csvGen(dia, pU) {
@@ -97,5 +98,63 @@ describe("calidad y validación por día", () => {
     expect(s.gamma.length).toBe(s.t.length);
     expect(s.gamma[0][0]).toBeGreaterThan(0);
     expect(s.gamma[0][3]).toBeNull();
+  });
+});
+
+describe("asistente: herramientas y bucle del agente (API simulada)", () => {
+  const g1 = leerLoggerNet(csvGen("2026-11-10", [200, 200, 200, 0])).filas;
+  const g2 = leerLoggerNet(csvGen("2026-11-11", [205, 205, 205, 0])).filas.filter((r) => r.t < "2026-11-11 12:00");
+  const n1 = leerLoggerNet(csvNivel("2026-11-10", 410, 0.2)).filas;
+  const n2 = leerLoggerNet(csvNivel("2026-11-11", 410.2, 0.2)).filas;
+  const filas = unirNivel([...g1, ...g2], [...n1, ...n2]).filas;
+  const dias = resumirDias(filas, { cond: CONDICION_DESCARGA_DEFECTO });
+  const vivo = calcularVivo({ hoy: "2026-11-11", ayer: "2026-11-10", filas, diario: [filaDiaria(dias[0])], errores: [], hf: {} });
+  const ctx = { vivo, leerJSON: async (ruta) => { if (ruta === "derivados/diario/2026.json") return { dias: dias.map(filaDiaria) }; throw new Error("404"); }, ahora: "2026-11-11 12:00" };
+
+  it("cada herramienta responde sin error con datos sintéticos", async () => {
+    const est = await ejecutarHerramienta(ctx, "estado_actual", {});
+    expect(est.ultimo_dato).toBe("2026-11-11 11:59");
+    expect(est.promedio_15_min.potencia_unidad_mw[0]).toBe(205);
+    expect(est.apertura_ultima_hora_cerrada.por_unidad_pct[0]).toBeGreaterThan(0);
+    expect(est.apertura_ultima_hora_cerrada.por_unidad_pct[3]).toBeNull();
+    expect(est.regla_1891_hoy.banda_m3s.min).toBeCloseTo(dias[0].regla.qReg * 0.953, 1);
+    const hist = await ejecutarHerramienta(ctx, "historico_diario", { desde: "2026-11-10", hasta: "2026-11-11" });
+    expect(hist.dias.map((d) => d.dia)).toEqual(["2026-11-10", "2026-11-11"]);
+    expect((await ejecutarHerramienta(ctx, "historico_diario", { desde: "2026-01-01", hasta: "2026-11-11" })).error).toMatch(/120/);
+    const sim = await ejecutarHerramienta(ctx, "simular_nivel", { potencias_mw: [600, 600, 600], caudal_entrada_m3s: 300 });
+    expect(sim.horas).toHaveLength(3);
+    expect(sim.horas[0].unidades).toBe(2);
+    expect(sim.nivel_final_msnm).toBeLessThan(sim.supuestos.nivel_inicial_msnm + 0.5);
+    const pto = await ejecutarHerramienta(ctx, "punto_operacion", { nivel_msnm: 410, potencias_unidad_mw: [250, 250] });
+    expect(pto.unidades).toHaveLength(2);
+    expect(pto.unidades[0].apertura_pct).toBeCloseTo(pctFromDeg(pto.unidades[0].apertura_grados), 0);
+    expect((await ejecutarHerramienta(ctx, "pronostico_caudal", {})).error).toBeTruthy();
+    expect((await ejecutarHerramienta(ctx, "no_existe", {})).error).toMatch(/desconocida/);
+    expect(HERRAMIENTAS.map((h) => h.name).sort()).toEqual(["estado_actual", "historico_diario", "pronostico_caudal", "punto_operacion", "serie_horaria", "simular_nivel"]);
+  });
+
+  it("bucle: pide una herramienta, recibe el resultado y responde", async () => {
+    const llamadas = [];
+    const respuestas = [
+      { stop_reason: "tool_use", content: [{ type: "tool_use", id: "t1", name: "estado_actual", input: {} }], usage: { input_tokens: 1, output_tokens: 1 } },
+      { stop_reason: "end_turn", content: [{ type: "text", text: "Listo." }], usage: { input_tokens: 2, output_tokens: 1 } },
+    ];
+    const fetchFn = async (url, op) => { llamadas.push({ url, op, cuerpo: JSON.parse(op.body) }); return { ok: true, json: async () => respuestas[llamadas.length - 1] }; };
+    const pasos = [];
+    const res = await preguntar({ clave: "k", modelo: "claude-sonnet-5-5", historial: [{ role: "user", content: "¿cómo vamos?" }], ctx, fetchFn, onPaso: (p) => pasos.push(p.nombre) });
+    expect(llamadas).toHaveLength(2);
+    expect(llamadas[0].url).toBe("https://api.anthropic.com/v1/messages");
+    expect(llamadas[0].op.headers["anthropic-dangerous-direct-browser-access"]).toBe("true");
+    expect(llamadas[0].cuerpo.tools).toHaveLength(6);
+    const resultado = llamadas[1].cuerpo.messages[2].content[0];
+    expect(resultado.type).toBe("tool_result");
+    expect(JSON.parse(resultado.content).ultimo_dato).toBe("2026-11-11 11:59");
+    expect(pasos).toEqual(["estado_actual"]);
+    expect(res.mensajes[res.mensajes.length - 1].content[0].text).toBe("Listo.");
+  });
+
+  it("clave inválida: mensaje claro", async () => {
+    const fetchFn = async () => ({ ok: false, status: 401, json: async () => ({ error: { message: "invalid x-api-key" } }) });
+    await expect(preguntar({ clave: "x", modelo: "m", historial: [{ role: "user", content: "hola" }], ctx, fetchFn })).rejects.toThrow(/401/);
   });
 });

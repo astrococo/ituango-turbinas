@@ -374,7 +374,7 @@ export default function OperacionMedida({ T, condDescarga }) {
               <GraficoSeries T={T} x={sOp.x} series={sOp.fc} unidad="MW/(m³/s)" ejeY="MW por m³/s" decimales={3} grupo="om" alto={220} nombreArchivo="fc_15min" verticales={[{ x: FC_HIDROMETRIA_POR_NIVEL.desde, rotulo: "F.C. por nivel" }]} />
 
               <ChartHeader titulo="Apertura del distribuidor por unidad" subtitulo="Promedio de cada intervalo de 15 min, en % y su equivalente en grados (eje derecho y tooltip): la apertura que da el modelo de la colina para la potencia medida de cada unidad, con la condición de descarga elegida arriba." T={T} />
-              <GraficoApertura T={T} x={sOp.x} filas={(calculo || []).map((iv) => iv.gamma || null)} nU={4} pasoH={(calculo || []).map((iv) => (iv.minutos || 15) / 60)} grupo="om" nombreArchivo="apertura_15min" />
+              <GraficoApertura T={T} x={sOp.x} filas={(calculo || []).map((iv) => iv.gamma || null)} lineas={(calculo || []).map((iv) => iv.p.map((p) => (p == null ? null : p > P_EN_LINEA_MW ? 1 : 0)))} nU={4} pasoH={(calculo || []).map((iv) => (iv.minutos || 15) / 60)} grupo="om" nombreArchivo="apertura_15min" />
 
               <div className="itu-tabla" style={{ marginTop: 12 }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, fontFamily: FONT_BODY, color: T.ink }}>

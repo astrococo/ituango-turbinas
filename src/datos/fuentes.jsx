@@ -10,6 +10,7 @@
    no cambió responde 304 y no gasta cupo de la API de GitHub.
    ============================================================ */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { ahoraColombia, hoyColombia, sumarDias } from "./tiempo.js";
 
 const REPO_DATOS_DEFECTO = "astrococo/ituango-turbinas-datos";
 const CLAVE_TOKEN = "ituango-turbinas-token";
@@ -17,11 +18,6 @@ const CLAVE_REPO = "ituango-turbinas-repo";
 const API_HF = "https://jdguarnizor-hydroforecast-ituango.hf.space";
 const leerLocal = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const escribirLocal = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* sin almacenamiento */ } };
-
-/* Hora de Colombia (UTC−5, sin horario de verano) como texto. */
-const ahoraColombia = () => new Date(Date.now() - 5 * 3600e3).toISOString().slice(0, 16).replace("T", " ");
-const hoyColombia = () => ahoraColombia().slice(0, 10);
-const sumarDias = (d, n) => new Date(Date.parse(d + "T00:00:00Z") + n * 864e5).toISOString().slice(0, 10);
 
 const cache = new Map(); // url → { etag, cuerpo }
 class ErrorDatos extends Error { constructor(msg, codigo) { super(msg); this.codigo = codigo; } }

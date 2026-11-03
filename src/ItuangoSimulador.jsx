@@ -17,8 +17,9 @@ import { tramosCumplimiento } from "./analitica.js";
 import { ProveedorDatos, useDatos } from "./datos/fuentes.jsx";
 import { Proposito, PanelConexion } from "./ui/comunes.jsx";
 import { GraficoSeries } from "./ui/graficos.jsx";
-import { EQUIV_APERTURA, referenciasApertura, NOTA_APERTURA } from "./ui/Apertura.jsx";
+import { EQUIV_APERTURA, referenciasApertura, NOTA_APERTURA, motivoSinApertura } from "./ui/Apertura.jsx";
 import Tablero from "./ui/Tablero.jsx";
+import Asistente from "./ui/Asistente.jsx";
 import ReglaAnla from "./ui/ReglaAnla.jsx";
 import Unidades from "./ui/Unidades.jsx";
 import Hidrologia from "./ui/Hidrologia.jsx";
@@ -723,7 +724,8 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
       const nU = hReal.reduce((k, h) => Math.max(k, h && h.gamma ? h.gamma.length : 0), 0);
       for (let u = 0; u < nU; u++) {
         const datos = HORAS_DIA.map((h) => pct(hReal[h] && hReal[h].gamma ? hReal[h].gamma[u] : null));
-        if (datos.some((v) => v != null)) s.push({ nombre: `U${u + 1} real (estimada)`, datos: ext(datos), indice: u, ancho: 1.8, escalones: true });
+        const nulos = HORAS_DIA.map((h) => (hReal[h] ? motivoSinApertura(hReal[h].linea ? hReal[h].linea[u] : null) : "hora sin dato"));
+        if (datos.some((v) => v != null)) s.push({ nombre: `U${u + 1} real (estimada)`, datos: ext(datos), nulos: ext(nulos), indice: u, ancho: 1.8, escalones: true });
       }
     }
     s.push({ nombre: `Programa simulado (cada unidad en línea)`, datos: ext(det.map((d) => (d.qTurbinado > 0 ? pct(d.gamma) : null))), color: T.ink, dash: true, ancho: 2.2, escalones: true });
@@ -2223,7 +2225,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
    - Analítica y consulta: histórico, cumplimiento y comportamiento de las máquinas.
    - Ingeniería de la máquina: el modelo (colina, curvas, almenaras, referencia). */
 const GRUPOS = [
-  { k: "vivo", nombre: "Operación en vivo", tabs: [["tablero", "Tablero"], ["despacho", "Despacho"], ["buscador", "Buscador"], ["vertedero", "Vertedero"]] },
+  { k: "vivo", nombre: "Operación en vivo", tabs: [["tablero", "Tablero"], ["despacho", "Despacho"], ["buscador", "Buscador"], ["vertedero", "Vertedero"], ["asistente", "Asistente (IA)"]] },
   { k: "analitica", nombre: "Analítica", tabs: [["regla", "Regla 1891 y ANLA"], ["unidades", "Unidades"], ["hidrologia", "Hidrología y pronóstico"], ["operacion", "Operación medida"], ["confiabilidad", "Validación"]] },
   { k: "ingenieria", nombre: "Ingeniería", tabs: [["colina", "Colina"], ["curvas", "Curvas y F.C."], ["descarga", "Descarga"], ["referencia", "Referencia"]] },
 ];
@@ -2326,6 +2328,7 @@ function Aplicacion() {
 
       <main style={{ maxWidth: 1240, margin: "0 auto", padding: "18px max(16px, env(safe-area-inset-left)) 40px" }}>
         {tab === "tablero" && <Tablero T={T} condDescarga={condDescarga} />}
+        {tab === "asistente" && <Asistente T={T} />}
         {tab === "vertedero" && <Vertedero T={T} />}
         {tab === "regla" && <ReglaAnla T={T} />}
         {tab === "unidades" && <Unidades T={T} />}

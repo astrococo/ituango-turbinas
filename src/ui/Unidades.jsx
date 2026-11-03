@@ -89,7 +89,7 @@ export default function Unidades({ T }) {
     const h = horario.datos;
     if (!h || !h.t.length) return null;
     const conDato = h.gamma.some((g) => g && g.some((x) => x != null));
-    return { t: h.t, filas: h.gamma, conDato };
+    return { t: h.t, filas: h.gamma, lineas: h.linea, conDato };
   }, [horario.datos]);
 
   const guia = (
@@ -161,7 +161,7 @@ export default function Unidades({ T }) {
           </div>
           <Tarjeta T={T} titulo="Apertura del distribuidor por unidad, hora a hora" subtitulo={`Apertura estimada (en % y su equivalente en grados) de cada unidad en línea, promedio de cada hora, entre ${fechaCorta(rangoCurva[0])} y ${fechaCorta(rangoCurva[1])}${dias.length > 92 ? " (últimos 92 días del periodo)" : ""}. Con la misma potencia, una unidad que pide más apertura que otra está rindiendo distinto, o el nivel y el salto cambiaron.`}>
             {horario.cargando && !apertura && <div style={{ fontSize: 13, color: T.inkFaint }}>Cargando series horarias…</div>}
-            {apertura && apertura.conDato && <GraficoApertura T={T} x={apertura.t} filas={apertura.filas} nU={nU} pasoH={1} grupo="unidH" nombreArchivo="apertura_unidades_horaria" />}
+            {apertura && apertura.conDato && <GraficoApertura T={T} x={apertura.t} filas={apertura.filas} lineas={apertura.lineas} nU={nU} pasoH={1} grupo="unidH" nombreArchivo="apertura_unidades_horaria" />}
             {apertura && !apertura.conDato && <div style={{ fontSize: 13, color: T.inkFaint }}>El histórico de este periodo todavía no tiene la apertura por hora; el proceso automático la agrega en su próximo recálculo.</div>}
           </Tarjeta>
           <Tarjeta T={T} titulo="Rendimiento relativo al modelo según la carga" subtitulo={`Q modelo / Q Winter-Kennedy por tramo de 10 MW (mediana de las horas completas en línea, al menos 3 por tramo) entre ${fechaCorta(rangoCurva[0])} y ${fechaCorta(rangoCurva[1])}. Al dividir por el modelo se descuenta el efecto del nivel del embalse: queda cuánto rinde cada máquina frente a la colina común, carga por carga. Más alto = turbina menos agua de la que predice el modelo (relativo: WK sin calibrar).`}>
