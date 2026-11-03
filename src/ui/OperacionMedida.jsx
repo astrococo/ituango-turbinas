@@ -7,23 +7,19 @@
    navegador y no se envía a ningún lado.
    ============================================================ */
 import { useState, useMemo, useEffect } from "react";
-import { ResponsiveContainer, LineChart, CartesianGrid, XAxis, YAxis, Tooltip as RTooltip, Line, Legend, ReferenceLine } from "recharts";
 import { FC_HIDROMETRIA_POR_NIVEL, etiquetaCondicionDescarga, NIVEL_MIN_TEC, NAME, ETIQUETA_ESTADO_REGLA } from "../modelo.js";
 import { leerLoggerNet, unirNivel, agregarIntervalos, caudalModeloIntervalos, verificarColumnaLoggerNet, reglaOperativaDiaria, caudalRegulado, resumenPorUnidad, P_EN_LINEA_MW } from "../operacion.js";
-import { BotonCSV, ChartHeader, Etiqueta, FONT_BODY, tickStyleFor } from "./base.jsx";
+import { BotonCSV, ChartHeader, Etiqueta, FONT_BODY } from "./base.jsx";
+import { useDatos } from "../datos/fuentes.jsx";
+import { GraficoSeries } from "./graficos.jsx";
 
-const REPO_DATOS_DEFECTO = "astrococo/ituango-turbinas-datos";
 const CARPETA_GEN = "loggernet";
 const CARPETA_NIVEL = "nivel";
-const CLAVE_TOKEN = "ituango-turbinas-token";
-const CLAVE_REPO = "ituango-turbinas-repo";
-const leerLocal = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
-const escribirLocal = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* sin almacenamiento */ } };
 const MAX_LOCAL_MB = 40;
 /* QTurbinado_U1..4_Avg son los caudales Winter-Kennedy, aún sin calibrar
-   (operaciones, nov-2026): se leen pero no se muestran ni se comparan. Cuando
-   estén calibrados basta con cambiar esto a true. */
-const MOSTRAR_WINTER_KENNEDY = false;
+   (operaciones, nov-2026): se muestran como índice RELATIVO entre unidades
+   (y frente a P / F.C.), siempre rotulados "sin calibrar". */
+const MOSTRAR_WINTER_KENNEDY = true;
 
 async function gh(url, token, raw = false) {
   const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: raw ? "application/vnd.github.raw" : "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" } });
@@ -63,9 +59,14 @@ const fmt = (v, d = 1) => (v == null || !Number.isFinite(v) ? "—" : v.toLocale
 
 export default function OperacionMedida({ T, condDescarga }) {
   const [fuente, setFuente] = useState("github");
-  const [repo, setRepo] = useState(() => leerLocal(CLAVE_REPO) || REPO_DATOS_DEFECTO);
-  const [token, setToken] = useState(() => leerLocal(CLAVE_TOKEN) || "");
-  const [recordar, setRecordar] = useState(() => !!leerLocal(CLAVE_TOKEN));
+  // Token y repositorio compartidos con el resto de la app (panel de conexión)
+  const ctxDatos = useDatos();
+  const { repo, setRepo, token, setToken, recordar, setRecordar } = ctxDatos;
+  // Borradores: el token y el repositorio se aplican al salir del campo (no en cada tecla)
+  const [repoTxt, setRepoTxt] = useState(repo);
+  const [tokenTxt, setTokenTxt] = useState(token);
+  useEffect(() => { setRepoTxt(repo); }, [repo]);
+  useEffect(() => { setTokenTxt(token); }, [token]);
   const [dias, setDias] = useState(3);
   const [estado, setEstado] = useState(null); // {tipo:'info'|'error'|'ok', txt}
   const [lectura, setLectura] = useState(null); // {filas, avisos, origen, columnaNivel}
@@ -74,23 +75,24 @@ export default function OperacionMedida({ T, condDescarga }) {
   const [calculo, setCalculo] = useState(null);
   const [progreso, setProgreso] = useState(null);
 
-  useEffect(() => { escribirLocal(CLAVE_REPO, repo === REPO_DATOS_DEFECTO ? null : repo); }, [repo]);
-  useEffect(() => { escribirLocal(CLAVE_TOKEN, recordar && token ? token : null); }, [recordar, token]);
 
   async function cargarGitHub() {
-    if (!token.trim()) { setEstado({ tipo: "error", txt: "Falta el token de solo lectura del repositorio de datos." }); return; }
+    const tk = (tokenTxt || token).trim(), rp = (repoTxt || repo).trim();
+    if (tk !== token) setToken(tk);
+    if (rp !== repo) setRepo(rp);
+    if (!tk) { setEstado({ tipo: "error", txt: "Falta el token de solo lectura del repositorio de datos." }); return; }
     setEstado({ tipo: "info", txt: "Consultando GitHub…" }); setLectura(null); setCalculo(null);
     try {
       const hoy = new Date(Date.now() - 5 * 3600e3);
       const anios = [...new Set([new Date(hoy.getTime() - (dias + 1) * 864e5).getUTCFullYear(), hoy.getUTCFullYear()])];
       // GitHub responde 404 tanto si falta la carpeta como si el token no ve el repositorio:
       // primero se comprueba el repositorio, para dar el error correcto.
-      try { await gh(`https://api.github.com/repos/${repo}`, token.trim()); }
-      catch (e) { throw new Error(/404/.test(e.message) ? `El token no tiene acceso a ${repo}, o el repositorio no existe (404). Revise el nombre y que el token sea de ese repositorio.` : e.message); }
+      try { await gh(`https://api.github.com/repos/${rp}`, tk); }
+      catch (e) { throw new Error(/404/.test(e.message) ? `El token no tiene acceso a ${rp}, o el repositorio no existe (404). Revise el nombre y que el token sea de ese repositorio.` : e.message); }
       const listar = async (carpeta) => {
         let out = [];
         for (const a of anios) {
-          try { out = out.concat((await gh(`https://api.github.com/repos/${repo}/contents/${carpeta}/${a}`, token.trim())).filter((x) => /\d{4}-\d{2}-\d{2}\.csv$/.test(x.name))); }
+          try { out = out.concat((await gh(`https://api.github.com/repos/${rp}/contents/${carpeta}/${a}`, tk)).filter((x) => /\d{4}-\d{2}-\d{2}\.csv$/.test(x.name))); }
           catch (e) { if (!/404/.test(e.message)) throw e; }
         }
         return out.sort((a, b) => (a.name < b.name ? -1 : 1));
@@ -104,10 +106,10 @@ export default function OperacionMedida({ T, condDescarga }) {
       const lecturas = [];
       for (const [k, f] of todos.entries()) {
         setEstado({ tipo: "info", txt: `Descargando ${f.path} (${k + 1} de ${todos.length})…` });
-        lecturas.push(leerLoggerNet(await gh(`https://api.github.com/repos/${repo}/contents/${f.path}`, token.trim(), true)));
+        lecturas.push(leerLoggerNet(await gh(`https://api.github.com/repos/${rp}/contents/${f.path}`, tk, true)));
       }
       const r = combinarLecturas(lecturas);
-      setLectura({ ...r, origen: `${repo} · ${gen[0].name.slice(0, 10)} a ${gen[gen.length - 1].name.slice(0, 10)}` });
+      setLectura({ ...r, origen: `${rp} · ${gen[0].name.slice(0, 10)} a ${gen[gen.length - 1].name.slice(0, 10)}` });
       setEstado({ tipo: "ok", txt: `${r.filas.length.toLocaleString("es-CO")} minutos de generación y ${r.minutosNivel.toLocaleString("es-CO")} registros de nivel, de ${todos.length} archivo(s).` });
     } catch (e) { setEstado({ tipo: "error", txt: e.message }); }
   }
@@ -205,8 +207,32 @@ export default function OperacionMedida({ T, condDescarga }) {
   const caja = { padding: "10px 12px", background: T.panelSoft, borderRadius: 8, fontSize: 12.5, fontFamily: FONT_BODY, color: T.inkMuted, lineHeight: 1.6 };
   const boton = (activo) => ({ padding: "7px 12px", borderRadius: 6, border: `1px solid ${activo ? T.teal : T.line}`, background: activo ? T.panelSoft : "transparent", color: activo ? T.teal : T.inkMuted, fontFamily: FONT_BODY, fontSize: 12.5, fontWeight: 600, cursor: "pointer" });
   const entrada = { width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 6, border: `1px solid ${T.line}`, background: T.panel, color: T.ink, fontFamily: FONT_BODY, fontSize: 13 };
-  const ticksX = (d) => (d.length > 1 ? d.filter((_, i) => i % Math.max(1, Math.round(d.length / 8)) === 0).map((x) => x.t) : undefined);
-  const etiquetaT = (t) => (typeof t === "string" ? `${t.slice(8, 10)}/${t.slice(5, 7)} ${t.slice(11)}` : t);
+
+  const sRegla = useMemo(() => ({ x: (graficaRegla || []).map((g) => g.t), s: [
+    { nombre: "Banda mín.", datos: (graficaRegla || []).map((g) => g.min ?? null), color: T.inkFaint, dash: true, ancho: 1.2, escalones: true },
+    { nombre: "Banda máx.", datos: (graficaRegla || []).map((g) => g.max ?? null), color: T.inkFaint, dash: true, ancho: 1.2, escalones: true },
+    { nombre: "Caudal regulado (15 min)", datos: (graficaRegla || []).map((g) => g.qReg ?? null), indice: 1, ancho: 1.3 },
+    { nombre: "Promedio acumulado del día", datos: (graficaRegla || []).map((g) => g.acumulado ?? null), indice: 0, ancho: 2.4 },
+  ] }), [graficaRegla, T]);
+  const sOp = useMemo(() => {
+    const g = grafica || [];
+    const x = g.map((r) => r.t);
+    return {
+      x,
+      p: [{ nombre: "Total", datos: g.map((r) => r.P), color: T.ink, ancho: 2.2 }, ...["U1", "U2", "U3", "U4"].map((u, i) => ({ nombre: u, datos: g.map((r) => r[u]), indice: i, ancho: 1.3 }))],
+      q: [
+        { nombre: "Hidrometría", datos: g.map((r) => r.qHid), indice: 0, ancho: 1.8 },
+        { nombre: "Modelo", datos: g.map((r) => r.qMod), indice: 2, ancho: 1.8 },
+        ...(MOSTRAR_WINTER_KENNEDY && lectura && lectura.tieneQ2 ? [{ nombre: "Winter-Kennedy (sin calibrar)", datos: g.map((r) => r.q2), indice: 6, ancho: 1.4, dash: true }] : []),
+        { nombre: "Vertedero", datos: g.map((r) => r.qVert), indice: 1, ancho: 1.2 },
+      ],
+      fc: [
+        { nombre: "Hidrometría", datos: g.map((r) => r.fcHid), indice: 0, ancho: 1.8 },
+        { nombre: "Modelo", datos: g.map((r) => r.fcMod), indice: 2, ancho: 1.8 },
+        ...(MOSTRAR_WINTER_KENNEDY && lectura && lectura.tieneQ2 ? [{ nombre: "Winter-Kennedy (sin calibrar)", datos: g.map((r) => (r.q2 > 0 ? r.P / r.q2 : null)), indice: 6, ancho: 1.4, dash: true }] : []),
+      ],
+    };
+  }, [grafica, T, lectura]);
 
   return (
     <div>
@@ -223,11 +249,11 @@ export default function OperacionMedida({ T, condDescarga }) {
         <div className="itu-grid-form" style={{ marginBottom: 12 }}>
           <div>
             <Etiqueta T={T} tip="Repositorio privado donde el relay deja un CSV por día (carpeta loggernet/AAAA/).">Repositorio</Etiqueta>
-            <input value={repo} onChange={(e) => setRepo(e.target.value.trim())} style={entrada} spellCheck={false} />
+            <input value={repoTxt} onChange={(e) => setRepoTxt(e.target.value)} onBlur={() => repoTxt.trim() !== repo && setRepo(repoTxt.trim())} style={entrada} spellCheck={false} />
           </div>
           <div>
             <Etiqueta T={T} tip="Token fine-grained de GitHub con permiso Contents: Read-only, solo para el repositorio de datos. Se usa solo desde este navegador; no se envía a ningún otro sitio.">Token de solo lectura</Etiqueta>
-            <input type="password" value={token} onChange={(e) => setToken(e.target.value)} style={entrada} autoComplete="off" placeholder="github_pat_…" />
+            <input type="password" value={tokenTxt} onChange={(e) => setTokenTxt(e.target.value)} onBlur={() => tokenTxt.trim() !== token && setToken(tokenTxt)} style={entrada} autoComplete="off" placeholder="github_pat_…" />
             <label style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6, fontSize: 12, color: T.inkMuted, fontFamily: FONT_BODY }}>
               <input type="checkbox" checked={recordar} onChange={(e) => setRecordar(e.target.checked)} /> Recordar en este equipo
             </label>
@@ -289,7 +315,7 @@ export default function OperacionMedida({ T, condDescarga }) {
                   ["Energía", fmt(totales.E, 0), "MWh"],
                   ["Caudal medio, Hidrometría", fmt(totales.qH, 1), "m³/s"],
                   ["Caudal medio, modelo", fmt(totales.qM, 1), "m³/s"],
-                  ...((MOSTRAR_WINTER_KENNEDY && lectura.tieneQ2) ? [["Caudal medio, Winter-Kennedy", fmt(totales.q2, 1), "m³/s"]] : []),
+                  ...((MOSTRAR_WINTER_KENNEDY && lectura.tieneQ2) ? [["Caudal medio, Winter-Kennedy (sin calibrar)", fmt(totales.q2, 1), "m³/s"]] : []),
                   ["Volumen vertido", fmt(totales.vVert / 1e6, 2), "hm³"],
                   ["Hidrometría frente al modelo", totales.vM > 0 ? `${totales.vH >= totales.vM ? "+" : ""}${fmt((totales.vH / totales.vM - 1) * 100, 1)}` : "—", "%"],
                 ].map(([l, v, u]) => (
@@ -324,68 +350,23 @@ export default function OperacionMedida({ T, condDescarga }) {
                       </tbody>
                     </table>
                   </div>
-                  <ResponsiveContainer width="100%" height={240}>
-                    <LineChart data={graficaRegla} margin={{ top: 10, right: 12, left: 0, bottom: 4 }}>
-                      <CartesianGrid stroke={T.lineSoft} strokeDasharray="2 4" />
-                      <XAxis dataKey="t" ticks={ticksX(graficaRegla)} tickFormatter={etiquetaT} tick={tickStyleFor(T)} minTickGap={20} />
-                      <YAxis width={48} tick={tickStyleFor(T)} domain={["auto", "auto"]} tickFormatter={(v) => fmt(v, 0)} />
-                      <RTooltip formatter={(v) => (v == null ? "—" : `${fmt(v, 1)} m³/s`)} labelFormatter={etiquetaT} contentStyle={{ background: T.panel, border: `1px solid ${T.line}`, fontSize: 12 }} />
-                      <Legend wrapperStyle={{ fontSize: 11.5, fontFamily: FONT_BODY }} />
-                      <Line dataKey="max" name="Banda" stroke={T.inkMuted} strokeDasharray="5 3" strokeWidth={1.2} dot={false} isAnimationActive={false} connectNulls={false} />
-                      <Line dataKey="min" name="Banda (mín.)" legendType="none" stroke={T.inkMuted} strokeDasharray="5 3" strokeWidth={1.2} dot={false} isAnimationActive={false} connectNulls={false} />
-                      <Line dataKey="qReg" name="Caudal regulado (15 min)" stroke={T.amber} strokeWidth={1.3} dot={false} isAnimationActive={false} />
-                      <Line dataKey="acumulado" name="Promedio acumulado del día" stroke={T.cyan} strokeWidth={2.2} dot={false} isAnimationActive={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
+                  <GraficoSeries T={T} x={sRegla.x} series={sRegla.s} unidad="m³/s" ejeY="m³/s" grupo="om" nombreArchivo="regla_15min" bandas={[{ desde: 0, hasta: 1, relleno: "rgba(12,163,12,0.08)" }]} />
                 </div>
               )}
 
               <ChartHeader titulo="Potencia en bornes" T={T} accion={<BotonCSV data={csv} filename="operacion_medida_15min.csv" T={T} />} />
-              <ResponsiveContainer width="100%" height={240}>
-                <LineChart data={grafica} margin={{ top: 6, right: 12, left: 0, bottom: 4 }}>
-                  <CartesianGrid stroke={T.lineSoft} strokeDasharray="2 4" />
-                  <XAxis dataKey="t" ticks={ticksX(grafica)} tickFormatter={etiquetaT} tick={tickStyleFor(T)} minTickGap={20} />
-                  <YAxis width={48} tick={tickStyleFor(T)} />
-                  <RTooltip formatter={(v) => (v == null ? "—" : `${fmt(v, 1)} MW`)} labelFormatter={etiquetaT} contentStyle={{ background: T.panel, border: `1px solid ${T.line}`, fontSize: 12 }} />
-                  <Legend wrapperStyle={{ fontSize: 11.5, fontFamily: FONT_BODY }} />
-                  <Line dataKey="P" name="Total" stroke={T.teal} strokeWidth={2.2} dot={false} isAnimationActive={false} />
-                  {["U1", "U2", "U3", "U4"].map((u, i) => <Line key={u} dataKey={u} name={u} stroke={[T.amber, T.cyan, T.red, T.inkMuted][i]} strokeWidth={1.1} dot={false} isAnimationActive={false} />)}
-                </LineChart>
-              </ResponsiveContainer>
+              <GraficoSeries T={T} x={sOp.x} series={sOp.p} unidad="MW" ejeY="MW" grupo="om" alto={240} nombreArchivo="potencia_15min" incluirCero />
 
-              <ChartHeader titulo="Caudal turbinado total" subtitulo="Hidrometría (potencia / F.C. con el nivel del radar, como su app) frente al modelo de la colina con la misma potencia; también el caudal del vertedero." T={T} />
-              <ResponsiveContainer width="100%" height={240}>
-                <LineChart data={grafica} margin={{ top: 6, right: 12, left: 0, bottom: 4 }}>
-                  <CartesianGrid stroke={T.lineSoft} strokeDasharray="2 4" />
-                  <XAxis dataKey="t" ticks={ticksX(grafica)} tickFormatter={etiquetaT} tick={tickStyleFor(T)} minTickGap={20} />
-                  <YAxis width={48} tick={tickStyleFor(T)} />
-                  <RTooltip formatter={(v) => (v == null ? "—" : `${fmt(v, 1)} m³/s`)} labelFormatter={etiquetaT} contentStyle={{ background: T.panel, border: `1px solid ${T.line}`, fontSize: 12 }} />
-                  <Legend wrapperStyle={{ fontSize: 11.5, fontFamily: FONT_BODY }} />
-                  <Line dataKey="qHid" name="Hidrometría" stroke={T.amber} strokeWidth={1.8} dot={false} isAnimationActive={false} />
-                  <Line dataKey="qMod" name="Modelo" stroke={T.teal} strokeWidth={1.8} dot={false} isAnimationActive={false} />
-                  {(MOSTRAR_WINTER_KENNEDY && lectura.tieneQ2) && <Line dataKey="q2" name="Winter-Kennedy" stroke={T.cyan} strokeWidth={1.4} strokeDasharray="4 2" dot={false} isAnimationActive={false} />}
-                  <Line dataKey="qVert" name="Vertedero" stroke={T.inkFaint} strokeWidth={1.2} strokeDasharray="2 3" dot={false} isAnimationActive={false} />
-                </LineChart>
-              </ResponsiveContainer>
+              <ChartHeader titulo="Caudal turbinado total" subtitulo="Hidrometría (potencia / F.C. con el nivel del radar, como su app) frente al modelo de la colina con la misma potencia y al Winter-Kennedy (sin calibrar, relativo); también el vertedero." T={T} />
+              <GraficoSeries T={T} x={sOp.x} series={sOp.q} unidad="m³/s" ejeY="m³/s" grupo="om" alto={240} nombreArchivo="caudal_15min" />
 
-              <ChartHeader titulo="Factor de conversión (MW por m³/s)" subtitulo="Cociente potencia total / caudal total de Hidrometría y del modelo." T={T} />
-              <ResponsiveContainer width="100%" height={220}>
-                <LineChart data={grafica} margin={{ top: 6, right: 12, left: 0, bottom: 4 }}>
-                  <CartesianGrid stroke={T.lineSoft} strokeDasharray="2 4" />
-                  <XAxis dataKey="t" ticks={ticksX(grafica)} tickFormatter={etiquetaT} tick={tickStyleFor(T)} minTickGap={20} />
-                  <YAxis width={48} tick={tickStyleFor(T)} domain={["auto", "auto"]} tickFormatter={(v) => fmt(v, 2)} />
-                  <RTooltip formatter={(v) => (v == null ? "—" : fmt(v, 3))} labelFormatter={etiquetaT} contentStyle={{ background: T.panel, border: `1px solid ${T.line}`, fontSize: 12 }} />
-                  <Legend wrapperStyle={{ fontSize: 11.5, fontFamily: FONT_BODY }} />
-                  <ReferenceLine x={grafica.find((g) => g.t >= FC_HIDROMETRIA_POR_NIVEL.desde)?.t} stroke={T.inkFaint} strokeDasharray="4 3" />
-                  <Line dataKey="fcHid" name="Hidrometría" stroke={T.amber} strokeWidth={1.8} dot={false} isAnimationActive={false} />
-                  <Line dataKey="fcMod" name="Modelo" stroke={T.teal} strokeWidth={1.8} dot={false} isAnimationActive={false} />
-                </LineChart>
-              </ResponsiveContainer>
+              <ChartHeader titulo="Factor de conversión (MW por m³/s)" subtitulo="Potencia total / caudal total de Hidrometría, del modelo y del Winter-Kennedy." T={T} />
+              <GraficoSeries T={T} x={sOp.x} series={sOp.fc} unidad="MW/(m³/s)" ejeY="MW por m³/s" decimales={3} grupo="om" alto={220} nombreArchivo="fc_15min" verticales={[{ x: FC_HIDROMETRIA_POR_NIVEL.desde, rotulo: "F.C. por nivel" }]} />
 
               <div className="itu-tabla" style={{ marginTop: 12 }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, fontFamily: FONT_BODY, color: T.ink }}>
                   <thead><tr style={{ color: T.inkFaint, textAlign: "right" }}>
-                    {["Unidad", "Horas en línea", "Energía (MWh)", "Volumen modelo (hm³)", "Volumen Hidrometría (hm³)", "Hidrometría vs modelo", ...((MOSTRAR_WINTER_KENNEDY && lectura.tieneQ2) ? ["Volumen Winter-Kennedy (hm³)", "Winter-Kennedy vs modelo"] : [])].map((h, i) => <th key={h} style={{ padding: "5px 8px", borderBottom: `1px solid ${T.line}`, textAlign: i ? "right" : "left", fontWeight: 600 }}>{h}</th>)}
+                    {["Unidad", "Horas en línea", "Energía (MWh)", "Volumen modelo (hm³)", "Volumen Hidrometría (hm³)", "Hidrometría vs modelo", ...((MOSTRAR_WINTER_KENNEDY && lectura.tieneQ2) ? ["Volumen Winter-Kennedy, sin calibrar (hm³)", "Winter-Kennedy vs modelo (relativo)"] : [])].map((h, i) => <th key={h} style={{ padding: "5px 8px", borderBottom: `1px solid ${T.line}`, textAlign: i ? "right" : "left", fontWeight: 600 }}>{h}</th>)}
                   </tr></thead>
                   <tbody>
                     {resumen.map((r) => (

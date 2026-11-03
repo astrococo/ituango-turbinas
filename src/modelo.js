@@ -1205,6 +1205,54 @@ function resolverUnidadesConPotencias(nivelEmbalse, potenciasEje, gammaMax, pote
   return { unidades, qAlmenara: qAlm };
 }
 
+/* Las 8 unidades de la central. Comparten la misma colina (ensayo de
+   modelo de 2013), pero cada máquina real se comporta distinto: los índices
+   medidos por unidad (Winter-Kennedy relativo, ver src/analitica.js) entran
+   como un factor de eficiencia relativa por unidad (1,00 = colina común).
+   U1–U4: casa de máquinas norte, almenara N°1 (en servicio).
+   U5–U8: casa de máquinas sur, almenara N°2 (entrada prevista a inicios de 2028). */
+const UNIDADES_CENTRAL = Object.freeze([1, 2, 3, 4, 5, 6, 7, 8].map((id) => Object.freeze({
+  id, casa: id <= 4 ? "norte" : "sur", almenara: id <= 4 ? "norte" : "sur", enServicio: id <= 4,
+  nombre: `U${id}`, casaNombre: id <= 4 ? "Casa de máquinas norte" : "Casa de máquinas sur",
+})));
+
+/* Caudal de cada unidad para un reparto de potencia (MW en bornes por unidad,
+   8 posiciones; 0 = detenida), con la colina común y, si se dan, factores
+   de eficiencia relativa por unidad: factor > 1 = la unidad entrega más MW
+   por m³/s que la colina común → turbina factor veces menos caudal.
+   Devuelve por unidad { pBornes, pEje, gamma, q, qColina, eta, saltoNeto,
+   alcanzable } y los totales. */
+function repartoPorUnidad(nivelEmbalse, potenciasBornes, { cond = CONDICION_DESCARGA_DISENO, gammaMax = GAMMA_AMPLIADO_MAX, potenciaMaxMW = P_MAXIMO_ESPERADO_MW, factores = null } = {}) {
+  const pb = Array.from({ length: 8 }, (_, i) => Math.max(0, potenciasBornes[i] || 0));
+  const pe = pb.map((p) => (p > 0 ? p / rendimientoGenerador(p) : 0));
+  const { unidades } = resolverUnidadesConPotencias(nivelEmbalse, pe, gammaMax, potenciaMaxMW, cond);
+  const porUnidad = unidades.map((u, i) => {
+    const f = factores && Number.isFinite(factores[i]) && factores[i] > 0 ? factores[i] : 1;
+    const qc = u.resultado ? u.resultado.Q : 0;
+    return {
+      id: i + 1, pBornes: pb[i], pEje: pe[i], gamma: u.gamma, qColina: qc, q: qc / f, factor: f,
+      eta: u.resultado && u.resultado.P > 0 ? u.resultado.eta * f : null, saltoNeto: u.resultado ? u.resultado.saltoNeto : null,
+      alcanzable: u.alcanzable !== false, limitadoPorPotencia: !!u.limitadoPorPotencia,
+    };
+  });
+  const qTotal = porUnidad.reduce((a, u) => a + u.q, 0);
+  const pTotal = pb.reduce((a, p) => a + p, 0);
+  return { porUnidad, qTotal, pTotal, fc: qTotal > 0 ? pTotal / qTotal : null };
+}
+
+/* Orden de mérito para poner unidades en línea: de mayor a menor factor de
+   eficiencia relativa entre las disponibles (sin factor = 1). Con la misma
+   colina y el mismo salto, repartir la potencia por igual entre las unidades
+   en línea es lo más eficiente; lo que cambia con los factores es CUÁLES
+   unidades conviene usar. */
+function ordenDeMerito(disponibles, factores = null) {
+  return disponibles.slice().sort((a, b) => {
+    const fa = factores && Number.isFinite(factores[a - 1]) ? factores[a - 1] : 1;
+    const fb = factores && Number.isFinite(factores[b - 1]) ? factores[b - 1] : 1;
+    return fb - fa || a - b;
+  });
+}
+
 function buscarPuntoOptimo(Qtotal, nivelEmbalse, nUnidadesDisponibles = N_TURBINAS_MAX, gammaMaxMecanico = GAMMA_AMPLIADO_MAX, porcentajesPersonalizados = null, cond = CONDICION_DESCARGA_DISENO) {
   /* % operativo independiente por unidad (corrección del ingeniero de
      operaciones, reemplaza el reparto equitativo "Qtotal/n" cuando el
@@ -1673,6 +1721,9 @@ export {
   construirMallaProto,
   resolverPorUnidadConPorcentajes,
   resolverUnidadesConPotencias,
+  UNIDADES_CENTRAL,
+  repartoPorUnidad,
+  ordenDeMerito,
   buscarPuntoOptimo,
   ESCENARIOS_2023_EPM_GE,
   NOTA_LIMITE_GARANTIZADO,

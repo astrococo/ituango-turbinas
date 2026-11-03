@@ -1,0 +1,318 @@
+/* ============================================================
+   Gráficos de series de tiempo (uPlot): rápidos con miles de puntos,
+   con zoom (arrastrar), doble clic para volver, cursor sincronizado
+   entre gráficos del mismo grupo, leyenda que prende/apaga series,
+   tooltip con todos los valores, bandas sombreadas, líneas de
+   referencia, tabla de datos y descarga CSV / PNG.
+
+   Un solo eje Y por gráfico: magnitudes distintas van en gráficos
+   apilados y sincronizados, nunca en doble eje.
+   Las horas son de Colombia y se tratan como UTC para no moverlas
+   con la zona del navegador.
+   ============================================================ */
+import { useEffect, useMemo, useRef, useState } from "react";
+import uPlot from "uplot";
+import "uplot/dist/uPlot.min.css";
+import { FONT_BODY, descargarCSV } from "./base.jsx";
+
+/* Paleta categórica validada (orden fijo, nunca por rango) y estados. */
+const SERIE = {
+  light: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"],
+  dark: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"],
+};
+const ESTADO = { bien: "#0ca30c", aviso: "#fab219", serio: "#ec835a", critico: "#d03b3b" };
+const colorSerie = (T, i) => (T.esOscuro ? SERIE.dark : SERIE.light)[i % 8];
+
+/* "AAAA-MM-DD HH:MM" (hora de Colombia) → segundos, como si fuera UTC */
+const aSeg = (t) => Date.UTC(+t.slice(0, 4), +t.slice(5, 7) - 1, +t.slice(8, 10), +(t.slice(11, 13) || 0), +(t.slice(14, 16) || 0)) / 1000;
+const deSeg = (s) => new Date(s * 1000).toISOString().slice(0, 16).replace("T", " ");
+const fmtNum = (v, d = 1) => (v == null || !Number.isFinite(v) ? "—" : v.toLocaleString("es-CO", { minimumFractionDigits: d, maximumFractionDigits: d }));
+const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+/* Decimales de las marcas del eje según el paso entre ellas. */
+const decimalesPaso = (incr) => (!incr || incr >= 1 ? 0 : Math.min(4, Math.ceil(-Math.log10(incr) - 1e-9)));
+/* Marcas del eje de tiempo en español: horas "06:00" (y la fecha a las 00:00) o fechas "3 nov". */
+function etiquetasTiempo(u, splits, a, e, incr) {
+  let anioPrevio = null;
+  return splits.map((s, i) => {
+    const d = new Date(s * 1000);
+    const fecha = `${d.getUTCDate()} ${MESES[d.getUTCMonth()]}`;
+    const anio = d.getUTCFullYear();
+    if (incr < 86400) {
+      const hm = `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+      return d.getUTCHours() === 0 && d.getUTCMinutes() === 0 ? `${hm}\n${fecha}` : hm;
+    }
+    const conAnio = i === 0 || anio !== anioPrevio;
+    anioPrevio = anio;
+    return incr >= 28 * 86400 ? `${MESES[d.getUTCMonth()]}${conAnio || d.getUTCMonth() === 0 ? `\n${anio}` : ""}` : `${fecha}${conAnio ? `\n${anio}` : ""}`;
+  });
+}
+
+/* Plugin: tooltip flotante con todos los valores de la posición del cursor. */
+function pluginTooltip(T, decimales, unidad, fmtX) {
+  let tip;
+  return {
+    hooks: {
+      init: (u) => {
+        tip = document.createElement("div");
+        Object.assign(tip.style, {
+          position: "absolute", pointerEvents: "none", zIndex: 20, display: "none", padding: "8px 10px", borderRadius: "8px",
+          background: T.panel, border: `1px solid ${T.line}`, boxShadow: T.cardShadow, fontFamily: FONT_BODY, fontSize: "12px",
+          color: T.ink, minWidth: "140px", whiteSpace: "nowrap",
+        });
+        u.over.appendChild(tip);
+        u.over.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+      },
+      setCursor: (u) => {
+        const i = u.cursor.idx;
+        if (i == null || u.cursor.left < 0) { tip.style.display = "none"; return; }
+        tip.replaceChildren();
+        const cab = document.createElement("div");
+        cab.textContent = fmtX(u.data[0][i]);
+        Object.assign(cab.style, { color: T.inkFaint, marginBottom: "4px", fontSize: "11.5px" });
+        tip.appendChild(cab);
+        let n = 0;
+        u.series.forEach((s, k) => {
+          if (k === 0 || !s.show || s._oculta) return;
+          const v = u.data[k][i];
+          const fila = document.createElement("div");
+          Object.assign(fila.style, { display: "flex", alignItems: "center", gap: "8px", lineHeight: "1.55" });
+          const clave = document.createElement("span");
+          Object.assign(clave.style, { width: "14px", height: "3px", borderRadius: "2px", background: s._dash ? `repeating-linear-gradient(90deg, ${s._color} 0 4px, transparent 4px 7px)` : s._color, flexShrink: 0 });
+          const val = document.createElement("b");
+          val.textContent = `${fmtNum(v, s._dec ?? decimales)}${s._unidad ?? unidad ? " " + (s._unidad ?? unidad) : ""}`;
+          Object.assign(val.style, { color: T.ink, fontVariantNumeric: "tabular-nums" });
+          const nom = document.createElement("span");
+          nom.textContent = s.label;
+          nom.style.color = T.inkMuted;
+          fila.append(clave, val, nom);
+          tip.appendChild(fila); n++;
+        });
+        if (!n) { tip.style.display = "none"; return; }
+        tip.style.display = "block";
+        const w = tip.offsetWidth, h = tip.offsetHeight;
+        const left = u.cursor.left + 14 + w > u.over.clientWidth ? u.cursor.left - w - 14 : u.cursor.left + 14;
+        const top = Math.min(Math.max(0, u.cursor.top - h / 2), u.over.clientHeight - h);
+        tip.style.left = `${Math.max(0, left)}px`; tip.style.top = `${Math.max(0, top)}px`;
+      },
+    },
+  };
+}
+
+/* Plugin: líneas horizontales de referencia y franjas (y1..y2) con rótulo. */
+function pluginReferencias(T, refs) {
+  return {
+    hooks: {
+      drawClear: (u) => {
+        const ctx = u.ctx;
+        for (const r of refs) {
+          if (r.y1 == null || r.y2 == null) continue;
+          const y1 = u.valToPos(r.y1, "y", true), y2 = u.valToPos(r.y2, "y", true);
+          ctx.save(); ctx.fillStyle = r.relleno || T.accentSoft;
+          ctx.fillRect(u.bbox.left, Math.min(y1, y2), u.bbox.width, Math.abs(y2 - y1)); ctx.restore();
+        }
+      },
+      draw: (u) => {
+        const ctx = u.ctx, dpr = devicePixelRatio || 1;
+        for (const r of refs) {
+          const ys = r.y != null ? [r.y] : [];
+          for (const yv of ys) {
+            const y = u.valToPos(yv, "y", true);
+            if (y < u.bbox.top || y > u.bbox.top + u.bbox.height) continue;
+            ctx.save(); ctx.strokeStyle = r.color || T.inkFaint; ctx.lineWidth = 1.5 * dpr; ctx.setLineDash(r.dash === false ? [] : [6 * dpr, 4 * dpr]);
+            ctx.beginPath(); ctx.moveTo(u.bbox.left, y); ctx.lineTo(u.bbox.left + u.bbox.width, y); ctx.stroke();
+            if (r.rotulo) {
+              ctx.setLineDash([]); ctx.font = `${11 * dpr}px ${FONT_BODY}`; ctx.fillStyle = T.inkMuted; ctx.textAlign = "right";
+              ctx.fillText(r.rotulo, u.bbox.left + u.bbox.width - 4 * dpr, y - 4 * dpr);
+            }
+            ctx.restore();
+          }
+        }
+      },
+    },
+  };
+}
+
+/* Plugin: línea vertical (p. ej. "ahora" o el cambio de F.C.). */
+function pluginVerticales(T, xs) {
+  return {
+    hooks: {
+      draw: (u) => {
+        const ctx = u.ctx, dpr = devicePixelRatio || 1;
+        for (const v of xs) {
+          const x = u.valToPos(v.x, "x", true);
+          if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) continue;
+          ctx.save(); ctx.strokeStyle = v.color || T.inkFaint; ctx.lineWidth = 1 * dpr; ctx.setLineDash([3 * dpr, 3 * dpr]);
+          ctx.beginPath(); ctx.moveTo(x, u.bbox.top); ctx.lineTo(x, u.bbox.top + u.bbox.height); ctx.stroke();
+          if (v.rotulo) { ctx.setLineDash([]); ctx.font = `${11 * dpr}px ${FONT_BODY}`; ctx.fillStyle = T.inkMuted; ctx.fillText(v.rotulo, x + 4 * dpr, u.bbox.top + 12 * dpr); }
+          ctx.restore();
+        }
+      },
+    },
+  };
+}
+
+/* Gráfico de series.
+   x: arreglo de "AAAA-MM-DD HH:MM" (tipo "tiempo") o números (tipo "numero").
+   series: [{ nombre, datos:[...], color?, indice?, dash?, ancho?, unidad?, decimales?, area?, oculta?, puntos? }]
+   bandas: [{ desde: i, hasta: j, relleno }] (índices de series: rellena entre ambas)
+   referencias: [{ y, rotulo, color, dash } | { y1, y2, relleno }]
+   verticales: [{ x (mismo tipo que x), rotulo, color }] */
+function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales = 1, alto = 260, ejeY, ejeX, bandas = [], referencias = [], verticales = [], grupo, nombreArchivo = "serie", yMin, yMax, incluirCero = false, escalones = false, barras = false }) {
+  const caja = useRef(null);
+  const plot = useRef(null);
+  const [ocultas, setOcultas] = useState(() => new Set(series.map((s, i) => (s.oculta ? i : null)).filter((i) => i != null)));
+  const [verTabla, setVerTabla] = useState(false);
+  const [zoom, setZoom] = useState(false);
+  const xs = useMemo(() => (tipoX === "tiempo" ? x.map(aSeg) : x.slice()), [x, tipoX]);
+  const fmtX = useMemo(() => (tipoX === "tiempo"
+    ? (s) => { const d = new Date(s * 1000); return `${d.getUTCDate()} ${MESES[d.getUTCMonth()]} ${d.getUTCFullYear()} · ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`; }
+    : (v) => `${ejeX || ""} ${fmtNum(v, Number.isInteger(v) ? 0 : 2)}`), [tipoX, ejeX]);
+  const colores = series.map((s, i) => s.color || colorSerie(T, s.indice ?? i));
+
+  useEffect(() => {
+    if (!caja.current) return undefined;
+    const ancho = caja.current.clientWidth || 600;
+    const datos = [xs, ...series.map((s) => s.datos.map((v) => (v == null || !Number.isFinite(v) ? null : v)))];
+    const ejeComun = { stroke: T.inkFaint, grid: { stroke: T.lineSoft, width: 1 }, ticks: { stroke: T.lineSoft, width: 1 }, font: `11px ${FONT_BODY}`, labelFont: `600 12px ${FONT_BODY}` };
+    const opts = {
+      width: ancho, height: alto,
+      tzDate: (ts) => uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"),
+      scales: {
+        x: { time: tipoX === "tiempo" },
+        y: { range: (u, mn, mx) => {
+          let a = yMin ?? mn, b = yMax ?? mx;
+          if (incluirCero) a = Math.min(0, a);
+          for (const r of referencias) { if (r.y != null && r.incluir) { a = Math.min(a, r.y); b = Math.max(b, r.y); } }
+          if (a == null || b == null) return [0, 1];
+          if (a === b) { a -= 1; b += 1; }
+          const pad = (b - a) * 0.06;
+          return [yMin ?? a - (incluirCero && a === 0 ? 0 : pad), yMax ?? b + pad];
+        } },
+      },
+      axes: [
+        { ...ejeComun, label: tipoX === "tiempo" ? undefined : ejeX, values: tipoX === "tiempo" ? etiquetasTiempo : (u, v, a, e, incr) => v.map((n) => fmtNum(n, decimalesPaso(incr))) },
+        { ...ejeComun, label: ejeY, size: 62, values: (u, v, a, e, incr) => v.map((n) => fmtNum(n, decimalesPaso(incr))) },
+      ],
+      series: [
+        {},
+        ...series.map((s, i) => ({
+          label: s.nombre, show: !ocultas.has(i), stroke: colores[i], width: s.ancho ?? 2, dash: s.dash ? [6, 4] : undefined,
+          fill: s.area ? colores[i] + "22" : undefined, spanGaps: false,
+          points: { show: s.puntos ?? false, size: s.soloPuntos ? 8 : 6, fill: colores[i], stroke: s.soloPuntos ? T.panel : colores[i] },
+          paths: s.soloPuntos ? () => null : barras || s.barras ? uPlot.paths.bars({ size: [0.7, 40] }) : escalones || s.escalones ? uPlot.paths.stepped({ align: 1 }) : undefined,
+          _color: colores[i], _dash: s.dash, _unidad: s.unidad, _dec: s.decimales,
+        })),
+      ],
+      // uPlot: [serie superior, serie inferior]
+      bands: bandas.map((b) => ({ series: [b.hasta + 1, b.desde + 1], fill: b.relleno || T.accentSoft })),
+      legend: { show: false },
+      cursor: { sync: grupo ? { key: grupo } : undefined, drag: { x: true, y: false, setScale: true }, points: { size: 7 } },
+      hooks: { setScale: [(u, k) => { if (k === "x") setZoom(u.scales.x.min > xs[0] + 1e-9 || u.scales.x.max < xs[xs.length - 1] - 1e-9); }] },
+      plugins: [pluginTooltip(T, decimales, unidad, fmtX), pluginReferencias(T, referencias), pluginVerticales(T, verticales.map((v) => ({ ...v, x: tipoX === "tiempo" && typeof v.x === "string" ? aSeg(v.x) : v.x })))],
+    };
+    const u = new uPlot(opts, datos, caja.current);
+    plot.current = u;
+    u.over.addEventListener("dblclick", () => u.setScale("x", { min: xs[0], max: xs[xs.length - 1] }));
+    const ro = new ResizeObserver(() => { if (caja.current) u.setSize({ width: caja.current.clientWidth, height: alto }); });
+    ro.observe(caja.current);
+    return () => { ro.disconnect(); u.destroy(); plot.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [xs, series, T, alto, tipoX, ejeY, ejeX, unidad, decimales, grupo, JSON.stringify(referencias), JSON.stringify(bandas), JSON.stringify(verticales), yMin, yMax, incluirCero, escalones, barras]);
+
+  function alternar(i) {
+    setOcultas((prev) => {
+      const n = new Set(prev);
+      if (n.has(i)) n.delete(i); else n.add(i);
+      if (plot.current) plot.current.setSeries(i + 1, { show: !n.has(i) });
+      return n;
+    });
+  }
+  function descargarPNG() {
+    const u = plot.current; if (!u) return;
+    const c = document.createElement("canvas");
+    c.width = u.ctx.canvas.width; c.height = u.ctx.canvas.height;
+    const g = c.getContext("2d"); g.fillStyle = T.panel; g.fillRect(0, 0, c.width, c.height); g.drawImage(u.ctx.canvas, 0, 0);
+    const a = document.createElement("a"); a.href = c.toDataURL("image/png"); a.download = `${nombreArchivo}.png`; a.click();
+  }
+  const filasCSV = () => x.map((t, k) => Object.fromEntries([[tipoX === "tiempo" ? "fecha_hora" : (ejeX || "x"), t], ...series.map((s) => [`${s.nombre}${s.unidad ?? unidad ? ` (${s.unidad ?? unidad})` : ""}`, s.datos[k]])]));
+
+  const boton = { border: `1px solid ${T.line}`, background: T.panel, color: T.inkMuted, borderRadius: 6, padding: "3px 9px", fontSize: 12, cursor: "pointer", fontFamily: FONT_BODY };
+  return (
+    <div className="itu-grafico" style={{ marginBottom: 14 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", alignItems: "center", marginBottom: 6 }}>
+        {series.length > 1 && series.map((s, i) => (
+          <button key={i} onClick={() => alternar(i)} aria-pressed={!ocultas.has(i)} title={ocultas.has(i) ? "Mostrar" : "Ocultar"}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "none", border: "none", padding: "2px 0", cursor: "pointer", fontFamily: FONT_BODY, fontSize: 12.5, color: ocultas.has(i) ? T.inkFaint : T.inkMuted, textDecoration: ocultas.has(i) ? "line-through" : "none" }}>
+            <span aria-hidden="true" style={{ width: 18, height: s.soloPuntos ? 8 : 3, borderRadius: s.soloPuntos ? "50%" : 2, flexShrink: 0, ...(s.soloPuntos ? { width: 8 } : {}), background: s.dash ? `repeating-linear-gradient(90deg, ${colores[i]} 0 5px, transparent 5px 8px)` : colores[i], opacity: ocultas.has(i) ? 0.35 : 1 }} />{s.nombre}
+          </button>
+        ))}
+        <span style={{ flex: 1 }} />
+        {zoom && <button style={boton} onClick={() => plot.current && plot.current.setScale("x", { min: xs[0], max: xs[xs.length - 1] })}>Ver todo</button>}
+        <button style={boton} onClick={() => setVerTabla((v) => !v)} aria-pressed={verTabla}>{verTabla ? "Gráfico" : "Tabla"}</button>
+        <button style={boton} onClick={() => descargarCSV(filasCSV(), `${nombreArchivo}.csv`)}>CSV</button>
+        <button style={boton} onClick={descargarPNG}>PNG</button>
+      </div>
+      <div ref={caja} style={{ width: "100%", display: verTabla ? "none" : "block", touchAction: "pan-y" }} />
+      {verTabla && <TablaSeries T={T} x={x} series={series} unidad={unidad} decimales={decimales} tipoX={tipoX} ejeX={ejeX} fmtX={fmtX} xs={xs} />}
+      {!verTabla && tipoX === "tiempo" && <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 2 }}>Arrastre sobre el gráfico para acercar; doble clic para volver.</div>}
+    </div>
+  );
+}
+
+function TablaSeries({ T, x, series, unidad, decimales, tipoX, ejeX, fmtX, xs }) {
+  const filas = x.map((_, k) => k).reverse().slice(0, 500);
+  return (
+    <div className="itu-tabla" style={{ maxHeight: 320, overflowY: "auto", border: `1px solid ${T.lineSoft}`, borderRadius: 8 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontVariantNumeric: "tabular-nums" }}>
+        <thead><tr style={{ position: "sticky", top: 0, background: T.panelSoft }}>
+          <th style={{ textAlign: "left", padding: "5px 8px", color: T.inkFaint }}>{tipoX === "tiempo" ? "Fecha y hora" : ejeX}</th>
+          {series.map((s, i) => <th key={i} style={{ textAlign: "right", padding: "5px 8px", color: T.inkFaint }}>{s.nombre}{s.unidad ?? unidad ? ` (${s.unidad ?? unidad})` : ""}</th>)}
+        </tr></thead>
+        <tbody>{filas.map((k) => (
+          <tr key={k} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
+            <td style={{ padding: "4px 8px", color: T.inkMuted }}>{fmtX(xs[k])}</td>
+            {series.map((s, i) => <td key={i} style={{ textAlign: "right", padding: "4px 8px", color: T.ink }}>{fmtNum(s.datos[k], s.decimales ?? decimales)}</td>)}
+          </tr>
+        ))}</tbody>
+      </table>
+      {x.length > 500 && <div style={{ padding: 6, fontSize: 11, color: T.inkFaint }}>Últimos 500 de {x.length.toLocaleString("es-CO")} registros; el CSV trae todos.</div>}
+    </div>
+  );
+}
+
+/* Indicador de estado: siempre ícono + texto, nunca solo color. */
+const ICONO_ESTADO = { bien: "✓", aviso: "!", serio: "▲", critico: "✕", neutro: "–" };
+function Estado({ tipo = "neutro", children, T, compacto = false }) {
+  const color = ESTADO[tipo] || T.inkFaint;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: compacto ? "1px 8px" : "3px 10px", borderRadius: 999, border: `1px solid ${color}`, background: `${color}1f`, color: T.ink, fontSize: compacto ? 12 : 12.5, fontWeight: 600, whiteSpace: "nowrap" }}>
+      <span aria-hidden="true" style={{ display: "inline-grid", placeItems: "center", width: 15, height: 15, borderRadius: "50%", background: color, color: tipo === "aviso" ? "#0b0b0b" : "#fff", fontSize: 10, fontWeight: 800 }}>{ICONO_ESTADO[tipo]}</span>
+      {children}
+    </span>
+  );
+}
+
+/* Barra de banda: dónde está un valor dentro de [min, max] (p. ej. Q regulado del día frente a la banda 1891). */
+function BarraBanda({ T, valor, min, max, rango, marcas = [], unidad = "m³/s", decimales = 1 }) {
+  if (min == null || max == null) return null;
+  const [a, b] = rango || [min - (max - min) * 0.6, max + (max - min) * 0.6];
+  const pos = (v) => `${Math.max(0, Math.min(100, ((v - a) / (b - a)) * 100))}%`;
+  const dentro = valor != null && valor >= min && valor <= max;
+  return (
+    <div style={{ position: "relative", height: 46, marginTop: 6 }} role="img" aria-label={`Valor ${fmtNum(valor, decimales)} ${unidad}; banda ${fmtNum(min, decimales)} a ${fmtNum(max, decimales)} ${unidad}`}>
+      <div style={{ position: "absolute", left: 0, right: 0, top: 16, height: 10, borderRadius: 5, background: T.lineSoft }} />
+      <div style={{ position: "absolute", left: pos(min), width: `calc(${pos(max)} - ${pos(min)})`, top: 16, height: 10, borderRadius: 5, background: `${ESTADO.bien}55`, border: `1px solid ${ESTADO.bien}` }} />
+      {marcas.map((m, i) => m.v != null && (
+        <div key={i} title={m.rotulo} style={{ position: "absolute", left: pos(m.v), top: 12, height: 18, borderLeft: `2px dashed ${T.inkFaint}` }} />
+      ))}
+      {valor != null && (
+        <div style={{ position: "absolute", left: pos(valor), top: 8, transform: "translateX(-50%)", width: 4, height: 26, borderRadius: 2, background: dentro ? T.ink : ESTADO.critico, boxShadow: `0 0 0 2px ${T.panel}` }} />
+      )}
+      <div style={{ position: "absolute", left: pos(min), top: 30, transform: "translateX(-50%)", fontSize: 11, color: T.inkFaint, fontVariantNumeric: "tabular-nums" }}>{fmtNum(min, decimales)}</div>
+      <div style={{ position: "absolute", left: pos(max), top: 30, transform: "translateX(-50%)", fontSize: 11, color: T.inkFaint, fontVariantNumeric: "tabular-nums" }}>{fmtNum(max, decimales)}</div>
+    </div>
+  );
+}
+
+export { GraficoSeries, Estado, BarraBanda, colorSerie, ESTADO, SERIE, aSeg, deSeg, fmtNum, MESES };

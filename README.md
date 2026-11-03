@@ -1,20 +1,32 @@
 # Turbinas Ituango
 
-Colina de las turbinas Francis del PH Ituango, punto de operación, despacho intradiario y operación medida.
+Operación en vivo, analítica e ingeniería de las turbinas Francis del PH Ituango.
 
 **Aplicación:** https://astrococo.github.io/ituango-turbinas/
 
 ## Qué hace
 
-| Pestaña | Contenido |
+La app tiene tres grupos de módulos. Cada módulo empieza con una guía corta: para qué sirve, qué logra y qué entrega.
+
+**Operación en vivo** (decisiones en caliente; datos del relay de LoggerNet y de HydroForecast, se actualizan solos cada 5 min)
+
+| Módulo | Contenido |
 |---|---|
-| Buscador | Apertura, número de unidades y salto neto para un caudal de entrada: máxima eficiencia, máxima potencia, potencia objetivo o automático. |
-| Despacho | Nivel del embalse hora a hora con el despacho de XM (se pega el resumen horario), la banda ±%, el Promedio RT y el caudal de entrada pronosticado. |
-| Operación medida | Generación por unidad de LoggerNet (cada minuto) y caudal de Hidrometría frente al caudal del modelo con la misma potencia. |
-| Colina | Exploración de la colina y familias de curvas en variables reducidas y a escala de prototipo. |
-| Curvas y F.C. | Unidades requeridas por nivel, factor potencia/caudal (modelo y Hidrometría) y eficiencia a salto fijo. |
-| Descarga | Nivel de las almenaras N°1 (U1-U4) y N°2 (U5-U8, desde 2028) según el caudal del río: río colmatado, diseño o manual. |
-| Referencia | Escenarios de la ampliación de 2023, fuentes y glosario. |
+| Tablero | Nivel y su tendencia, potencia y caudal por unidad (Hidrometría, Winter-Kennedy relativo y modelo), vertedero, caudal total descargado, entrada al embalse por balance. Regla operativa del día: promedio hasta ahora frente a la banda, lo que debe promediar el resto del día para cerrar dentro (m³/s y MW) y el cierre proyectado. Gráficos de 48 h, pronóstico y aguas arriba. |
+| Despacho | Nivel del embalse hora a hora con el despacho de XM, lo generado (RT) o el programa plano. El nivel de las 00:00, el Q de ayer, el caudal de entrada y las horas ya cerradas se llenan con los datos en vivo. |
+| Buscador | Unidades y apertura para un caudal (por defecto, el pronóstico de hoy en Sitio Presa) al nivel actual. |
+| Vertedero | Caudal y apertura por compuerta (relay v2) y calculadora de aperturas con las fórmulas del Simulador de crecientes (Tabla 10.6 a presión, Tabla 10.1 a flujo libre, reglas de canal). |
+
+**Analítica** (histórico que arma un proceso automático cada hora)
+
+| Módulo | Contenido |
+|---|---|
+| Regla 1891 y ANLA | Cumplimiento por periodo, calendario de estados, regla, vertedero, total descargado, entrada y nivel día a día; tabla con márgenes y CSV. |
+| Unidades | Cada máquina por separado: horas, energía, arranques, F.C. Winter-Kennedy, factor relativo y orden de mérito, η aparente frente al modelo y rendimiento relativo por tramo de carga. |
+| Hidrología y pronóstico | Pronóstico de 90 días, cómo cambió entre emisiones y su error a 1, 3 y 7 días, histórico desde 2015, aguas arriba y lluvia. |
+| Operación medida | Minuto a minuto: Hidrometría, Winter-Kennedy y modelo; verificación de la columna de LoggerNet. |
+
+**Ingeniería**: Colina, Curvas y F.C., Descarga (almenaras N°1 y N°2), Referencia (escenarios 2023).
 
 ## Modelo
 
@@ -38,9 +50,12 @@ Colina de las turbinas Francis del PH Ituango, punto de operación, despacho int
 
 ## Datos de operación
 
-El relay de LoggerNet (en el equipo corporativo) deja la generación, el caudal por unidad y el nivel del embalse en un repositorio **privado**, en CSV diarios. La app los lee con un token de solo lectura que cada usuario pega en la pestaña *Operación medida*. El token queda solo en su navegador.
+- **Relay de LoggerNet** (equipo corporativo): sube los archivos de la estación del vertedero a un repositorio **privado**, en CSV diarios.
+- **Proceso automático** (GitHub Actions en ese repositorio, cada hora): con el mismo código de esta app (`src/analitica.js`), arma el histórico diario y horario y archiva HydroForecast.
+- **La app** lee el repositorio con un token de solo lectura que cada usuario pega en *Conexión de datos*; el token queda solo en su navegador. HydroForecast es público.
+- Las ocho unidades comparten la colina, pero cada máquina rinde distinto: el Winter-Kennedy de cada una (sin calibrar) se usa como índice relativo para compararlas.
 
-También se pueden cargar los archivos `.dat` de LoggerNet desde el equipo: se procesan en el navegador y no se envían a ningún lado.
+También se pueden cargar los archivos `.dat` de LoggerNet desde el equipo (Operación medida): se procesan en el navegador y no se envían a ningún lado.
 
 ## Desarrollo
 
@@ -57,7 +72,9 @@ Cada cambio en `main` corre las pruebas, construye y publica en GitHub Pages (`.
 |---|---|
 | `src/modelo.js` | Modelo sin interfaz: colina, almenaras, embalse, buscador, despacho, F.C. |
 | `src/operacion.js` | Lectura de LoggerNet y comparación con el modelo |
-| `src/ItuangoSimulador.jsx`, `src/ui/` | Interfaz |
+| `src/analitica.js` | Resúmenes por hora y por día, regla operativa, vertedero, descargado, índices por unidad (lo usan la app y el proceso automático) |
+| `src/datos/` | Lectura del repositorio de datos y de HydroForecast; estado en vivo |
+| `src/ItuangoSimulador.jsx`, `src/ui/` | Interfaz (gráficos de series con uPlot en `src/ui/graficos.jsx`) |
 | `tests/` | Pruebas contra los datos publicados del ensayo y casos de regresión |
 | `AUDITORIA.md` | Revisión de noviembre de 2026 y estado de cada punto |
 

@@ -18,14 +18,14 @@ const THEMES = {
     line: "#2a3852", lineSoft: "#1f2b44", ink: "#f1f5f9", inkMuted: "#cbd5e1",
     inkFaint: "#94a3b8", teal: "#38bdf8", tealSoft: "#7dd3fc", amber: "#fbbf24",
     amberSoft: "#78350f", red: "#f87171", cyan: "#22d3ee", cardShadow: "0 10px 30px -12px rgba(0,0,0,0.6)",
-    disabledBg: "#0f172a", accentSoft: "rgba(56,189,248,0.14)", onAccent: "#0b1220",
+    disabledBg: "#0f172a", accentSoft: "rgba(56,189,248,0.14)", onAccent: "#0b1220", esOscuro: true,
   },
   light: {
     bg: "#eef2f7", bgDeep: "#e2e8f0", panel: "#ffffff", panelSoft: "#f1f5f9",
     line: "#cbd5e1", lineSoft: "#e2e8f0", ink: "#0f172a", inkMuted: "#334155",
     inkFaint: "#5b6b80", teal: "#0369a1", tealSoft: "#075985", amber: "#b45309",
     amberSoft: "#fde68a", red: "#b91c1c", cyan: "#0e7490", cardShadow: "0 6px 20px -8px rgba(15,23,42,0.15)",
-    disabledBg: "#f1f5f9", accentSoft: "rgba(3,105,161,0.10)", onAccent: "#ffffff",
+    disabledBg: "#f1f5f9", accentSoft: "rgba(3,105,161,0.10)", onAccent: "#ffffff", esOscuro: false,
   },
 };
 
@@ -60,14 +60,24 @@ function GlobalStyles({ T, theme, altoContraste }) {
       .recharts-legend-item-text { color:${T.inkMuted} !important; }
       .itu-grid { display:grid; grid-template-columns: 320px 1fr; gap:20px; }
       .itu-grid-form { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:14px; }
-      .itu-kpis { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:10px; }
+      .itu-kpis { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:10px; }
       .itu-2col { display:grid; grid-template-columns: 1fr 1fr; gap:20px; }
+      .itu-2col > *, .itu-kpis > *, .itu-guia > * { min-width:0; }
       .itu-4col { display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; }
       @media (max-width: 760px) { .itu-2col { grid-template-columns: 1fr; } }
       @media (max-width: 560px) { .itu-4col { grid-template-columns: repeat(2, 1fr); } }
       .itu-tabla { overflow-x:auto; -webkit-overflow-scrolling:touch; }
       .itu-tabla table td:first-child, .itu-tabla table th:first-child { position:sticky; left:0; background:${T.panel}; z-index:1; }
       .itu-top { position:sticky; top:0; z-index:40; background:${theme === "dark" ? "rgba(11,18,32,0.88)" : "rgba(238,242,247,0.9)"}; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); border-bottom:1px solid ${T.lineSoft}; }
+      .itu-grupos { display:flex; gap:6px; overflow-x:auto; scrollbar-width:none; padding-bottom:6px; }
+      .itu-grupos::-webkit-scrollbar { display:none; }
+      .itu-grupos a { white-space:nowrap; padding:5px 12px; font-size:12.5px; font-weight:600; letter-spacing:0.01em; color:${T.inkMuted}; text-decoration:none; border:1px solid ${T.line}; border-radius:999px; }
+      .itu-grupos a:hover { color:${T.ink}; border-color:${T.teal}; }
+      .itu-grupos a.on { color:${T.onAccent}; background:${T.teal}; border-color:${T.teal}; }
+      .itu-guia { display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; }
+      @media (max-width: 820px) { .itu-guia { grid-template-columns: 1fr; } }
+      .itu-grafico .u-select { background: ${T.accentSoft}; }
+      .itu-grafico .u-cursor-x, .itu-grafico .u-cursor-y { border-color: ${T.inkFaint} !important; }
       .itu-tabs { display:flex; gap:2px; overflow-x:auto; scrollbar-width:none; }
       .itu-tabs::-webkit-scrollbar { display:none; }
       .itu-tabs a { white-space:nowrap; padding:9px 12px; font-size:14px; color:${T.inkMuted}; text-decoration:none; border-bottom:2px solid transparent; border-radius:6px 6px 0 0; }

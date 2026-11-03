@@ -12,6 +12,15 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { ResponsiveContainer, LineChart, CartesianGrid, XAxis, YAxis, Tooltip as RTooltip, ReferenceLine, Line, Legend } from "recharts";
 import OperacionMedida from "./ui/OperacionMedida.jsx";
+import { useVivo, ProveedorVivo } from "./datos/vivo.jsx";
+import { ProveedorDatos, useDatos } from "./datos/fuentes.jsx";
+import { Proposito, PanelConexion } from "./ui/comunes.jsx";
+import { GraficoSeries } from "./ui/graficos.jsx";
+import Tablero from "./ui/Tablero.jsx";
+import ReglaAnla from "./ui/ReglaAnla.jsx";
+import Unidades from "./ui/Unidades.jsx";
+import Hidrologia from "./ui/Hidrologia.jsx";
+import Vertedero from "./ui/Vertedero.jsx";
 import {
   ASE_Q_RIO_MAX,
   ASE_Q_RIO_MIN,
@@ -418,6 +427,8 @@ function InputNumeroLibre({ value, onChange, className, style, min, max, step, d
    (modelo.js). Validación con la operación ene-oct 2026:
    el script de validación del repositorio de datos.
    ============================================================ */
+const NOMBRE_PROGRAMA = { xm: "Despacho XM", rt: "Promedio RT (y XM donde falta)", rtPlano: "Promedio RT (y plano donde falta)", plano: "Plano por regla operativa" };
+const nombrePrograma = (modo, progs) => (modo === "rt" && progs && progs.rt && progs.rt.conPlano ? NOMBRE_PROGRAMA.rtPlano : NOMBRE_PROGRAMA[modo]);
 const HORAS_DIA = Array.from({ length: 24 }, (_, i) => i);
 const filaDespachoVacia = (h) => ({ hora: h, despacho: 0, rt: null, unidades: null, qEntrada: null, nivelMedido: null });
 
@@ -462,6 +473,53 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
   const [msgCarga, setMsgCarga] = useState(null);
   const editar = (h, campo, v) => setFilas((prev) => prev.map((f) => (f.hora === h ? { ...f, [campo]: v } : f)));
 
+  /* Datos en vivo: nivel de las 00:00, Q regulado de ayer, caudal de entrada
+     y, en las horas ya pasadas, la potencia real (Promedio RT), las unidades
+     en línea y el nivel medido. Se llenan solos la primera vez. */
+  const { vivo } = useVivo() || {};
+  const [vivoAplicado, setVivoAplicado] = useState(false);
+  const opcionesEntrada = useMemo(() => {
+    if (!vivo) return [];
+    const o = [];
+    const pr = vivo.hf?.pronostico?.datos?.data;
+    const hoyP = pr && pr.find((x) => String(x.timestamp).slice(0, 10) === vivo.hoy);
+    if (hoyP && hoyP.QSitioPresa_pred_mean != null) o.push({ k: "hf", q: hoyP.QSitioPresa_pred_mean, txt: "Pronóstico HydroForecast de hoy (Sitio Presa)" });
+    if (vivo.resHoy && vivo.resHoy.balance.qEntrada != null) o.push({ k: "hoy", q: vivo.resHoy.balance.qEntrada, txt: `Balance de masa de hoy (${fx(vivo.resHoy.balance.horas, 1)} h)` });
+    if (vivo.filaAyer && vivo.filaAyer.balance.qEntrada != null) o.push({ k: "ayer", q: vivo.filaAyer.balance.qEntrada, txt: "Balance de masa de ayer" });
+    return o;
+  }, [vivo]);
+  const [fuenteEntrada, setFuenteEntrada] = useState(null);
+  function llenarConVivo(v, kEntrada) {
+    if (!v) return;
+    setFecha(v.hoy);
+    const n00 = (v.filas || []).find((r) => r.t === `${v.hoy} 00:00` && r.nivel != null);
+    if (n00) setNivelInicial(+n00.nivel.toFixed(3));
+    const qBase = v.banda ? v.banda.base : v.filaAyer && !v.filaAyer.parcial ? v.filaAyer.regla.qReg : null;
+    if (qBase != null) {
+      setQAyer(+qBase.toFixed(2));
+      // sin programa de XM pegado: lo generado en las horas cerradas y el plano en el resto
+      if (!filas.some((f) => f.despacho > 0)) setPrograma("rt");
+    }
+    const op = opcionesEntrada.find((x) => x.k === kEntrada) || opcionesEntrada[0];
+    if (op) { setQEntrada(Math.round(op.q)); setFuenteEntrada(op.k); }
+    const horaActual = v.ultima ? +v.ultima.t.slice(11, 13) : 24;
+    const nivelHora = new Map((v.filas || []).filter((r) => r.t.startsWith(v.hoy) && r.t.slice(14) === "00" && r.nivel != null).map((r) => [+r.t.slice(11, 13), r.nivel]));
+    setFilas((prev) => prev.map((f) => {
+      const h = v.resHoy ? v.resHoy.horas[f.hora] : null;
+      const completa = h && h.min >= 50 && f.hora < horaActual; // solo horas ya cerradas
+      return {
+        ...f,
+        rt: completa ? +(h.e.reduce((a, x) => a + (x || 0), 0) / (h.min / 60)).toFixed(1) : f.rt,
+        unidades: completa ? h.linea.filter((x) => x >= 0.5).length : f.unidades,
+        nivelMedido: nivelHora.has(f.hora) ? +nivelHora.get(f.hora).toFixed(3) : f.nivelMedido,
+      };
+    }));
+    setMsgCarga({ ok: true, txt: `Datos en vivo de ${v.hoy}: nivel de las 00:00, Q regulado de ayer, caudal de entrada y, en las horas ya cerradas, Promedio RT, unidades en línea y nivel medido. El despacho de XM se pega abajo.` });
+  }
+  useEffect(() => {
+    if (!vivoAplicado && vivo && vivo.resHoy) { llenarConVivo(vivo); setVivoAplicado(true); }
+  }, [vivo]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function cargarTabla() {
     const r = parsearResumenHorarioXM(texto);
     const leidas = r.horas.filter(Boolean);
@@ -484,13 +542,21 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
   const fcInicio = factorConversionHidrometria(nivelInicial, `${fecha} 00:00`);
   const calc = useMemo(() => {
     const b = bandaPct / 100;
-    const progXM = programaDespacho(filas, "xm");
+    // Sin despacho de XM pegado, los programas XM y "RT + XM" no existen (serían ceros):
+    // no se simulan ni se comparan. RT solo se usa solo si cubre las 24 h.
+    const hayXM = filas.some((f) => f.despacho > 0);
+    const progXMBase = programaDespacho(filas, "xm");
+    const progXM = hayXM ? progXMBase : null;
     const hayRT = filas.some((f) => f.rt != null);
-    const progRT = hayRT ? programaDespacho(filas, "rt") : null;
     const progPlano = programaDespacho(filas, "plano", { qObjetivo: qAyer, fc: fcInicio });
+    // RT: lo generado donde hay dato; en el resto, XM si se pegó, si no el plano
+    let progRT = null;
+    if (hayRT && hayXM) progRT = programaDespacho(filas, "rt");
+    else if (hayRT && progPlano) progRT = { potencias: filas.map((f, i) => (f.rt != null ? f.rt : progPlano.potencias[i])), rellenadas: [], conPlano: true };
+    else if (hayRT && filas.every((f) => f.rt != null)) progRT = programaDespacho(filas, "rt");
     const progs = { xm: progXM, rt: progRT, plano: progPlano };
-    const modo = progs[programa] ? programa : "xm";
-    const prog = progs[modo];
+    const modo = progs[programa] ? programa : progs.plano ? "plano" : progs.rt ? "rt" : "xm";
+    const prog = progs[modo] || progXMBase;
     const esc = (pot, qin) => simularDespachoHorario({
       nivelInicial, qEntrada: qin, cond: condDescarga, gammaMax,
       horas: filas.map((f, i) => {
@@ -514,19 +580,35 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
     const errMedido = filas.filter((f) => f.nivelMedido != null).map((f) => principal.serie[f.hora].nivel - f.nivelMedido);
     // Regla operativa: caudal regulado de Hidrometría (P / F.C.) con el nivel al inicio de cada hora
     const banda = bandaReglaOperativa(qAyer);
-    const fcH = (i) => factorConversionHidrometria(principal.detalle[i].Hinicio, `${fecha} ${String(i).padStart(2, "0")}:00`);
+    // F.C. de cada hora: con el nivel medido a esa hora si existe; si no, el simulado
+    const fcH = (i) => factorConversionHidrometria(filas[i].nivelMedido ?? principal.detalle[i].Hinicio, `${fecha} ${String(i).padStart(2, "0")}:00`);
     const qReg = (p, i) => (p == null ? null : p / fcH(i));
     const promedio = (vals) => { const v = vals.filter((x) => x != null); return v.length ? { q: v.reduce((a2, x) => a2 + x, 0) / v.length, horas: v.length } : null; };
     const regla = {
       banda,
-      xm: promedio(filas.map((f, i) => qReg(f.despacho, i))),
+      xm: hayXM ? promedio(filas.map((f, i) => qReg(f.despacho, i))) : null,
       rt: promedio(filas.map((f, i) => qReg(f.rt, i))),
       principal: promedio(prog.potencias.map((p, i) => qReg(p, i))),
       porHora: filas.map((f, i) => ({ xm: qReg(f.despacho, i), rt: qReg(f.rt, i), principal: qReg(prog.potencias[i], i) })),
     };
-    return { modo, prog, progs, principal, inf, sup, qMenos, qMas, comparar, grafica, errMedido, regla, energia: resumenEnergiaDespacho(filas), estados: filas.map((f) => estadoHoraDespacho(f.despacho, f.rt, bandaPct)) };
+    return { modo, prog, progs, principal, inf, sup, qMenos, qMas, comparar, grafica, errMedido, regla, energia: resumenEnergiaDespacho(hayXM ? filas : filas.map((f) => ({ ...f, despacho: null }))), estados: filas.map((f) => estadoHoraDespacho(hayXM ? f.despacho : null, f.rt, bandaPct)), hayXM };
   }, [filas, nivelInicial, qEntrada, sensQ, bandaPct, unidadesDisp, condDescarga, gammaMax, programa, qAyer, fcInicio, fecha]);
 
+  const seriesNivel = useMemo(() => {
+    const g = calc.grafica;
+    const s = [
+      { nombre: `Entrada −${sensQ} m³/s`, datos: g.map((x) => x.qMenos), color: T.inkFaint, dash: true, ancho: 1.2 },
+      { nombre: `Entrada +${sensQ} m³/s`, datos: g.map((x) => x.qMas), color: T.inkFaint, dash: true, ancho: 1.2 },
+      { nombre: `Programa −${bandaPct} %`, datos: g.map((x) => x.bandaInf), indice: 0, dash: true, ancho: 1.2 },
+      { nombre: `Programa +${bandaPct} %`, datos: g.map((x) => x.bandaSup), indice: 0, dash: true, ancho: 1.2 },
+      { nombre: nombrePrograma(calc.modo, calc.progs), datos: g.map((x) => x.principal), indice: 0, ancho: 2.6 },
+    ];
+    if (calc.comparar.xm) s.push({ nombre: "Despacho XM", datos: g.map((x) => x.xm), indice: 1, ancho: 1.6 });
+    if (calc.comparar.rt) s.push({ nombre: "Promedio RT", datos: g.map((x) => x.rt), indice: 3, ancho: 1.8 });
+    if (calc.comparar.plano) s.push({ nombre: "Plano por regla", datos: g.map((x) => x.plano), indice: 6, ancho: 1.6 });
+    s.push({ nombre: "Nivel medido", datos: g.map((x) => x.medido), color: T.ink, soloPuntos: true, puntos: true });
+    return { x: g.map((x) => x.hora), s };
+  }, [calc, T, sensQ, bandaPct]); // eslint-disable-line react-hooks/exhaustive-deps
   const det = calc.principal.detalle;
   const noAlcanzables = det.filter((d) => d.potenciaMW > 0 && !d.alcanzable && !d.enMinimoEnsayado);
   const bajoMinimo = det.filter((d) => d.enMinimoEnsayado);
@@ -536,13 +618,12 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
   const fmt = (v, d = 1) => fx(v, d);
   const celda = { padding: "3px 6px", borderBottom: `1px solid ${T.lineSoft}`, whiteSpace: "nowrap" };
   const entradaCelda = { width: 72, padding: "3px 4px", fontSize: 12 };
-  const NOMBRE_PROGRAMA = { xm: "Despacho XM", rt: "Promedio RT (y XM donde falta)", plano: "Plano por regla operativa" };
   const colorEstado = { sin_dato_xm: T.inkMuted, sin_dato_rt: T.inkMuted, por_debajo: T.amber, dentro: T.teal, por_encima: T.amber };
   const colorRegla = { cumple: T.teal, por_encima: T.red, por_debajo: T.red, excepcion: T.amber, sin_base: T.inkMuted };
   const estadoReglaDe = (x) => (x ? estadoReglaOperativa(x.q, calc.regla.banda) : "sin_base");
   const csv = det.map((d, i) => ({
     hora: d.hora, despacho_xm_mw: filas[i].despacho, promedio_rt_mw: filas[i].rt, estado_hora: ETIQUETA_ESTADO_HORA[calc.estados[i]],
-    programa_simulado: NOMBRE_PROGRAMA[calc.modo], potencia_programa_mw: +d.potenciaMW.toFixed(2), unidades: d.unidades,
+    programa_simulado: nombrePrograma(calc.modo, calc.progs), potencia_programa_mw: +d.potenciaMW.toFixed(2), unidades: d.unidades,
     p_bornes_unidad_mw: +d.pBornesUnidad.toFixed(2), p_eje_unidad_mw: +d.pEjeUnidad.toFixed(2), apertura_grados: +d.gamma.toFixed(3),
     eta_pct: d.eta != null ? +d.eta.toFixed(2) : null, q_turbinado_modelo_m3s: +d.qTurbinado.toFixed(2),
     q_regulado_hidrometria_m3s: calc.regla.porHora[i].principal != null ? +calc.regla.porHora[i].principal.toFixed(2) : null, q_entrada_m3s: d.qEntrada,
@@ -556,6 +637,20 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
       <ChartHeader titulo="Variación del nivel del embalse según despacho de potencia (intradiario)" subtitulo="Nivel del embalse hora a hora con el programa de XM, la banda de tolerancia, la generación real (Promedio RT) y el caudal de entrada pronosticado." T={T}
         tip={`Cada hora: la potencia total (en bornes) se reparte en partes iguales entre las unidades de esa hora, se pasa al eje de la turbina con el rendimiento del generador (98,55-98,91 %, estudio de ampliación de GE, 2023), se busca en la colina la apertura que la entrega con el nivel al inicio de la hora y la condición de descarga elegida arriba, con el techo de ${etiquetaTecho} y ${P_MAXIMO_ESPERADO_MW} MW por unidad. El caudal turbinado y el caudal de entrada dan el cambio de volumen (curvas cota-volumen) y el nivel al final de la hora. No incluye vertimiento. Validado con la operación de enero a octubre de 2026: con las unidades reales y el caudal de entrada correcto, el error es de pocos centímetros por día; lo que más pesa es el caudal de entrada (unos 2,5 cm por día por cada 10 m³/s).`} />
 
+      {vivo && vivo.resHoy && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", padding: "9px 12px", marginBottom: 12, borderRadius: 8, background: T.accentSoft, fontSize: 12.5, color: T.inkMuted }}>
+          <b style={{ color: T.ink }}>Datos en vivo</b>
+          <span>Caudal de entrada:</span>
+          {opcionesEntrada.map((o) => (
+            <button key={o.k} onClick={() => { setQEntrada(Math.round(o.q)); setFuenteEntrada(o.k); }} aria-pressed={fuenteEntrada === o.k} title={o.txt}
+              style={{ padding: "3px 10px", borderRadius: 999, fontSize: 12, cursor: "pointer", border: `1px solid ${fuenteEntrada === o.k ? T.teal : T.line}`, background: fuenteEntrada === o.k ? T.panel : "transparent", color: fuenteEntrada === o.k ? T.teal : T.inkMuted }}>
+              {o.k === "hf" ? "HydroForecast" : o.k === "hoy" ? "Balance hoy" : "Balance ayer"} {fx(o.q, 0)}
+            </button>
+          ))}
+          <span style={{ flex: 1 }} />
+          <button onClick={() => llenarConVivo(vivo, fuenteEntrada)} style={{ padding: "4px 12px", borderRadius: 6, fontSize: 12, cursor: "pointer", border: `1px solid ${T.teal}`, background: "transparent", color: T.teal, fontWeight: 600 }}>Volver a llenar con datos en vivo</button>
+        </div>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 14, marginBottom: 12 }}>
         <div>
           <Etiqueta T={T} tip="Día del despacho. Define qué factor de conversión de Hidrometría aplica en la columna Q Hidrometría (1,62 hasta el 29-oct-2026 14:35; desde entonces depende del nivel). Se toma del texto pegado si lo trae.">Fecha del despacho</Etiqueta>
@@ -585,9 +680,9 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
           <Etiqueta T={T} tip="Con qué potencia se simula el nivel. Despacho XM: el programa de XM (una hora sin dato repite la anterior). Promedio RT: lo generado donde ya hay dato y XM en el resto. Plano por regla operativa: caudal regulado constante igual al promedio de ayer, que es como opera hoy Ituango por la Res. 1891.">Programa para el nivel</Etiqueta>
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
             {[["xm", "XM"], ["rt", "RT"], ["plano", "Plano"]].map(([v, l]) => {
-              const disponible = v === "xm" || (v === "rt" && filas.some((f) => f.rt != null)) || (v === "plano" && qAyer > 0);
+              const disponible = !!calc.progs[v];
               return (
-                <button key={v} onClick={() => disponible && setPrograma(v)} disabled={!disponible} title={disponible ? "" : v === "rt" ? "Falta el Promedio RT" : "Falta el Q regulado promedio de ayer"} style={{
+                <button key={v} onClick={() => disponible && setPrograma(v)} disabled={!disponible} title={disponible ? "" : v === "xm" ? "Falta pegar el despacho de XM" : v === "rt" ? "Falta el despacho de XM para las horas sin RT" : "Falta el Q regulado promedio de ayer"} style={{
                   flex: "1 1 40px", padding: "7px 4px", fontSize: 12, fontFamily: FONT_BODY, fontWeight: 600, opacity: disponible ? 1 : 0.5,
                   border: `1px solid ${calc.modo === v ? T.teal : T.line}`, borderRadius: 4, cursor: disponible ? "pointer" : "not-allowed",
                   background: calc.modo === v ? T.panelSoft : "transparent", color: calc.modo === v ? T.teal : T.inkMuted,
@@ -629,10 +724,10 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
       {vacio && <div style={{ ...resumen, marginBottom: 12, color: T.ink }}>Pegue el resumen horario de XM (o escriba el despacho en la tabla), o use el programa plano con el Q regulado de ayer. Sin potencia, el nivel solo refleja el caudal de entrada.</div>}
       <div style={{ ...resumen, marginBottom: 12 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: T.teal }}>
-          Nivel a las 24 h ({NOMBRE_PROGRAMA[calc.modo]}): {fx(calc.principal.Hfinal, 3)} msnm ({calc.principal.deltaH >= 0 ? "+" : ""}{fx(calc.principal.deltaH * 100, 1)} cm)
+          Nivel a las 24 h ({nombrePrograma(calc.modo, calc.progs)}): {fx(calc.principal.Hfinal, 3)} msnm ({calc.principal.deltaH >= 0 ? "+" : ""}{fx(calc.principal.deltaH * 100, 1)} cm)
         </div>
         <div>Banda ±{bandaPct} % de ese programa: {fx(calc.sup.Hfinal, 3)} a {fx(calc.inf.Hfinal, 3)} msnm · caudal de entrada ±{sensQ} m³/s: {fx(calc.qMenos.Hfinal, 3)} a {fx(calc.qMas.Hfinal, 3)} msnm
-          {Object.entries(calc.comparar).map(([k, v]) => <span key={k}> · {NOMBRE_PROGRAMA[k]}: {fx(v.Hfinal, 3)} msnm</span>)}</div>
+          {Object.entries(calc.comparar).map(([k, v]) => <span key={k}> · {nombrePrograma(k, calc.progs)}: {fx(v.Hfinal, 3)} msnm</span>)}</div>
         <div>Caudal turbinado medio (modelo): {fx(calc.principal.qTurbMedio, 1)} m³/s frente a {fx(qEntrada, 0)} m³/s de entrada pronosticada{calc.prog.rellenadas.length > 0 && <> · horas sin dato propio (se repite la anterior): {calc.prog.rellenadas.join(", ")}</>}.</div>
         <div>
           <b style={{ color: T.ink }}>Energía RT vs despacho XM</b> (banda ±{bandaPct} %): XM {fx(calc.energia.xm, 0)} MWh en {calc.energia.hXM} h con dato · RT {fx(calc.energia.rt, 0)} MWh en {calc.energia.hRT} h
@@ -642,7 +737,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
         {calc.regla.banda ? (
           <div>
             <b style={{ color: T.ink }}>Regla operativa (Res. 1891):</b> banda de hoy {fx(calc.regla.banda.min, 1)} a {fx(calc.regla.banda.max, 1)} m³/s (promedio de ayer {fx(qAyer, 1)} ± 4,70 %; con el F.C. de las 00:00, {fx(calc.regla.banda.min * fcInicio, 0)} a {fx(calc.regla.banda.max * fcInicio, 0)} MW).
-            {[["xm", "Despacho XM"], ["rt", "Promedio RT hasta ahora"], ["principal", `Programa simulado (${NOMBRE_PROGRAMA[calc.modo]})`]].map(([k, l]) => {
+            {[["xm", "Despacho XM"], ["rt", "Promedio RT hasta ahora"], ["principal", `Programa simulado (${nombrePrograma(calc.modo, calc.progs)})`]].map(([k, l]) => {
               const x = calc.regla[k]; if (!x) return null;
               const est = estadoReglaDe(x);
               return <div key={k}>· {l}: promedio {fx(x.q, 1)} m³/s en {x.horas} h → <b style={{ color: colorRegla[est] }}>{ETIQUETA_ESTADO_REGLA[est]}</b></div>;
@@ -659,25 +754,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
       </div>
 
       <ChartHeader titulo="Nivel del embalse — evolución intradiaria" T={T} accion={<BotonCSV data={csv} filename="despacho_intradiario.csv" T={T} />} />
-      <ResponsiveContainer width="100%" height={300}>
-        <LineChart data={calc.grafica} margin={{ top: 10, right: 20, left: 64, bottom: 10 }}>
-          <CartesianGrid stroke={T.lineSoft} strokeDasharray="2 4" />
-          <XAxis dataKey="hora" type="number" domain={[0, 24]} ticks={[0, 3, 6, 9, 12, 15, 18, 21, 24]} tick={tickStyleFor(T)} />
-          <YAxis type="number" tick={tickStyleFor(T)} tickFormatter={(v) => fx(v, 2)} domain={["auto", "auto"]} label={{ value: "Nivel del embalse (msnm)", angle: -90, position: "left", offset: -2, style: { fontSize: 12.5, fontWeight: 600, fill: T.ink, fontFamily: FONT_BODY, textAnchor: "middle" } }} />
-          <RTooltip content={<TooltipNivel T={T} />} />
-          <Legend wrapperStyle={{ fontSize: 11.5, fontFamily: FONT_BODY }} />
-          <Line dataKey="qMas" name={`Entrada +${sensQ} m³/s`} stroke={T.inkFaint} strokeDasharray="2 3" strokeWidth={1.4} dot={false} isAnimationActive={false} />
-          <Line dataKey="qMenos" name={`Entrada −${sensQ} m³/s`} stroke={T.inkFaint} strokeDasharray="2 3" strokeWidth={1.4} dot={false} isAnimationActive={false} />
-          <Line dataKey="bandaInf" name={`Programa −${bandaPct} %`} stroke={T.tealSoft} strokeDasharray="6 3" strokeWidth={1.4} dot={false} isAnimationActive={false} />
-          <Line dataKey="bandaSup" name={`Programa +${bandaPct} %`} stroke={T.tealSoft} strokeDasharray="6 3" strokeWidth={1.4} dot={false} isAnimationActive={false} />
-          {calc.comparar.xm && <Line dataKey="xm" name="Despacho XM" stroke={T.cyan} strokeWidth={1.6} dot={false} isAnimationActive={false} />}
-          {calc.comparar.rt && <Line dataKey="rt" name="Promedio RT" stroke={T.amber} strokeWidth={1.8} dot={false} isAnimationActive={false} />}
-          {calc.comparar.plano && <Line dataKey="plano" name="Plano por regla" stroke={T.inkMuted} strokeWidth={1.6} dot={false} isAnimationActive={false} />}
-          <Line dataKey="principal" name={NOMBRE_PROGRAMA[calc.modo]} stroke={T.teal} strokeWidth={2.6} dot={false} isAnimationActive={false} />
-          <Line dataKey="medido" name="Nivel medido" stroke={T.ink} strokeWidth={0} dot={{ r: 3.5, fill: T.ink }} connectNulls={false} isAnimationActive={false} legendType="circle" />
-        </LineChart>
-      </ResponsiveContainer>
-      <div style={{ textAlign: "center", fontSize: 12.5, fontWeight: 600, color: T.ink, fontFamily: FONT_BODY, marginTop: 4 }}>Hora del día (h)</div>
+      <GraficoSeries T={T} tipoX="numero" ejeX="Hora" x={seriesNivel.x} series={seriesNivel.s} unidad="msnm" ejeY="msnm" decimales={3} alto={300} nombreArchivo="despacho_nivel" bandas={[{ desde: 0, hasta: 1, relleno: "rgba(148,163,184,0.10)" }, { desde: 2, hasta: 3 }]} />
 
       <div style={{ marginTop: 14, overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: FONT_BODY, color: T.ink }}>
@@ -790,6 +867,25 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
      caudal objetivo y el nivel del embalse aquí son valores que el
      usuario ingresa directamente, sin vincularse a ningún otro campo. */
   const [qObjetivoOptimo, setQObjetivoOptimo] = useState(600);
+  /* Con datos en vivo: nivel actual del radar y, como caudal, el pronóstico de
+     HydroForecast para hoy en Sitio Presa (si no hay, el balance de hoy). Una vez. */
+  const { vivo } = useVivo() || {};
+  const [vivoAplicadoColina, setVivoAplicadoColina] = useState(false);
+  const caudalVivo = useMemo(() => {
+    if (!vivo) return null;
+    const pr = vivo.hf?.pronostico?.datos?.data;
+    const h = pr && pr.find((x) => String(x.timestamp).slice(0, 10) === vivo.hoy);
+    if (h && h.QSitioPresa_pred_mean != null) return { q: h.QSitioPresa_pred_mean, txt: "pronóstico HydroForecast de hoy en Sitio Presa" };
+    if (vivo.resHoy && vivo.resHoy.balance.qEntrada != null) return { q: vivo.resHoy.balance.qEntrada, txt: "balance de masa de hoy" };
+    return null;
+  }, [vivo]);
+  function aplicarVivoColina() {
+    if (vivo && vivo.actual && vivo.actual.nivel != null) setNivelEmbalseExploracion(+vivo.actual.nivel.toFixed(2));
+    if (caudalVivo) setQObjetivoOptimo(Math.round(caudalVivo.q));
+  }
+  useEffect(() => {
+    if (!vivoAplicadoColina && vivo && vivo.actual && vivo.actual.nivel != null) { aplicarVivoColina(); setVivoAplicadoColina(true); }
+  }, [vivo]); // eslint-disable-line react-hooks/exhaustive-deps
   /* Default "normal" (97% = margen de 3% reservado para respuesta a
      frecuencia, pedido por el ingeniero de operaciones) — antes el
      default era "original" (26.5°). "Ampliado" (100%) sigue disponible
@@ -1296,6 +1392,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto" }}>
       {tab === "descarga" && (<>
+      <Proposito T={T} id="descarga" titulo="Condición de descarga (almenaras)" fuente="Estudio ASE 2026 (río colmatado), diseño GE / pliego, o niveles medidos" para="Fijar la condición aguas abajo, es decir, el nivel de las almenaras, que usan todos los cálculos de la app." logras="Que el salto neto refleje el estado real del río: con el río colmatado la almenara sube y se pierde salto. A medida que avancen los dragados, la condición se acercará a la de diseño." resultados="Nivel de cada almenara (N°1: U1–U4; N°2: U5–U8 desde 2028) según el caudal del río y el turbinado, con avisos cuando se extrapola." />
       <div style={cardStyle}>
         <PanelCondicionDescarga cond={condDescarga} setCond={setCondDescarga} T={T}
           nivelEmbalse={nivelEmbalseExploracion} nUnidades={nTurbActivasExploracion} gamma={gamma} />
@@ -1303,9 +1400,18 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
       </>)}
 
       {tab === "buscador" && (<>
+      <Proposito T={T} id="buscador" titulo="Buscador de configuración" fuente="Modelo de la colina (ensayo 2013, transpuesto al prototipo) con la condición de descarga elegida" para="Encontrar cuántas unidades usar y con qué apertura para turbinar un caudal de entrada con la mayor eficiencia, sin pasar de 307 MW por unidad." logras="Decidir la configuración de máquinas para un caudal dado (el pronóstico de Sitio Presa, el promedio regulado de ayer o el que se quiera) y ver la potencia que se obtiene. Con datos en vivo, el nivel y el caudal se llenan solos." resultados="Para 1 a N unidades: apertura, caudal y potencia por unidad, eficiencia y salto neto, con la opción recomendada; también el modo “garantizar potencia objetivo”." />
       <div style={cardStyle}>
         <ChartHeader titulo="Buscador de punto de máxima eficiencia" subtitulo="A partir del caudal de entrada en Sitio Presa y el nivel del embalse, busca automáticamente la apertura del distribuidor, el salto neto y cuántas unidades usar para la mayor eficiencia posible, sin superar 307 MW por unidad." T={T}
           tip={`Prueba de 1 a N unidades activas (según lo que marques como disponible), repartiendo el caudal en partes iguales entre ellas. Para cada conteo de unidades, busca la apertura que logra ese caudal por unidad — respetando dos techos: el mecánico del distribuidor elegido en "Rango de apertura" (${fx(pctFromDeg(gammaMecanicoDeRango(rangoOptimo)), 0)}% = ${fx(gammaMecanicoDeRango(rangoOptimo), 2)}°) y la potencia máxima garantizada (${P_MAXIMO_ESPERADO_MW} MW, el estudio de ampliación de GE (2023)) — el que sea más restrictivo manda. Descarta las opciones que no se pueden cumplir (por ejemplo, cuando el caudal repartido deja cada unidad bajo la apertura mínima ensayada) y elige la que turbina más caudal; si varias turbinan lo mismo (±1 m³/s), la de mayor eficiencia. El nivel del embalse es el mismo de la exploración; la apertura resultante no se traslada a la exploración.`} />
+        {vivo && vivo.actual && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", padding: "8px 12px", marginBottom: 12, borderRadius: 8, background: T.accentSoft, fontSize: 12.5, color: T.inkMuted }}>
+            <b style={{ color: T.ink }}>Datos en vivo</b>
+            <span>Nivel actual {fx(vivo.actual.nivel, 2)} msnm{caudalVivo ? ` · caudal ${fx(caudalVivo.q, 0)} m³/s (${caudalVivo.txt})` : ""}</span>
+            <span style={{ flex: 1 }} />
+            <button onClick={aplicarVivoColina} style={{ padding: "4px 12px", borderRadius: 6, fontSize: 12, cursor: "pointer", border: `1px solid ${T.teal}`, background: "transparent", color: T.teal, fontWeight: 600 }}>Usar condiciones actuales</button>
+          </div>
+        )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16, marginBottom: 8 }}>
           <div>
             <Etiqueta T={T} tip={`Caudal total que ingresa por Sitio Presa (suma de lo que deben turbinar todas las unidades activas). Sin tope automático: si pides más de lo que las unidades pueden turbinar respetando la apertura máxima y los ${P_MAXIMO_ESPERADO_MW} MW por unidad, el buscador te lo indica (†). El excedente que no se turbina se almacena en el embalse (el nivel sube) mientras el ajuste de caudal del embalse esté apagado; solo se modela pasando por el vertedero si ni siquiera con ese ajuste encendido las unidades pueden aprovecharlo.`}>Caudal Entrada Sitio Presa</Etiqueta>
@@ -1595,18 +1701,21 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
       </>)}
 
       {tab === "despacho" && (<>
+      <Proposito T={T} id="despacho" titulo="Despacho intradiario" fuente="Modelo de la colina + curvas cota-volumen; datos en vivo del relay y HydroForecast" para="Proyectar el nivel del embalse hora a hora con el despacho de XM, la generación real (RT) o el programa plano, y revisar la regla operativa del día." logras="Saber, antes de que termine el día, si el programa deja el embalse donde se quiere y si el promedio regulado queda dentro de la banda de la Res. 1891." resultados="Nivel a las 24 h con bandas de sensibilidad, estado de cada hora (XM frente a RT), caudal regulado por hora y su promedio frente a la banda, tabla horaria y CSV. El nivel de las 00:00, el Q de ayer, el caudal de entrada y las horas ya cerradas se llenan con los datos en vivo; el despacho de XM se pega." />
       <div style={cardStyle}>
         <PanelDespachoIntradiario T={T} condDescarga={condDescarga} gammaMax={gammaMecanicoDeRango(rangoOptimo)} etiquetaTecho={etiquetaRango(rangoOptimo)} />
       </div>
       </>)}
 
-      {tab === "operacion" && (
+      {tab === "operacion" && (<>
+        <Proposito T={T} id="operacion" titulo="Operación medida" fuente="LoggerNet (relay al repositorio privado, o un archivo .dat / CSV local)" para="Revisar, minuto a minuto, la generación y el caudal medidos frente al modelo de la colina, y validar el factor de conversión de Hidrometría." logras="Confirmar que los números de Hidrometría salen bien y medir cuánto se separa el modelo de lo operado, por unidad." resultados="Volúmenes por unidad (Hidrometría, Winter-Kennedy relativo y modelo), regla diaria, verificación de la columna de LoggerNet, gráficos interactivos y CSV." />
         <div style={cardStyle}>
           <OperacionMedida T={T} condDescarga={condDescarga} />
         </div>
-      )}
+      </>)}
 
       {tab === "colina" && (<>
+      <Proposito T={T} id="colina" titulo="Colina de la turbina" fuente="Ensayo de modelo físico (2013), transposición IEC 60193; ampliación de rango 2023" para="Explorar el diagrama colinar del prototipo: para un nivel del embalse y una apertura, qué caudal, potencia y eficiencia da la turbina." logras="Entender dónde opera cada máquina y qué tan lejos está de su mejor punto. La colina es la misma para las ocho unidades; las diferencias medidas entre máquinas están en Analítica → Unidades." resultados="Familias de curvas por apertura, isolíneas de eficiencia, punto de operación y los escenarios documentados de 2023." />
       <div style={cardStyle}>
         <ChartHeader titulo="Colina de la turbina — exploración y simulación" subtitulo="Ensayo de modelo físico (2013), transpuesto al prototipo según IEC 60193. Punto de máxima eficiencia del ensayo (BEP): H = 198,29 m, Q = 146,67 m³/s, P = 273,41 MW, γ = 21,5°, η = 96,48 %." T={T}
           tip="Reproduce las familias de curvas de apertura constante (γ), las isolíneas de eficiencia (trazadas por marching squares sobre una malla interpolada de la colina — eficiencia de MODELO en los gráficos n₁₁, de PROTOTIPO con step-up IEC 60193 en los de escala real) y los 6 puntos WAE reales. No incluye los polígonos de área de operación (sin coordenadas en los datos extraídos)." />
@@ -1764,6 +1873,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
       </>)}
 
       {tab === "curvas" && (<>
+      <Proposito T={T} id="curvas" titulo="Curvas y F.C." fuente="Modelo de la colina con la condición de descarga elegida" para="Ver cuánta agua y potencia caben según el nivel del embalse y cuántas unidades estén en línea, y comparar el F.C. del modelo con el de Hidrometría." logras="Saber la capacidad de la central a cada nivel y el número de unidades que se necesita para un caudal." resultados="Curvas de caudal máximo por número de unidades y F.C. frente al nivel (modelo y fórmula de Hidrometría)." />
       <div style={cardStyle}>
         <ChartHeader titulo="Unidades requeridas según el nivel del embalse" subtitulo={`Caudal turbinable máximo total (apertura máxima del rango, sin pasar de ${P_MAXIMO_ESPERADO_MW} MW por unidad), según cuántas unidades estén activas, en el rango de operación normal (${NIVEL_MIN_TEC}-${NAMO} msnm = NAMO). Rango de apertura: ${etiquetaRango(rangoOptimo)}.`} T={T}
           tip="Cada línea es la capacidad máxima con N unidades activas (a la apertura máxima del rango elegido), calculada con el mismo modelo de colina ya validado. Para un caudal objetivo, mira en qué línea (de abajo hacia arriba) se alcanza o supera ese valor a tu nivel de embalse — esa es la cantidad mínima de unidades necesaria."
@@ -1861,6 +1971,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
       </>)}
 
       {tab === "referencia" && (<>
+      <Proposito T={T} id="referencia" titulo="Referencia" fuente="Estudio de ampliación de GE (2023)" para="Consultar los escenarios del estudio de ampliación 2023 y cómo los reproduce el modelo." logras="Tener a mano la referencia oficial de potencia, caudal y apertura para validar el modelo." resultados="Tabla de escenarios y comparación con el modelo." />
       <div style={{ margin: "30px 4px 4px", fontFamily: FONT_BODY }}>
         <div style={{ fontSize: 15, fontWeight: 800, color: T.ink }}>Escenarios reales documentados</div>
         <div style={{ fontSize: 12.5, color: T.inkFaint, marginTop: 2 }}>Puntos de operación real evaluados por GE/EPM (estudio de ampliación 2023) — no proyecciones del modelo, datos tomados directamente de los documentos.</div>
@@ -1967,27 +2078,41 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
    alrededor de ColinaModulo, que ya trae toda su propia lógica.
    ============================================================ */
 
-const PESTANAS = [
-  ["buscador", "Buscador"],
-  ["despacho", "Despacho"],
-  ["operacion", "Operación medida"],
-  ["colina", "Colina"],
-  ["curvas", "Curvas y F.C."],
-  ["descarga", "Descarga"],
-  ["referencia", "Referencia"],
+/* Estructura de la app: tres grupos de módulos.
+   - Operación en vivo: decisiones en caliente con los datos del relay y HydroForecast.
+   - Analítica y consulta: histórico, cumplimiento y comportamiento de las máquinas.
+   - Ingeniería de la máquina: el modelo (colina, curvas, almenaras, referencia). */
+const GRUPOS = [
+  { k: "vivo", nombre: "Operación en vivo", tabs: [["tablero", "Tablero"], ["despacho", "Despacho"], ["buscador", "Buscador"], ["vertedero", "Vertedero"]] },
+  { k: "analitica", nombre: "Analítica", tabs: [["regla", "Regla 1891 y ANLA"], ["unidades", "Unidades"], ["hidrologia", "Hidrología y pronóstico"], ["operacion", "Operación medida"]] },
+  { k: "ingenieria", nombre: "Ingeniería", tabs: [["colina", "Colina"], ["curvas", "Curvas y F.C."], ["descarga", "Descarga"], ["referencia", "Referencia"]] },
 ];
+const PESTANAS = [...GRUPOS.flatMap((g) => g.tabs), ["datos", "Conexión de datos"]];
+const MODULO_COLINA = new Set(["buscador", "despacho", "operacion", "colina", "curvas", "descarga", "referencia"]);
 const leerPref = (k, def) => { try { return localStorage.getItem(k) || def; } catch { return def; } };
 const guardarPref = (k, v) => { try { localStorage.setItem(k, v); } catch { /* sin almacenamiento */ } };
 const pestanaDeHash = () => {
   const h = (typeof location !== "undefined" ? location.hash : "").replace(/^#/, "");
-  return PESTANAS.some(([k]) => k === h) ? h : "buscador";
+  return PESTANAS.some(([k]) => k === h) ? h : "tablero";
 };
 
 export default function ItuangoColinaTurbina() {
+  return (
+    <ProveedorDatos>
+      <ProveedorVivo>
+        <Aplicacion />
+      </ProveedorVivo>
+    </ProveedorDatos>
+  );
+}
+
+function Aplicacion() {
   const [theme, setTheme] = useState(() => leerPref("ituango-turbinas-tema", "dark"));
   const [altoContraste, setAltoContraste] = useState(() => leerPref("ituango-turbinas-contraste", "0") === "1");
   const [tab, setTab] = useState(pestanaDeHash);
   const [condDescarga, setCondDescarga] = useState(CONDICION_DESCARGA_DEFECTO);
+  const datos = useDatos();
+  const { vivo, cargando: cargandoVivo, error: errorVivo } = useVivo();
   const T = aplicarAltoContraste(THEMES[theme], theme, altoContraste);
   useEffect(() => { guardarPref("ituango-turbinas-tema", theme); }, [theme]);
   useEffect(() => { guardarPref("ituango-turbinas-contraste", altoContraste ? "1" : "0"); }, [altoContraste]);
@@ -2000,14 +2125,25 @@ export default function ItuangoColinaTurbina() {
     const nombre = PESTANAS.find(([k]) => k === tab)?.[1];
     document.title = `${nombre} · Turbinas Ituango`;
   }, [tab]);
+  /* El caudal del río en D4' (condición ASE) se toma una vez del caudal total
+     descargado actual, si el usuario no lo ha cambiado. */
+  const [rioVivo, setRioVivo] = useState(false);
+  useEffect(() => {
+    if (rioVivo || !vivo || !vivo.actual || !Number.isFinite(vivo.actual.qDesc)) return;
+    setCondDescarga((c) => (c === CONDICION_DESCARGA_DEFECTO ? { ...c, qRio: Math.round(vivo.actual.qDesc), origenQRio: "vivo" } : c));
+    setRioVivo(true);
+  }, [vivo, rioVivo]);
+  const grupo = GRUPOS.find((g) => g.tabs.some(([k]) => k === tab)) || null;
+  const edad = vivo && vivo.edadMin;
+  const estadoDatos = !datos.conectado ? { c: T.amber, txt: "Sin datos de operación" } : edad == null ? (cargandoVivo && !vivo ? { c: T.inkFaint, txt: "Conectando…" } : { c: "#d03b3b", txt: errorVivo ? "Error de datos" : "Sin datos de hoy" }) : edad <= 90 ? { c: "#0ca30c", txt: `Datos ${vivo.ultima.t.slice(11)}` } : { c: "#d03b3b", txt: `Datos con ${Math.round(edad / 60)} h de atraso` };
 
   return (
     <div style={{ background: T.bg, color: T.ink, fontFamily: FONT_BODY, minHeight: "100vh" }}>
       <GlobalStyles T={T} theme={theme} altoContraste={altoContraste} />
       <header className="itu-top">
-        <div style={{ maxWidth: 1200, margin: "0 auto", padding: "10px max(16px, env(safe-area-inset-left)) 0" }}>
+        <div style={{ maxWidth: 1240, margin: "0 auto", padding: "10px max(16px, env(safe-area-inset-left)) 0" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <a href="#buscador" style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, textDecoration: "none" }}>
+            <a href="#tablero" style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, textDecoration: "none" }}>
               <svg width="34" height="34" viewBox="0 0 32 32" aria-hidden="true" style={{ flexShrink: 0 }}>
                 <rect width="32" height="32" rx="9" fill={T.teal} />
                 <circle cx="16" cy="16" r="9" fill="none" stroke={T.onAccent} strokeWidth="2.2" />
@@ -2015,10 +2151,14 @@ export default function ItuangoColinaTurbina() {
               </svg>
               <div style={{ minWidth: 0 }}>
                 <h1 className="itu-h1" style={{ margin: 0, fontWeight: 700, color: T.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Turbinas Ituango</h1>
-                <div className="itu-sub" style={{ fontSize: 12, color: T.inkMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Colina, punto de operación, despacho y operación medida</div>
+                <div className="itu-sub" style={{ fontSize: 12, color: T.inkMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Operación en vivo, analítica e ingeniería de las unidades</div>
               </div>
             </a>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+              <a className="itu-pill" href="#datos" title="Conexión a los datos de operación y antigüedad del último dato">
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: estadoDatos.c }} />
+                <span className="lbl">{estadoDatos.txt}</span>
+              </a>
               <a className="itu-pill" href="#descarga" title="Condición de descarga (nivel de las almenaras) que usan todos los cálculos">
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: condDescarga.modo === "ase" ? T.teal : T.amber }} />
                 <span className="lbl">{condDescarga.modo === "ase" ? `Río ${Math.round(condDescarga.qRio)} m³/s` : condDescarga.modo === "manual" ? "Almenaras manual" : "Diseño"}</span>
@@ -2029,18 +2169,40 @@ export default function ItuangoColinaTurbina() {
               </button>
             </div>
           </div>
-          <nav className="itu-tabs" aria-label="Secciones" style={{ marginTop: 8 }}>
-            {PESTANAS.map(([k, nombre]) => (
-              <a key={k} href={`#${k}`} aria-current={tab === k ? "page" : undefined}>{nombre}</a>
-            ))}
+          <nav aria-label="Secciones" style={{ marginTop: 8 }}>
+            <div className="itu-grupos" role="tablist" aria-label="Grupos de módulos">
+              {GRUPOS.map((g) => (
+                <a key={g.k} href={`#${g.tabs[0][0]}`} role="tab" aria-selected={grupo && grupo.k === g.k} className={grupo && grupo.k === g.k ? "on" : ""}>{g.nombre}</a>
+              ))}
+            </div>
+            <div className="itu-tabs">
+              {(grupo || GRUPOS[0]).tabs.map(([k, nombre]) => (
+                <a key={k} href={`#${k}`} aria-current={tab === k ? "page" : undefined}>{nombre}</a>
+              ))}
+            </div>
           </nav>
         </div>
       </header>
 
-      <main style={{ maxWidth: 1200, margin: "0 auto", padding: "18px max(16px, env(safe-area-inset-left)) 40px" }}>
-        <ColinaModulo T={T} tab={tab} condDescarga={condDescarga} setCondDescarga={setCondDescarga} />
+      <main style={{ maxWidth: 1240, margin: "0 auto", padding: "18px max(16px, env(safe-area-inset-left)) 40px" }}>
+        {tab === "tablero" && <Tablero T={T} condDescarga={condDescarga} />}
+        {tab === "vertedero" && <Vertedero T={T} />}
+        {tab === "regla" && <ReglaAnla T={T} />}
+        {tab === "unidades" && <Unidades T={T} />}
+        {tab === "hidrologia" && <Hidrologia T={T} />}
+        {tab === "datos" && (
+          <>
+            <PanelConexion T={T} />
+            <div style={{ fontSize: 13, color: T.inkMuted, lineHeight: 1.6, maxWidth: 820 }}>
+              <p><b style={{ color: T.ink }}>De dónde salen los datos.</b> Un relay en un equipo de la red corporativa lee los archivos de LoggerNet de la estación del vertedero y los sube cada hora a un repositorio privado (un CSV por día). Un proceso automático en ese repositorio arma el histórico (regla operativa, vertedero, descargado, índices por unidad) y archiva HydroForecast. La app lee esos archivos con el token; nada se envía a otro lado.</p>
+              {vivo && vivo.estadoProceso && <p>Histórico: {vivo.estadoProceso.dias} días desde {vivo.estadoProceso.primerDia}; último proceso {String(vivo.estadoProceso.generado).slice(0, 16).replace("T", " ")} UTC.</p>}
+              {vivo && vivo.columnas && <p>Columnas del archivo de hoy: {vivo.columnas.length}. {vivo.columnas.some((c) => /^Open_Gate/i.test(c)) ? "Incluye compuertas (relay versión 2)." : "Sin columnas de compuertas: falta instalar la versión 2 del relay."}</p>}
+            </div>
+          </>
+        )}
+        {MODULO_COLINA.has(tab) && <ColinaModulo T={T} tab={tab} condDescarga={condDescarga} setCondDescarga={setCondDescarga} />}
         <footer style={{ marginTop: 24, fontSize: 12, color: T.inkFaint, lineHeight: 1.6 }}>
-          Modelo de colina del ensayo de 2013 transpuesto al prototipo (IEC 60193), con datos del fabricante, de los estudios hidráulicos y de Hidrometría. Resultados de apoyo a la operación: no reemplazan los procedimientos de EPM.
+          Modelo de colina del ensayo de 2013 transpuesto al prototipo (IEC 60193), con datos del fabricante, de los estudios hidráulicos y de Hidrometría. Datos de operación: LoggerNet (vía relay) y HydroForecast Ituango. Resultados de apoyo a la operación: no reemplazan los procedimientos de EPM.
         </footer>
       </main>
     </div>
