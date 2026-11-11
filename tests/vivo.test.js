@@ -158,3 +158,33 @@ describe("asistente: herramientas y bucle del agente (API simulada)", () => {
     await expect(preguntar({ clave: "x", modelo: "m", historial: [{ role: "user", content: "hola" }], ctx, fetchFn })).rejects.toThrow(/401/);
   });
 });
+
+describe("asistente con modelo local (Ollama, API simulada)", () => {
+  it("bucle en formato OpenAI: llamada a herramienta con argumentos en texto, respuesta sin <think>", async () => {
+    const llamadas = [];
+    const respuestas = [
+      { choices: [{ message: { role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "punto_operacion", arguments: "{\"nivel_msnm\": 410, \"potencias_unidad_mw\": [250]}" } }] } }], usage: { prompt_tokens: 10, completion_tokens: 2 } },
+      { choices: [{ message: { role: "assistant", content: "<think>razono</think>\nApertura estimada lista." } }], usage: { prompt_tokens: 20, completion_tokens: 4 } },
+    ];
+    const fetchFn = async (url, op) => { llamadas.push({ url, cuerpo: JSON.parse(op.body) }); return { ok: true, json: async () => respuestas[llamadas.length - 1] }; };
+    const { preguntarLocal } = await import("../src/asistente.js");
+    const pasos = [];
+    const res = await preguntarLocal({ url: "http://localhost:11434/", modelo: "qwen3:8b", historial: [{ role: "user", content: "¿apertura?" }], ctx: { vivo: null, leerJSON: async () => { throw new Error("x"); } }, fetchFn, onPaso: (p) => pasos.push(p) });
+    expect(llamadas[0].url).toBe("http://localhost:11434/v1/chat/completions");
+    expect(llamadas[0].cuerpo.tools[0].type).toBe("function");
+    expect(llamadas[0].cuerpo.messages[0].role).toBe("system");
+    expect(pasos[0]).toEqual({ nombre: "punto_operacion", entrada: { nivel_msnm: 410, potencias_unidad_mw: [250] } });
+    const tool = llamadas[1].cuerpo.messages.find((m) => m.role === "tool");
+    expect(tool.tool_call_id).toBe("c1");
+    expect(JSON.parse(tool.content).unidades[0].apertura_pct).toBeGreaterThan(0);
+    expect(res.texto).toBe("Apertura estimada lista.");
+    expect(res.uso).toEqual({ input_tokens: 20, output_tokens: 4 });
+  });
+  it("errores claros: sin conexión, modelo no descargado, lista de modelos", async () => {
+    const { preguntarLocal, listarModelosLocales } = await import("../src/asistente.js");
+    const ctx = { vivo: null, leerJSON: async () => ({}) };
+    await expect(preguntarLocal({ url: "http://localhost:11434", modelo: "m", historial: [], ctx, fetchFn: async () => { throw new TypeError("Failed to fetch"); } })).rejects.toThrow(/OLLAMA_ORIGINS/);
+    await expect(preguntarLocal({ url: "http://localhost:11434", modelo: "qwen3:8b", historial: [], ctx, fetchFn: async () => ({ ok: false, status: 404, json: async () => ({ error: { message: "model \"qwen3:8b\" not found, try pulling it first" } }) }) })).rejects.toThrow(/ollama pull qwen3:8b/);
+    expect(await listarModelosLocales("http://localhost:11434/v1", async (u) => { expect(u).toBe("http://localhost:11434/v1/models"); return { ok: true, json: async () => ({ data: [{ id: "qwen3:8b" }, { id: "llama3.1:8b" }] }) }; })).toEqual(["llama3.1:8b", "qwen3:8b"]);
+  });
+});

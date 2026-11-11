@@ -4,13 +4,16 @@ import { useState, useRef, useEffect } from "react";
 import { useVivo } from "../datos/vivo.jsx";
 import { useDatos } from "../datos/fuentes.jsx";
 import { ahoraColombia } from "../datos/tiempo.js";
-import { MODELOS, preguntar } from "../asistente.js";
+import { MODELOS, preguntar, preguntarLocal, listarModelosLocales, URL_LOCAL_DEFECTO } from "../asistente.js";
 import { Proposito, Tarjeta } from "./comunes.jsx";
 import { Estado } from "./graficos.jsx";
 
 const CLAVE_API = "ituango-asistente-clave";
 const CLAVE_MODELO = "ituango-asistente-modelo";
 const CLAVE_ESPACIO = "ituango-asistente-espacio";
+const CLAVE_PROVEEDOR = "ituango-asistente-proveedor";
+const CLAVE_URL_LOCAL = "ituango-asistente-url-local";
+const CLAVE_MODELO_LOCAL = "ituango-asistente-modelo-local";
 const leerLocal = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const escribirLocal = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* sin almacenamiento */ } };
 
@@ -55,7 +58,12 @@ export default function Asistente({ T }) {
   const [recordar, setRecordar] = useState(() => !!leerLocal(CLAVE_API));
   const [modelo, setModelo] = useState(() => leerLocal(CLAVE_MODELO) || MODELOS[0][0]);
   const [espacio, setEspacio] = useState(() => leerLocal(CLAVE_ESPACIO) || "");
-  const [historial, setHistorial] = useState([]); // mensajes de la API
+  const [proveedor, setProveedor] = useState(() => leerLocal(CLAVE_PROVEEDOR) || "local"); // "local" (Ollama, gratis) | "claude"
+  const [urlLocal, setUrlLocal] = useState(() => leerLocal(CLAVE_URL_LOCAL) || URL_LOCAL_DEFECTO);
+  const [modeloLocal, setModeloLocal] = useState(() => leerLocal(CLAVE_MODELO_LOCAL) || "");
+  const [modelosLocales, setModelosLocales] = useState(null);
+  const [conexion, setConexion] = useState({ estado: "sin_probar", msg: "" });
+  const [historial, setHistorial] = useState([]); // mensajes del proveedor activo
   const [vista, setVista] = useState([]); // [{ rol, texto, pasos }]
   const [pregunta, setPregunta] = useState("");
   const [ocupado, setOcupado] = useState(false);
@@ -66,24 +74,41 @@ export default function Asistente({ T }) {
   useEffect(() => { escribirLocal(CLAVE_API, recordar && clave ? clave : null); }, [recordar, clave]);
   useEffect(() => { escribirLocal(CLAVE_MODELO, modelo); }, [modelo]);
   useEffect(() => { escribirLocal(CLAVE_ESPACIO, espacio.trim() || null); }, [espacio]);
+  useEffect(() => { escribirLocal(CLAVE_PROVEEDOR, proveedor); setVista([]); setHistorial([]); setError(null); }, [proveedor]);
+  useEffect(() => { escribirLocal(CLAVE_URL_LOCAL, urlLocal.trim() || null); }, [urlLocal]);
+  useEffect(() => { escribirLocal(CLAVE_MODELO_LOCAL, modeloLocal || null); }, [modeloLocal]);
+  const local = proveedor === "local";
+  const listo = local ? !!modeloLocal : !!clave;
+
+  async function probarConexion() {
+    setConexion({ estado: "probando", msg: "" });
+    try {
+      const ms = await listarModelosLocales(urlLocal);
+      setModelosLocales(ms);
+      if (!ms.length) { setConexion({ estado: "aviso", msg: "Ollama responde, pero no tiene modelos descargados (ollama pull qwen3:8b)." }); return; }
+      if (!ms.includes(modeloLocal)) setModeloLocal(ms.find((m) => /^qwen3/.test(m)) || ms[0]);
+      setConexion({ estado: "bien", msg: `Conectado: ${ms.length} modelo(s) disponible(s).` });
+    } catch (e) { setModelosLocales(null); setConexion({ estado: "critico", msg: e.message }); }
+  }
+
   useEffect(() => { if (fin.current) fin.current.scrollIntoView({ block: "nearest" }); }, [vista, ocupado]);
 
   async function enviar(texto) {
     const q = (texto ?? pregunta).trim();
-    if (!q || !clave || ocupado) return;
+    if (!q || !listo || ocupado) return;
     setError(null); setPregunta(""); setOcupado(true);
     const pasos = [];
     setVista((v) => [...v, { rol: "usuario", texto: q }, { rol: "asistente", texto: "", pasos }]);
     ctrl.current = new AbortController();
     try {
       const ctx = { vivo, leerJSON: datos.conectado ? datos.leerJSON : () => Promise.reject(new Error("Sin conexión al repositorio de datos.")), ahora: ahoraColombia() };
-      const res = await preguntar({
-        clave, espacio: espacio.trim() || null, modelo, ctx, senal: ctrl.current.signal,
-        historial: [...historial, { role: "user", content: q }],
+      const comun = {
+        ctx, senal: ctrl.current.signal, historial: [...historial, { role: "user", content: q }],
         onPaso: (p) => { pasos.push(p); setVista((v) => { const c = v.slice(); c[c.length - 1] = { ...c[c.length - 1], pasos: pasos.slice() }; return c; }); },
-      });
-      const ult = res.mensajes[res.mensajes.length - 1];
-      const respuesta = ult.content.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+      };
+      const res = local ? await preguntarLocal({ ...comun, url: urlLocal, modelo: modeloLocal })
+        : await preguntar({ ...comun, clave, espacio: espacio.trim() || null, modelo });
+      const respuesta = res.texto;
       setHistorial(res.mensajes);
       setVista((v) => { const c = v.slice(); c[c.length - 1] = { rol: "asistente", texto: respuesta || "(sin texto)", pasos: pasos.slice(), uso: res.uso }; return c; });
     } catch (e) {
@@ -99,34 +124,65 @@ export default function Asistente({ T }) {
 
   return (
     <>
-      <Proposito T={T} id="asistente" titulo="Asistente (IA)" fuente="Claude (API de Anthropic) con herramientas que leen los datos de la app y usan sus modelos"
+      <Proposito T={T} id="asistente" titulo="Asistente (IA)" fuente="Modelo local (Ollama, gratis) o Claude (API de Anthropic), con herramientas que leen los datos de la app y usan sus modelos"
         para="Hacer preguntas en lenguaje natural sobre la operación: cómo va el día, qué pasó en un periodo, qué apertura o caudal tendría un punto de operación, o dónde quedaría el nivel con un programa de potencia."
         logras="Respuestas en segundos que cruzan varios módulos, con las cifras sacadas de los datos (el asistente no tiene cifras propias: consulta herramientas y dice cuáles usó)."
         resultados="Respuesta escrita con las cifras y la hora del dato, y la lista de consultas que hizo (estado en vivo, histórico, serie horaria, HydroForecast, simulación de nivel, colina)." />
 
-      <Tarjeta T={T} titulo="Configuración" subtitulo="Necesita una clave de la API de Anthropic (Claude Console: platform.claude.com), de pago por uso. Créela dentro de un espacio de trabajo con límite de gasto. La clave se guarda solo en este navegador si marca «Recordar».">
-        <div style={{ padding: "10px 12px", borderRadius: 8, background: T.panelSoft, border: `1px solid ${T.amber}`, color: T.ink, fontSize: 12.5, lineHeight: 1.5, marginBottom: 12 }}>
-          <b>Datos que salen de la app.</b> Cada pregunta, y las cifras de operación que el asistente consulte para responderla, se envían a la API de Anthropic con su clave. Úselo solo si la política de EPM lo permite para estos datos. Nada se envía hasta que usted haga una pregunta; el resto de la app no usa la IA.
+      <Tarjeta T={T} titulo="Configuración" subtitulo="Elija dónde corre el modelo de IA. Las herramientas y los datos que consulta son los mismos en ambos casos.">
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          {[["local", "Modelo local (Ollama) · gratis"], ["claude", "Claude (API de Anthropic) · de pago"]].map(([id, n]) => (
+            <button key={id} onClick={() => setProveedor(id)} disabled={ocupado} style={{ ...chip, borderRadius: 6, padding: "7px 12px", fontWeight: proveedor === id ? 700 : 400, color: proveedor === id ? T.onAccent : T.inkMuted, background: proveedor === id ? T.teal : T.panelSoft, borderColor: proveedor === id ? T.teal : T.line }}>{n}</button>
+          ))}
         </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-          <label style={{ fontSize: 12.5, color: T.inkMuted, flex: "1 1 260px" }}>Clave de API
-            <input type="password" autoComplete="off" value={borrador} onChange={(e) => setBorrador(e.target.value)} onBlur={() => setClave(borrador.trim())} placeholder="sk-ant-…" style={{ ...entrada, width: "100%", marginTop: 4 }} />
-          </label>
-          <label style={{ fontSize: 12.5, color: T.inkMuted, flex: "1 1 220px" }}>Modelo
-            <select value={modelo} onChange={(e) => setModelo(e.target.value)} style={{ ...entrada, width: "100%", marginTop: 4 }}>
-              {MODELOS.map(([id, n]) => <option key={id} value={id}>{n}</option>)}
-            </select>
-          </label>
-          <label style={{ fontSize: 12.5, color: T.inkMuted, flex: "1 1 220px" }}>ID del espacio de trabajo (opcional)
-            <input value={espacio} onChange={(e) => setEspacio(e.target.value)} placeholder="wrkspc_… (solo si la clave no es de un espacio)" style={{ ...entrada, width: "100%", marginTop: 4 }} />
-          </label>
-          <label style={{ fontSize: 12.5, color: T.inkMuted, display: "flex", gap: 6, alignItems: "center", paddingBottom: 9 }}>
-            <input type="checkbox" checked={recordar} onChange={(e) => setRecordar(e.target.checked)} /> Recordar en este equipo
-          </label>
-          {clave && <button onClick={() => { setClave(""); setBorrador(""); }} style={{ ...chip, marginBottom: 4 }}>Borrar clave</button>}
-        </div>
-        <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", fontSize: 12.5 }}>
-          <Estado T={T} compacto tipo={clave ? "bien" : "neutro"}>{clave ? "Clave lista" : "Sin clave"}</Estado>
+
+        {local ? (
+          <>
+            <div style={{ padding: "10px 12px", borderRadius: 8, background: T.panelSoft, border: `1px solid ${T.line}`, color: T.ink, fontSize: 12.5, lineHeight: 1.5, marginBottom: 12 }}>
+              <b>Los datos no salen de este computador.</b> El modelo corre en Ollama, instalado en este equipo; la página le habla en <code>localhost</code>. Requiere Ollama abierto, un modelo con herramientas (recomendado <code>qwen3:8b</code>) y la variable <code>OLLAMA_ORIGINS</code> con esta dirección. La primera vez Chrome pide permiso para acceder a la red local: acéptelo. Las respuestas son más lentas y menos precisas que con Claude.
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+              <label style={{ fontSize: 12.5, color: T.inkMuted, flex: "1 1 240px" }}>Dirección de Ollama
+                <input value={urlLocal} onChange={(e) => setUrlLocal(e.target.value)} placeholder={URL_LOCAL_DEFECTO} style={{ ...entrada, width: "100%", marginTop: 4 }} />
+              </label>
+              <label style={{ fontSize: 12.5, color: T.inkMuted, flex: "1 1 220px" }}>Modelo
+                {modelosLocales && modelosLocales.length ? (
+                  <select value={modeloLocal} onChange={(e) => setModeloLocal(e.target.value)} style={{ ...entrada, width: "100%", marginTop: 4 }}>
+                    {modelosLocales.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                ) : <input value={modeloLocal} onChange={(e) => setModeloLocal(e.target.value.trim())} placeholder="qwen3:8b" style={{ ...entrada, width: "100%", marginTop: 4 }} />}
+              </label>
+              <button onClick={probarConexion} disabled={conexion.estado === "probando"} style={{ ...boton(conexion.estado !== "probando"), marginBottom: 1 }}>{conexion.estado === "probando" ? "Probando…" : "Probar conexión"}</button>
+            </div>
+            {conexion.msg && <div style={{ marginTop: 8 }}><Estado T={T} tipo={conexion.estado}>{conexion.msg}</Estado></div>}
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 12.5, color: T.inkMuted, marginBottom: 8 }}>Necesita una clave de la API de Anthropic (Claude Console: platform.claude.com), de pago por uso. Créela dentro de un espacio de trabajo con límite de gasto. La clave se guarda solo en este navegador si marca «Recordar».</div>
+            <div style={{ padding: "10px 12px", borderRadius: 8, background: T.panelSoft, border: `1px solid ${T.amber}`, color: T.ink, fontSize: 12.5, lineHeight: 1.5, marginBottom: 12 }}>
+              <b>Datos que salen de la app.</b> Cada pregunta, y las cifras de operación que el asistente consulte para responderla, se envían a la API de Anthropic con su clave. Úselo solo si la política de EPM lo permite para estos datos. Nada se envía hasta que usted haga una pregunta; el resto de la app no usa la IA.
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+              <label style={{ fontSize: 12.5, color: T.inkMuted, flex: "1 1 260px" }}>Clave de API
+                <input type="password" autoComplete="off" value={borrador} onChange={(e) => setBorrador(e.target.value)} onBlur={() => setClave(borrador.trim())} placeholder="sk-ant-…" style={{ ...entrada, width: "100%", marginTop: 4 }} />
+              </label>
+              <label style={{ fontSize: 12.5, color: T.inkMuted, flex: "1 1 220px" }}>Modelo
+                <select value={modelo} onChange={(e) => setModelo(e.target.value)} style={{ ...entrada, width: "100%", marginTop: 4 }}>
+                  {MODELOS.map(([id, n]) => <option key={id} value={id}>{n}</option>)}
+                </select>
+              </label>
+              <label style={{ fontSize: 12.5, color: T.inkMuted, flex: "1 1 220px" }}>ID del espacio de trabajo (opcional)
+                <input value={espacio} onChange={(e) => setEspacio(e.target.value)} placeholder="wrkspc_… (solo si la clave no es de un espacio)" style={{ ...entrada, width: "100%", marginTop: 4 }} />
+              </label>
+              <label style={{ fontSize: 12.5, color: T.inkMuted, display: "flex", gap: 6, alignItems: "center", paddingBottom: 9 }}>
+                <input type="checkbox" checked={recordar} onChange={(e) => setRecordar(e.target.checked)} /> Recordar en este equipo
+              </label>
+              {clave && <button onClick={() => { setClave(""); setBorrador(""); }} style={{ ...chip, marginBottom: 4 }}>Borrar clave</button>}
+            </div>
+          </>
+        )}
+        <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", fontSize: 12.5 }}>
+          <Estado T={T} compacto tipo={listo ? "bien" : "neutro"}>{local ? (modeloLocal ? `Modelo: ${modeloLocal}` : "Sin modelo") : clave ? "Clave lista" : "Sin clave"}</Estado>
           <Estado T={T} compacto tipo={vivo && vivo.ultima ? "bien" : "aviso"}>{vivo && vivo.ultima ? `Datos en vivo: ${vivo.ultima.t}` : "Sin datos en vivo"}</Estado>
           <Estado T={T} compacto tipo={datos.conectado ? "bien" : "aviso"}>{datos.conectado ? "Histórico disponible" : "Sin token del repositorio: no hay histórico"}</Estado>
         </div>
@@ -136,7 +192,7 @@ export default function Asistente({ T }) {
         {vista.length === 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
             <span style={{ fontSize: 12.5, color: T.inkFaint }}>Ejemplos:</span>
-            {SUGERENCIAS.map((s) => <button key={s} style={chip} disabled={!clave || ocupado} onClick={() => enviar(s)}>{s}</button>)}
+            {SUGERENCIAS.map((s) => <button key={s} style={chip} disabled={!listo || ocupado} onClick={() => enviar(s)}>{s}</button>)}
           </div>
         )}
         {vista.map((m, i) => (
@@ -144,17 +200,17 @@ export default function Asistente({ T }) {
             <div style={{ fontSize: 11.5, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>{m.rol === "usuario" ? "Usted" : "Asistente"}</div>
             {m.pasos && m.pasos.length > 0 && <div style={{ fontSize: 12, color: T.inkFaint, marginBottom: 6 }}>Consultó: {m.pasos.map((p) => NOMBRE_HERR[p.nombre] || p.nombre).join(" · ")}</div>}
             {m.rol === "usuario" ? <div style={{ fontSize: 13.5, color: T.ink }}>{m.texto}</div> : m.texto ? <Texto T={T} texto={m.texto} /> : <div style={{ fontSize: 13, color: T.inkFaint }}>Pensando…</div>}
-            {m.uso && <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 6 }}>Tokens: {m.uso.input_tokens} de entrada · {m.uso.output_tokens} de salida (última llamada)</div>}
+            {m.uso && <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 6 }}>Tokens: {m.uso.input_tokens} de entrada · {m.uso.output_tokens} de salida (última llamada){local && m.uso.input_tokens >= 3900 ? " · cerca del límite de contexto de Ollama: suba OLLAMA_CONTEXT_LENGTH" : ""}</div>}
           </div>
         ))}
         {error && <div style={{ margin: "8px 0" }}><Estado T={T} tipo="critico">{error}</Estado></div>}
         <div ref={fin} />
         <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "flex-end" }}>
-          <textarea value={pregunta} onChange={(e) => setPregunta(e.target.value)} rows={2} placeholder={clave ? "Escriba su pregunta… (Enter para enviar, Mayús+Enter para nueva línea)" : "Ingrese primero la clave de API"}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }} disabled={!clave}
+          <textarea value={pregunta} onChange={(e) => setPregunta(e.target.value)} rows={2} placeholder={listo ? "Escriba su pregunta… (Enter para enviar, Mayús+Enter para nueva línea)" : local ? "Primero pruebe la conexión con Ollama y elija un modelo" : "Ingrese primero la clave de API"}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }} disabled={!listo}
             style={{ ...entrada, flex: 1, resize: "vertical", fontFamily: "inherit" }} />
           {ocupado ? <button style={boton(true)} onClick={() => ctrl.current && ctrl.current.abort()}>Cancelar</button>
-            : <button style={boton(!!clave && !!pregunta.trim())} disabled={!clave || !pregunta.trim()} onClick={() => enviar()}>Enviar</button>}
+            : <button style={boton(listo && !!pregunta.trim())} disabled={!listo || !pregunta.trim()} onClick={() => enviar()}>Enviar</button>}
         </div>
       </Tarjeta>
     </>

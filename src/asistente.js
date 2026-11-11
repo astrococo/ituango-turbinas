@@ -201,7 +201,7 @@ async function preguntar({ clave, espacio = null, modelo, historial, ctx, onPaso
         : `Error de la API (${resp.status}): ${msg}`);
     }
     mensajes.push({ role: "assistant", content: cuerpo.content });
-    if (cuerpo.stop_reason !== "tool_use") return { mensajes, uso: cuerpo.usage };
+    if (cuerpo.stop_reason !== "tool_use") return { mensajes, uso: cuerpo.usage, texto: (cuerpo.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim() };
     const resultados = [];
     for (const b of cuerpo.content.filter((x) => x.type === "tool_use")) {
       onPaso({ nombre: b.name, entrada: b.input });
@@ -213,4 +213,63 @@ async function preguntar({ clave, espacio = null, modelo, historial, ctx, onPaso
   throw new Error(`El asistente no terminó en ${MAX_VUELTAS} pasos.`);
 }
 
-export { MODELOS, HERRAMIENTAS, SISTEMA, ejecutarHerramienta, preguntar };
+/* ---------- Modelo local (Ollama u otro servidor compatible con OpenAI) ----------
+   Mismo bucle y mismas herramientas, en formato /v1/chat/completions. Corre
+   en el computador del usuario: los datos no salen de ese equipo. */
+const URL_LOCAL_DEFECTO = "http://localhost:11434";
+const HERRAMIENTAS_OPENAI = HERRAMIENTAS.map((h) => ({ type: "function", function: { name: h.name, description: h.description, parameters: h.input_schema } }));
+const baseLocal = (url) => (url || URL_LOCAL_DEFECTO).trim().replace(/\/+$/, "").replace(/\/v1$/, "");
+// Algunos modelos (p. ej. Qwen3) escriben su razonamiento entre <think>…</think>
+const limpiarRazonamiento = (t) => String(t || "").replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+
+function errorConexionLocal(base, e) {
+  if (e && e.name === "AbortError") return e;
+  return new Error(`No se pudo conectar con ${base}. Revise que Ollama esté abierto, que la variable OLLAMA_ORIGINS incluya https://astrococo.github.io y que Chrome tenga permitido el acceso a la red local para esta página.`);
+}
+
+async function listarModelosLocales(url, fetchFn = fetch) {
+  const base = baseLocal(url);
+  let resp;
+  try { resp = await fetchFn(`${base}/v1/models`); } catch (e) { throw errorConexionLocal(base, e); }
+  if (!resp.ok) throw new Error(`El servidor local respondió HTTP ${resp.status}.`);
+  const cuerpo = await resp.json();
+  return (cuerpo.data || []).map((m) => m.id).filter(Boolean).sort();
+}
+
+async function preguntarLocal({ url, modelo, historial, ctx, onPaso = () => {}, fetchFn = fetch, senal }) {
+  const base = baseLocal(url);
+  if (!modelo) throw new Error("Elija un modelo local (botón «Probar conexión»).");
+  const sistema = { role: "system", content: `${SISTEMA}\nFecha y hora actual (Colombia): ${ctx.ahora || "desconocida"}.\nPara cualquier cifra de operación, llama primero a la herramienta que corresponda.` };
+  const mensajes = historial.slice();
+  for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
+    let resp;
+    try {
+      resp = await fetchFn(`${base}/v1/chat/completions`, {
+        method: "POST", signal: senal, headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: modelo, messages: [sistema, ...mensajes], tools: HERRAMIENTAS_OPENAI, stream: false, temperature: 0.2 }),
+      });
+    } catch (e) { throw errorConexionLocal(base, e); }
+    const cuerpo = await resp.json().catch(() => null);
+    if (!resp.ok) {
+      const msg = cuerpo && cuerpo.error ? cuerpo.error.message || cuerpo.error : `HTTP ${resp.status}`;
+      throw new Error(/not found/i.test(String(msg)) ? `El modelo «${modelo}» no está descargado en Ollama (ollama pull ${modelo}).` : /does not support tools/i.test(String(msg)) ? `El modelo «${modelo}» no admite herramientas; use uno con «tools», p. ej. qwen3:8b.` : `Error del modelo local: ${msg}`);
+    }
+    const m = cuerpo && cuerpo.choices && cuerpo.choices[0] ? cuerpo.choices[0].message : null;
+    if (!m) throw new Error("Respuesta vacía del modelo local.");
+    const llamadas = Array.isArray(m.tool_calls) ? m.tool_calls : [];
+    mensajes.push({ role: "assistant", content: m.content || "", ...(llamadas.length ? { tool_calls: llamadas } : {}) });
+    const uso = cuerpo.usage ? { input_tokens: cuerpo.usage.prompt_tokens, output_tokens: cuerpo.usage.completion_tokens } : null;
+    if (!llamadas.length) return { mensajes, uso, texto: limpiarRazonamiento(m.content) };
+    for (const [i, c] of llamadas.entries()) {
+      const nombre = c.function && c.function.name;
+      let entrada = c.function ? c.function.arguments : {};
+      if (typeof entrada === "string") { try { entrada = entrada.trim() ? JSON.parse(entrada) : {}; } catch { entrada = {}; } }
+      onPaso({ nombre, entrada });
+      const salida = await ejecutarHerramienta(ctx, nombre, entrada);
+      mensajes.push({ role: "tool", tool_call_id: c.id || `llamada_${vuelta}_${i}`, content: JSON.stringify(salida) });
+    }
+  }
+  throw new Error(`El asistente no terminó en ${MAX_VUELTAS} pasos.`);
+}
+
+export { MODELOS, HERRAMIENTAS, SISTEMA, ejecutarHerramienta, preguntar, preguntarLocal, listarModelosLocales, limpiarRazonamiento, URL_LOCAL_DEFECTO };
