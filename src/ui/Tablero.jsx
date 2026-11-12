@@ -9,7 +9,7 @@ import { useDatos } from "../datos/fuentes.jsx";
 import { ETIQUETA_ESTADO_REGLA, NAMO, repartoPorUnidad, CONDICION_DESCARGA_DEFECTO, factorConversionHidrometria, pctFromDeg } from "../modelo.js";
 import { minutosDe, tramosCumplimiento, aperturaIntervalos } from "../analitica.js";
 import { GraficoSeries, Estado, BarraBanda, fmtNum, colorSerie, aSeg } from "./graficos.jsx";
-import { Proposito, Tarjeta, Kpi, PanelConexion, hace, fechaCorta, SelectorRango, rangoUltimos } from "./comunes.jsx";
+import { Proposito, Tarjeta, Kpi, PanelConexion, hace, fechaCorta, SelectorRango, rangoUltimos, Nota } from "./comunes.jsx";
 import { GraficoApertura } from "./Apertura.jsx";
 import { evaluarAlertas } from "../alertas.js";
 
@@ -248,7 +248,7 @@ export default function Tablero({ T, condDescarga }) {
             {v.nivelFinDia != null && <Kpi T={T} rotulo="Nivel estimado a las 24:00" valor={v.nivelFinDia} decimales={2} unidad="msnm" nota="Si entra lo mismo que hoy y se descarga como en la última hora" />}
             {v.filaAyer && <Kpi T={T} rotulo={`Ayer (${fechaCorta(v.ayer)})`} valor={v.filaAyer.regla.qReg} unidad="m³/s" estado={<Estado T={T} compacto tipo={TIPO_ESTADO[v.filaAyer.regla.estado]}>{ETIQUETA_ESTADO_REGLA[v.filaAyer.regla.estado]}</Estado>} nota={v.filaAyer.regla.banda ? `Banda ${fmtNum(v.filaAyer.regla.banda.min, 1)} – ${fmtNum(v.filaAyer.regla.banda.max, 1)}` : undefined} />}
           </div>
-          <p style={{ fontSize: 12, color: T.inkFaint, margin: "10px 0 0", lineHeight: 1.5 }}>Si hay vertimiento en el día, la validación queda suspendida (excepción), igual que en la app de Hidrometría. La descarga intermedia se toma como 0.</p>
+          <Nota T={T} rotulo="Cuándo queda en excepción">Si hay vertimiento en el día, la validación queda suspendida (excepción), igual que en la app de Hidrometría. La descarga intermedia se toma como 0.</Nota>
         </Tarjeta>
       )}
 
@@ -281,7 +281,7 @@ export default function Tablero({ T, condDescarga }) {
               </tr></tbody>
             </table>
           </div>
-          <p style={{ fontSize: 12, color: T.inkFaint, margin: "8px 0 0" }}>Factor relativo = F.C. WK de la unidad / media de las unidades en los últimos 30 días (&gt; 1: más MW por m³/s que la media). Detalle e historia en Analítica → Unidades.</p>
+          <Nota T={T} rotulo="Qué es el factor relativo">Factor relativo = F.C. WK de la unidad / media de las unidades en los últimos 30 días (&gt; 1: más MW por m³/s que la media). Detalle e historia en Analítica → Unidades.</Nota>
         </Tarjeta>
       )}
 

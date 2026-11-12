@@ -139,7 +139,7 @@ function InfoTip({ text, T }) {
   const abrir = (el) => {
     const r = el.getBoundingClientRect();
     const vw = window.innerWidth, vh = window.innerHeight;
-    const w = Math.min(280, vw - 24);
+    const w = Math.min(360, vw - 24);
     const left = Math.max(12, Math.min(vw - w - 12, r.left + r.width / 2 - w / 2));
     const arriba = r.top > vh * 0.45;
     setPos({ left, w, top: arriba ? undefined : r.bottom + 8, bottom: arriba ? vh - r.top + 8 : undefined });
@@ -204,17 +204,21 @@ function Etiqueta({ children, T, tip }) {
    siempre visible + ícono de ayuda opcional con más detalle al pasar
    el mouse. */
 function ChartHeader({ titulo, subtitulo, T, tip, accion }) {
+  // Subtítulo corto a la vista; largo, dentro del ícono «i» (con el tip)
+  const corto = typeof subtitulo === "string" && subtitulo.length <= 110 ? subtitulo : null;
+  const largo = subtitulo && !corto ? subtitulo : null;
+  const ayuda = largo ? (tip ? <>{largo}<br /><br />{tip}</> : largo) : tip;
   return (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-          <h3 style={{ margin: 0, fontFamily: FONT_BODY, fontSize: 15.5, fontWeight: 700, color: T.ink, letterSpacing: "-0.01em" }}>{titulo}</h3>
-          {tip && <InfoTip text={tip} T={T} />}
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 2, minWidth: 0 }}>
+          <h3 style={{ margin: 0, fontFamily: FONT_BODY, fontSize: 15, fontWeight: 700, color: T.ink, letterSpacing: "-0.01em" }}>{titulo}</h3>
+          {ayuda && <InfoTip text={ayuda} T={T} />}
         </div>
         {accion && <div style={{ flexShrink: 0 }}>{accion}</div>}
       </div>
-      {subtitulo && (
-        <p style={{ margin: "3px 0 0", fontFamily: FONT_BODY, fontSize: 12.5, color: T.inkMuted, lineHeight: 1.4 }}>{subtitulo}</p>
+      {corto && (
+        <p style={{ margin: "2px 0 0", fontFamily: FONT_BODY, fontSize: 12, color: T.inkFaint, lineHeight: 1.4 }}>{corto}</p>
       )}
     </div>
   );

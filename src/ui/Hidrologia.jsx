@@ -8,7 +8,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useDatos, useCargaPeriodica, sumarDias } from "../datos/fuentes.jsx";
 import { useVivo } from "../datos/vivo.jsx";
 import { GraficoSeries, Estado, fmtNum } from "./graficos.jsx";
-import { Proposito, Tarjeta, SelectorRango, rangoUltimos, fechaCorta } from "./comunes.jsx";
+import { Proposito, Tarjeta, SelectorRango, rangoUltimos, fechaCorta, Nota } from "./comunes.jsx";
 
 const dia = (x) => String(x).slice(0, 10);
 
@@ -120,7 +120,7 @@ export default function Hidrologia({ T }) {
               </div>
             ))}
           </div>
-          <p style={{ fontSize: 12, color: T.inkFaint, margin: "8px 0 0" }}>Error medio absoluto en porcentaje del observado diario de Sitio Presa. Con pocas emisiones archivadas es solo indicativo; mejora a medida que se acumulan.</p>
+          <Nota T={T} rotulo="Cómo se mide el error">Error medio absoluto en porcentaje del observado diario de Sitio Presa. Con pocas emisiones archivadas es solo indicativo; mejora a medida que se acumulan.</Nota>
         </Tarjeta>
       )}
       {hist && (

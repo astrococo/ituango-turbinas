@@ -13,7 +13,7 @@ import { indiceRelativoUnidades } from "../analitica.js";
 import { useDatos } from "../datos/fuentes.jsx";
 import { useHistoricoDiario, useHorario } from "../datos/historico.js";
 import { GraficoSeries, Estado, fmtNum, colorSerie } from "./graficos.jsx";
-import { Proposito, Tarjeta, RequiereConexion, SelectorRango, rangoUltimos, fechaCorta } from "./comunes.jsx";
+import { Proposito, Tarjeta, RequiereConexion, SelectorRango, rangoUltimos, fechaCorta, Nota } from "./comunes.jsx";
 import { GraficoApertura } from "./Apertura.jsx";
 
 const mediana = (a) => { const b = a.filter((x) => x != null && Number.isFinite(x)).sort((x, y) => x - y); if (!b.length) return null; const n = b.length; return n % 2 ? b[(n - 1) / 2] : (b[n / 2 - 1] + b[n / 2]) / 2; };
@@ -135,10 +135,10 @@ export default function Unidades({ T }) {
               <b style={{ color: T.ink }}>Orden de mérito (índice WK del periodo):</b>
               {merito.length ? merito.map((u, i) => <span key={u} style={{ padding: "2px 10px", borderRadius: 999, border: `1px solid ${T.line}`, background: T.panelSoft }}>{i + 1}. U{u}</span>) : "sin datos suficientes"}
             </div>
-            <p style={{ fontSize: 12, color: T.inkFaint, margin: "8px 0 0", lineHeight: 1.5 }}>
+            <Nota T={T} rotulo="Cómo leer el orden de mérito">
               Con la misma colina y el mismo salto, repartir la potencia por igual entre las unidades en línea es lo más eficiente; lo que cambia con estos factores es <i>cuáles</i> unidades conviene usar primero. El η aparente WK puede pasar de 100 % porque el WK no está calibrado: se lee como tendencia y comparación, no como eficiencia real.
               Q modelo / Q Hidrom. &gt; 1 quiere decir que el modelo (con el río colmatado) pide más agua que la fórmula del F.C.
-            </p>
+            </Nota>
           </Tarjeta>
           <Tarjeta T={T} titulo="F.C. Winter-Kennedy por unidad, día a día" subtitulo="Sube con el nivel del embalse (más salto). La separación entre unidades es la diferencia de rendimiento relativo (o de calibración del WK). Punteada: F.C. de la fórmula de Hidrometría.">
             <GraficoSeries T={T} x={s.t} series={s.fcWK} unidad="MW/(m³/s)" ejeY="MW por m³/s" decimales={3} grupo="unid" nombreArchivo="fc_wk_unidades" />

@@ -11,29 +11,39 @@ import { Estado, fmtNum } from "./graficos.jsx";
 const leerLocal = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const escribirLocal = (k, v) => { try { localStorage.setItem(k, v); } catch { /* sin almacenamiento */ } };
 
-const estiloTarjeta = (T) => ({ background: T.panel, border: `1px solid ${T.line}`, borderRadius: 12, padding: "16px 18px", boxShadow: T.cardShadow, marginBottom: 16 });
+const estiloTarjeta = (T) => ({ background: T.panel, border: `1px solid ${T.line}`, borderRadius: 12, padding: "14px 16px", boxShadow: T.cardShadow, marginBottom: 12 });
 
-/* Encabezado de cada módulo: qué es, para qué sirve, qué logra y qué entrega.
-   Se puede plegar (queda recordado en este navegador). */
+/* Texto de apoyo: corto, se muestra en una línea discreta; largo, queda en el ícono «i»
+   junto al título (junto con el tip, si lo hay). Así las tarjetas no se llenan de texto. */
+const LIMITE_SUBTITULO = 110;
+const esCorto = (x) => typeof x === "string" && x.length <= LIMITE_SUBTITULO;
+function ayudaDe(subtitulo, tip) {
+  const largo = subtitulo && !esCorto(subtitulo) ? subtitulo : null;
+  if (!largo) return tip || null;
+  return tip ? <>{largo}<br /><br />{tip}</> : largo;
+}
+
+/* Encabezado de cada módulo: título y, a la vista solo si se pide, la guía
+   (para qué sirve, qué logra, qué entrega). Queda recordado en este navegador. */
 function Proposito({ T, id, titulo, para, logras, resultados, fuente, children }) {
   const clave = `ituango-guia-${id}`;
-  const [abierta, setAbierta] = useState(() => leerLocal(clave) !== "0");
+  const [abierta, setAbierta] = useState(() => leerLocal(clave) === "1");
   const alternar = () => { const n = !abierta; setAbierta(n); escribirLocal(clave, n ? "1" : "0"); };
-  const caja = { background: T.panelSoft, borderRadius: 8, padding: "10px 12px", fontSize: 13, color: T.inkMuted, lineHeight: 1.45 };
-  const rot = { fontSize: 11.5, fontWeight: 700, color: T.ink, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 };
+  const caja = { background: T.panelSoft, borderRadius: 8, padding: "9px 11px", fontSize: 12.5, color: T.inkMuted, lineHeight: 1.45 };
+  const rot = { fontSize: 11, fontWeight: 700, color: T.ink, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 };
   return (
-    <section style={{ ...estiloTarjeta(T), paddingBottom: abierta ? 16 : 12 }} aria-labelledby={`tit-${id}`}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, justifyContent: "space-between" }}>
-        <div style={{ minWidth: 0 }}>
-          <h2 id={`tit-${id}`} style={{ margin: 0, fontSize: 19, fontWeight: 750, color: T.ink, letterSpacing: "-0.01em" }}>{titulo}</h2>
-          {fuente && <div style={{ fontSize: 12, color: T.inkFaint, marginTop: 3 }}>{fuente}</div>}
+    <section style={{ margin: "2px 0 12px" }} aria-labelledby={`tit-${id}`}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "space-between", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
+          <h2 id={`tit-${id}`} style={{ margin: 0, fontSize: 18, fontWeight: 750, color: T.ink, letterSpacing: "-0.01em" }}>{titulo}</h2>
+          {fuente && <InfoTip T={T} text={<><b>Fuente:</b> {fuente}</>} />}
         </div>
-        <button onClick={alternar} aria-expanded={abierta} style={{ flexShrink: 0, border: `1px solid ${T.line}`, background: "transparent", color: T.inkMuted, borderRadius: 999, padding: "4px 12px", fontSize: 12, cursor: "pointer", fontFamily: FONT_BODY }}>
-          {abierta ? "Ocultar guía" : "¿Para qué sirve?"}
+        <button onClick={alternar} aria-expanded={abierta} style={{ flexShrink: 0, border: `1px solid ${abierta ? T.teal : T.line}`, background: abierta ? T.panelSoft : "transparent", color: abierta ? T.ink : T.inkMuted, borderRadius: 999, padding: "3px 11px", fontSize: 12, cursor: "pointer", fontFamily: FONT_BODY }}>
+          {abierta ? "Ocultar guía" : "Guía del módulo"}
         </button>
       </div>
       {abierta && (
-        <div className="itu-guia" style={{ marginTop: 12 }}>
+        <div className="itu-guia" style={{ marginTop: 10 }}>
           <div style={caja}><div style={rot}>Para qué sirve</div>{para}</div>
           <div style={caja}><div style={rot}>Qué logra</div>{logras}</div>
           <div style={caja}><div style={rot}>Qué entrega</div>{resultados}</div>
@@ -45,20 +55,35 @@ function Proposito({ T, id, titulo, para, logras, resultados, fuente, children }
 }
 
 function Tarjeta({ T, titulo, subtitulo, tip, accion, children, id }) {
+  const ayuda = ayudaDe(subtitulo, tip);
+  const corto = subtitulo && esCorto(subtitulo) ? subtitulo : null;
   return (
     <section style={estiloTarjeta(T)} id={id}>
       {(titulo || accion) && (
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: subtitulo ? 4 : 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
-            <h3 style={{ margin: 0, fontSize: 15.5, fontWeight: 700, color: T.ink }}>{titulo}</h3>
-            {tip && <InfoTip T={T} text={tip} />}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: corto ? 2 : 10 }}>
+          <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
+            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: T.ink }}>{titulo}</h3>
+            {ayuda && <InfoTip T={T} text={ayuda} />}
           </div>
           {accion}
         </div>
       )}
-      {subtitulo && <p style={{ margin: "0 0 12px", fontSize: 12.5, color: T.inkMuted, lineHeight: 1.45 }}>{subtitulo}</p>}
+      {corto && <p style={{ margin: "0 0 10px", fontSize: 12, color: T.inkFaint, lineHeight: 1.4 }}>{corto}</p>}
       {children}
     </section>
+  );
+}
+
+/* Nota plegable: el detalle metodológico queda a un clic. */
+function Nota({ T, rotulo = "Cómo se calcula", children }) {
+  const [ver, setVer] = useState(false);
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button onClick={() => setVer((x) => !x)} aria-expanded={ver} style={{ border: "none", background: "transparent", padding: 0, color: T.inkFaint, fontSize: 12, cursor: "pointer", fontFamily: FONT_BODY, textDecoration: "underline dotted", textUnderlineOffset: 3 }}>
+        {ver ? `Ocultar: ${rotulo.toLowerCase()}` : `${rotulo} ›`}
+      </button>
+      {ver && <div style={{ marginTop: 6, fontSize: 12, color: T.inkMuted, lineHeight: 1.5, background: T.panelSoft, borderRadius: 8, padding: "8px 10px" }}>{children}</div>}
+    </div>
   );
 }
 
@@ -66,14 +91,16 @@ function Tarjeta({ T, titulo, subtitulo, tip, accion, children, id }) {
 function Kpi({ T, rotulo, valor, unidad, decimales = 1, nota, estado, tip, grande = false, actualizado }) {
   return (
     <div style={{ background: T.panelSoft, border: `1px solid ${T.lineSoft}`, borderRadius: 10, padding: "11px 13px", minWidth: 0 }}>
-      <div style={{ display: "flex", alignItems: "center", fontSize: 12, color: T.inkMuted, fontWeight: 600 }}>{rotulo}{tip && <InfoTip T={T} text={tip} />}</div>
+      <div style={{ display: "flex", alignItems: "center", fontSize: 12, color: T.inkMuted, fontWeight: 600, gap: 4 }}>
+        <span style={{ minWidth: 0 }}>{rotulo}</span>{tip && <InfoTip T={T} text={tip} />}
+        {actualizado && <SelloHora T={T} cuando={actualizado} />}
+      </div>
       <div style={{ marginTop: 4, display: "flex", alignItems: "baseline", gap: 5, flexWrap: "wrap" }}>
         <span style={{ fontSize: grande ? 28 : 22, fontWeight: 750, color: T.ink, letterSpacing: "-0.02em" }}>{typeof valor === "number" ? fmtNum(valor, decimales) : valor ?? "—"}</span>
         {unidad && <span style={{ fontSize: 12.5, color: T.inkFaint }}>{unidad}</span>}
       </div>
       {estado && <div style={{ marginTop: 6 }}>{estado}</div>}
       {nota && <div style={{ marginTop: 5, fontSize: 12, color: T.inkFaint, lineHeight: 1.4 }}>{nota}</div>}
-      {actualizado && <Actualizado T={T} cuando={actualizado} />}
     </div>
   );
 }
@@ -205,10 +232,17 @@ function SelectorRango({ T, min, max, valor, onChange, atajos = [["7", "7 días"
   );
 }
 /* Rótulo "Actualizado …" para fichas. */
+/* Hora del dato en una esquina: solo la hora si es de hoy; el detalle, al pasar el cursor. */
+function SelloHora({ T, cuando }) {
+  const txt = String(cuando).slice(0, 16).replace("T", " ");
+  const hoy = new Date(Date.now() - 5 * 3600e3).toISOString().slice(0, 10);
+  return <span title={`Actualizado ${fechaCorta(txt)}`} style={{ marginLeft: "auto", fontSize: 11, fontWeight: 500, color: T.inkFaint, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>◷ {txt.slice(0, 10) === hoy ? txt.slice(11) : fechaCorta(txt)}</span>;
+}
+
 function Actualizado({ T, cuando, prefijo = "Actualizado" }) {
   if (!cuando) return null;
   return <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 5 }}>{prefijo} {fechaCorta(String(cuando).slice(0, 16).replace("T", " "))}</div>;
 }
 
-export { SelectorRango, rangoUltimos, Actualizado, sumarDiasTxt };
+export { Nota, ayudaDe, esCorto, SelectorRango, rangoUltimos, Actualizado, sumarDiasTxt };
 export { Proposito, Tarjeta, Kpi, PanelConexion, RequiereConexion, SelectorPeriodo, estiloTarjeta, hace, fechaCorta };

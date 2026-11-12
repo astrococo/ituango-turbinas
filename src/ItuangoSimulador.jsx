@@ -15,7 +15,7 @@ import OperacionMedida from "./ui/OperacionMedida.jsx";
 import { useVivo, ProveedorVivo } from "./datos/vivo.jsx";
 import { tramosCumplimiento } from "./analitica.js";
 import { ProveedorDatos, useDatos } from "./datos/fuentes.jsx";
-import { Proposito, PanelConexion } from "./ui/comunes.jsx";
+import { Proposito, PanelConexion, Nota, Kpi } from "./ui/comunes.jsx";
 import { GraficoSeries } from "./ui/graficos.jsx";
 import { EQUIV_APERTURA, referenciasApertura, NOTA_APERTURA, motivoSinApertura } from "./ui/Apertura.jsx";
 import Tablero from "./ui/Tablero.jsx";
@@ -106,6 +106,7 @@ import {
   tickStyleFor,
   zoomBrush,
   fx,
+  InfoTip,
 } from "./ui/base.jsx";
 
 /* ============================================================
@@ -474,6 +475,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
   const [unidadesDisp, setUnidadesDisp] = useState(UNIDADES_DISPONIBLES_HOY);
   const [filas, setFilas] = useState(() => HORAS_DIA.map(filaDespachoVacia));
   const [texto, setTexto] = useState("");
+  const [verPegar, setVerPegar] = useState(false);
   const [msgCarga, setMsgCarga] = useState(null);
   const editar = (h, campo, v) => setFilas((prev) => prev.map((f) => (f.hora === h ? { ...f, [campo]: v } : f)));
 
@@ -827,51 +829,71 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
       </div>
 
       <div style={{ marginBottom: 12 }}>
-        <Etiqueta T={T} tip="Copia la tabla 'Resumen horario' (despacho XM, bandas, Promedio RT…) y pégala aquí. Las horas 'Sin dato RT' quedan solo con el despacho. También sirven dos o tres columnas: hora, despacho, Promedio RT.">Pegar resumen horario de XM</Etiqueta>
-        <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={4}
-          placeholder={"00:00 - 00:59\t700.0 MW\t665.0 MW\t735.0 MW\t690.9 MW ..."}
-          style={{ width: "100%", boxSizing: "border-box", fontFamily: "ui-monospace, monospace", fontSize: 11.5, padding: 8, borderRadius: 6, border: `1px solid ${T.line}`, background: T.panel, color: T.ink, resize: "vertical" }} />
-        <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
-          <button onClick={cargarTabla} style={{ padding: "7px 14px", background: T.teal, color: T.onAccent, border: "none", borderRadius: 6, fontFamily: FONT_BODY, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>Cargar tabla</button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <button onClick={() => setVerPegar((x) => !x)} aria-expanded={verPegar} style={{ padding: "7px 14px", background: verPegar ? T.panelSoft : "transparent", color: T.ink, border: `1px solid ${verPegar ? T.teal : T.line}`, borderRadius: 6, fontFamily: FONT_BODY, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>{verPegar ? "Ocultar" : "Pegar despacho de XM"}</button>
           <button onClick={() => { setFilas(HORAS_DIA.map(filaDespachoVacia)); setMsgCarga(null); }} style={{ padding: "7px 14px", background: "transparent", color: T.inkMuted, border: `1px solid ${T.line}`, borderRadius: 6, fontFamily: FONT_BODY, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Vaciar la tabla</button>
+          {msgCarga && (
+            <span style={{ fontSize: 12, fontFamily: FONT_BODY, color: msgCarga.ok ? T.inkFaint : T.amber, display: "inline-flex", alignItems: "center" }}>
+              {msgCarga.ok ? "✓ Tabla llenada" : msgCarga.txt}<InfoTip T={T} text={<>{msgCarga.txt}{msgCarga.avisos && msgCarga.avisos.length > 0 && <><br />⚠ {msgCarga.avisos.join("; ")}</>}</>} />
+            </span>
+          )}
         </div>
-        {msgCarga && (
-          <div style={{ marginTop: 6, fontSize: 12, fontFamily: FONT_BODY, color: msgCarga.ok ? T.inkMuted : T.amber }}>
-            {msgCarga.txt}{msgCarga.avisos && msgCarga.avisos.length > 0 && <span style={{ color: T.amber }}> ⚠ {msgCarga.avisos.join("; ")}</span>}
+        {verPegar && (
+          <div style={{ marginTop: 8 }}>
+            <Etiqueta T={T} tip="Copia la tabla 'Resumen horario' (despacho XM, bandas, Promedio RT…) y pégala aquí. Las horas 'Sin dato RT' quedan solo con el despacho. También sirven dos o tres columnas: hora, despacho, Promedio RT.">Resumen horario de XM</Etiqueta>
+            <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={4}
+              placeholder={"00:00 - 00:59\t700.0 MW\t665.0 MW\t735.0 MW\t690.9 MW ..."}
+              style={{ width: "100%", boxSizing: "border-box", fontFamily: "ui-monospace, monospace", fontSize: 11.5, padding: 8, borderRadius: 6, border: `1px solid ${T.line}`, background: T.panel, color: T.ink, resize: "vertical" }} />
+            <button onClick={cargarTabla} style={{ marginTop: 6, padding: "7px 14px", background: T.teal, color: T.onAccent, border: "none", borderRadius: 6, fontFamily: FONT_BODY, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>Cargar tabla</button>
           </div>
         )}
       </div>
 
       {vacio && <div style={{ ...resumen, marginBottom: 12, color: T.ink }}>Pegue el resumen horario de XM (o escriba el despacho en la tabla), o use el programa plano con el Q regulado de ayer. Sin potencia, el nivel solo refleja el caudal de entrada.</div>}
-      <div style={{ ...resumen, marginBottom: 12 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: T.teal }}>
-          Nivel a las 24 h ({nombrePrograma(calc.modo, calc.progs)}): {fx(calc.principal.Hfinal, 3)} msnm ({calc.principal.deltaH >= 0 ? "+" : ""}{fx(calc.principal.deltaH * 100, 1)} cm)
-        </div>
-        <div>{calc.inf ? <>Banda operativa de la generación (despacho XM ±{bandaPct} %): {fx(calc.sup.Hfinal, 3)} a {fx(calc.inf.Hfinal, 3)} msnm</> : <>Banda operativa de la generación: pegue el despacho de XM (se define como XM ±{bandaPct} %)</>} · caudal de entrada ±{sensQ} m³/s: {fx(calc.qMenos.Hfinal, 3)} a {fx(calc.qMas.Hfinal, 3)} msnm
-          {Object.entries(calc.comparar).map(([k, v]) => <span key={k}> · {nombrePrograma(k, calc.progs)}: {fx(v.Hfinal, 3)} msnm</span>)}</div>
-        <div>Caudal turbinado medio (modelo): {fx(calc.principal.qTurbMedio, 1)} m³/s frente a {fx(qEntrada, 0)} m³/s de entrada pronosticada{calc.prog.rellenadas.length > 0 && <> · horas sin dato propio (se repite la anterior): {calc.prog.rellenadas.join(", ")}</>}.</div>
-        <div>
-          <b style={{ color: T.ink }}>Energía RT vs despacho XM</b> (banda ±{bandaPct} %): XM {fx(calc.energia.xm, 0)} MWh en {calc.energia.hXM} h con dato · RT {fx(calc.energia.rt, 0)} MWh en {calc.energia.hRT} h
-          {calc.energia.hComun > 0 && <> · en las {calc.energia.hComun} h con ambos: {fx(calc.energia.rtComun, 0)} frente a {fx(calc.energia.xmComun, 0)} MWh ({calc.energia.difComunPct >= 0 ? "+" : ""}{fx(calc.energia.difComunPct, 1)} %)</>}.
-          {" "}{["por_debajo", "dentro", "por_encima", "sin_dato_xm"].map((k) => { const n = calc.estados.filter((x) => x === k).length; return n ? `${ETIQUETA_ESTADO_HORA[k]}: ${n} h. ` : ""; })}
-        </div>
-        {calc.regla.banda ? (
-          <div>
-            <b style={{ color: T.ink }}>Regla operativa (Res. 1891):</b> banda de hoy {fx(calc.regla.banda.min, 1)} a {fx(calc.regla.banda.max, 1)} m³/s (promedio de ayer {fx(qAyer, 1)} ± 4,70 %; con el F.C. de las 00:00, {fx(calc.regla.banda.min * fcInicio, 0)} a {fx(calc.regla.banda.max * fcInicio, 0)} MW).
-            {[["xm", "Despacho XM"], ["rt", "Promedio RT hasta ahora"], ["principal", `Programa simulado (${nombrePrograma(calc.modo, calc.progs)})`]].map(([k, l]) => {
-              const x = calc.regla[k]; if (!x) return null;
-              const est = estadoReglaDe(x);
-              return <div key={k}>· {l}: promedio {fx(x.q, 1)} m³/s en {x.horas} h → <b style={{ color: colorRegla[est] }}>{ETIQUETA_ESTADO_REGLA[est]}</b></div>;
-            })}
-            <div style={{ fontSize: 11.5, color: T.inkFaint }}>El cumplimiento se define con el promedio regulado final del día; lo horario es seguimiento. Con vertimiento la validación se suspende.</div>
+      {(() => {
+        const est = (k) => (calc.regla[k] ? estadoReglaDe(calc.regla[k]) : null);
+        const chip = (k) => { const e = est(k); return e ? <span style={{ fontSize: 12, fontWeight: 700, color: colorRegla[e] }}>{ETIQUETA_ESTADO_REGLA[e]}</span> : null; };
+        return (
+          <div className="itu-kpis" style={{ marginBottom: 10 }}>
+            <Kpi T={T} rotulo={`Nivel a las 24 h · ${nombrePrograma(calc.modo, calc.progs)}`} valor={calc.principal.Hfinal} decimales={3} unidad="msnm"
+              nota={`${calc.principal.deltaH >= 0 ? "+" : ""}${fx(calc.principal.deltaH * 100, 1)} cm en el día`} />
+            <Kpi T={T} rotulo={calc.inf ? `Rango con XM ±${bandaPct} %` : `Rango con entrada ±${sensQ} m³/s`}
+              valor={calc.inf ? `${fx(calc.sup.Hfinal, 2)} – ${fx(calc.inf.Hfinal, 2)}` : `${fx(calc.qMenos.Hfinal, 2)} – ${fx(calc.qMas.Hfinal, 2)}`} unidad="msnm"
+              nota={calc.inf ? `Entrada ±${sensQ} m³/s: ${fx(calc.qMenos.Hfinal, 2)} – ${fx(calc.qMas.Hfinal, 2)} msnm` : "Pegue el despacho de XM para la banda operativa"} />
+            <Kpi T={T} rotulo="Regla 1891 · programa" valor={calc.regla.principal ? calc.regla.principal.q : null} unidad="m³/s"
+              estado={chip("principal")} nota={calc.regla.banda ? `Banda ${fx(calc.regla.banda.min, 1)} – ${fx(calc.regla.banda.max, 1)} m³/s` : "Falta el Q regulado de ayer"} />
+            <Kpi T={T} rotulo="Promedio RT hasta ahora" valor={calc.regla.rt ? calc.regla.rt.q : null} unidad="m³/s"
+              estado={chip("rt")} nota={calc.regla.rt ? `${calc.regla.rt.horas} h con dato` : "Sin horas con Promedio RT"} />
           </div>
-        ) : <div style={{ fontSize: 11.5, color: T.inkFaint }}>Escriba el Q regulado promedio de ayer para ver la regla operativa (Res. 1891) y el programa plano.</div>}
-        {calc.errMedido.length > 0 && <div>Frente al nivel medido ({calc.errMedido.length} h): diferencia máxima {fx(Math.max(...calc.errMedido.map(Math.abs)) * 100, 1)} cm.</div>}
-        <div style={{ fontSize: 11.5, color: T.inkFaint }}>Almenara: {etiquetaCondicionDescarga(condDescarga)} (panel Condición de descarga; el caudal del río en D4' incluye lo turbinado). F.C. de Hidrometría a {fx(nivelInicial, 2)} msnm: {fx(fcInicio, 3)}.</div>
+        );
+      })()}
+      <div style={{ ...resumen, marginBottom: 12 }}>
         {noAlcanzables.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {noAlcanzables.map((d) => d.hora).join(", ")}: la potencia no se alcanza con esas unidades, el techo de apertura {etiquetaTecho} (se elige en "Rango de apertura" del Buscador) y {P_MAXIMO_ESPERADO_MW} MW por unidad. Aumenta las unidades de esa hora o revisa el techo; el nivel se calcula con la potencia máxima alcanzable.</div>}
         {reducidas.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {reducidas.map((d) => `${d.hora} (${d.unidadesPedidas}→${d.unidades} ud.)`).join(", ")}: con las unidades pedidas, cada una quedaría por debajo de la apertura mínima ensayada ({fx(pctFromDeg(GAMMAS_HILL[0]), 1)} % = {fx(GAMMAS_HILL[0], 2)}°); se calculó con la cantidad de unidades que turbina menos agua.</div>}
         {bajoMinimo.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {bajoMinimo.map((d) => d.hora).join(", ")}: la potencia es menor que la de una unidad en la apertura mínima ensayada ({fx(pctFromDeg(GAMMAS_HILL[0]), 1)} % = {fx(GAMMAS_HILL[0], 2)}°); se tomó el caudal de esa apertura mínima con una unidad.</div>}
         {sobreDisponibles.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {sobreDisponibles.map((f) => f.hora).join(", ")}: más unidades que las disponibles ({unidadesDisp}).</div>}
+        <Nota T={T} rotulo="Detalle del cálculo">
+          <div>Caudal turbinado medio (modelo): {fx(calc.principal.qTurbMedio, 1)} m³/s frente a {fx(qEntrada, 0)} m³/s de entrada pronosticada{calc.prog.rellenadas.length > 0 && <> · horas sin dato propio (se repite la anterior): {calc.prog.rellenadas.join(", ")}</>}.</div>
+          {Object.keys(calc.comparar).length > 0 && <div>Otros programas: {Object.entries(calc.comparar).map(([kk, v]) => `${nombrePrograma(kk, calc.progs)} ${fx(v.Hfinal, 3)} msnm`).join(" · ")}.</div>}
+          <div>
+            <b style={{ color: T.ink }}>Energía RT vs despacho XM</b> (banda ±{bandaPct} %): XM {fx(calc.energia.xm, 0)} MWh en {calc.energia.hXM} h con dato · RT {fx(calc.energia.rt, 0)} MWh en {calc.energia.hRT} h
+            {calc.energia.hComun > 0 && <> · en las {calc.energia.hComun} h con ambos: {fx(calc.energia.rtComun, 0)} frente a {fx(calc.energia.xmComun, 0)} MWh ({calc.energia.difComunPct >= 0 ? "+" : ""}{fx(calc.energia.difComunPct, 1)} %)</>}.
+            {" "}{["por_debajo", "dentro", "por_encima", "sin_dato_xm"].map((kk) => { const n = calc.estados.filter((x) => x === kk).length; return n ? `${ETIQUETA_ESTADO_HORA[kk]}: ${n} h. ` : ""; })}
+          </div>
+          {calc.regla.banda ? (
+            <div>
+              <b style={{ color: T.ink }}>Regla operativa (Res. 1891):</b> banda de hoy {fx(calc.regla.banda.min, 1)} a {fx(calc.regla.banda.max, 1)} m³/s (promedio de ayer {fx(qAyer, 1)} ± 4,70 %; con el F.C. de las 00:00, {fx(calc.regla.banda.min * fcInicio, 0)} a {fx(calc.regla.banda.max * fcInicio, 0)} MW).
+              {[["xm", "Despacho XM"], ["rt", "Promedio RT hasta ahora"], ["principal", `Programa simulado (${nombrePrograma(calc.modo, calc.progs)})`]].map(([kk, l]) => {
+                const x = calc.regla[kk]; if (!x) return null;
+                const e = estadoReglaDe(x);
+                return <div key={kk}>· {l}: promedio {fx(x.q, 1)} m³/s en {x.horas} h → <b style={{ color: colorRegla[e] }}>{ETIQUETA_ESTADO_REGLA[e]}</b></div>;
+              })}
+              <div>El cumplimiento se define con el promedio regulado final del día; lo horario es seguimiento. Con vertimiento la validación se suspende.</div>
+            </div>
+          ) : <div>Escriba el Q regulado promedio de ayer para ver la regla operativa (Res. 1891) y el programa plano.</div>}
+          {calc.errMedido.length > 0 && <div>Frente al nivel medido ({calc.errMedido.length} h): diferencia máxima {fx(Math.max(...calc.errMedido.map(Math.abs)) * 100, 1)} cm.</div>}
+          <div>Almenara: {etiquetaCondicionDescarga(condDescarga)} (panel Condición de descarga; el caudal del río en D4' incluye lo turbinado). F.C. de Hidrometría a {fx(nivelInicial, 2)} msnm: {fx(fcInicio, 3)}.</div>
+        </Nota>
       </div>
 
       {calc.regla.banda && (
@@ -893,7 +915,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
 
       <ChartHeader titulo="Apertura del distribuidor por hora" T={T} subtitulo={seriesApertura.conReal ? "Programa simulado (todas las unidades en línea con la misma apertura) frente a la apertura estimada de cada unidad con su potencia medida en las horas ya transcurridas. En % y su equivalente en grados (eje derecho y tooltip)." : "Apertura de cada unidad en línea con el programa simulado (todas con la misma apertura). En % y su equivalente en grados (eje derecho y tooltip). Para la fecha de hoy se agrega la estimada de cada unidad con lo medido."} />
       <GraficoSeries T={T} tipoX="numero" ejeX="Hora" x={seriesApertura.x} series={seriesApertura.s} unidad="%" ejeY="apertura (%)" decimales={1} alto={240} grupo="desp" nombreArchivo={`apertura_horaria_${fecha}`} referencias={referenciasApertura(T)} equivalente={EQUIV_APERTURA} />
-      <p style={{ fontSize: 11.5, color: T.inkFaint, margin: "-6px 0 14px", lineHeight: 1.5, fontFamily: FONT_BODY }}>{NOTA_APERTURA} El techo del programa es el elegido en "Rango de apertura" ({etiquetaTecho}).</p>
+      <div style={{ margin: "-6px 0 14px" }}><Nota T={T} rotulo="Cómo se estima la apertura">{NOTA_APERTURA} El techo del programa es el elegido en "Rango de apertura" ({etiquetaTecho}).</Nota></div>
 
       <ChartHeader titulo="Nivel del embalse — evolución intradiaria" T={T} accion={<BotonCSV data={csv} filename="despacho_intradiario.csv" T={T} />} />
       <GraficoSeries T={T} tipoX="numero" ejeX="Hora" grupo="desp" x={seriesNivel.x} series={seriesNivel.s} unidad="msnm" ejeY="msnm" decimales={3} alto={300} nombreArchivo="despacho_nivel" bandas={[{ desde: 0, hasta: 1, relleno: "rgba(148,163,184,0.10)" }, { desde: 2, hasta: 3 }]} />

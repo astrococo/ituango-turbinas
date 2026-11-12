@@ -5,6 +5,7 @@
 import { useMemo } from "react";
 import { pctFromDeg, degFromPct, GAMMA_ORIGINAL_MAX, GAMMA_NORMAL_MAX, GAMMA_AMPLIADO_MAX } from "../modelo.js";
 import { GraficoSeries, fmtNum, colorSerie, ESTADO } from "./graficos.jsx";
+import { Nota } from "./comunes.jsx";
 
 const EQUIV_APERTURA = { f: degFromPct, unidad: "°", decimales: 2, decimalesEje: 1, rotulo: "grados (°)" };
 const PCT_NORMAL = pctFromDeg(GAMMA_NORMAL_MAX); // 97 %
@@ -88,7 +89,7 @@ function GraficoApertura({ T, x, filas, lineas = null, nU, pasoH = 1, alto = 260
           </table>
         </div>
       )}
-      <p style={{ fontSize: 11.5, color: T.inkFaint, margin: "8px 0 0", lineHeight: 1.5 }}>{NOTA_APERTURA} {lineas ? "Los tramos sin línea son intervalos con la unidad detenida (sin generación) o en arranque o parada (en línea menos de la mitad del intervalo): no son datos faltantes; el tooltip y la tabla dicen cuál es el caso." : ""}</p>
+      <Nota T={T} rotulo="Cómo se estima la apertura">{NOTA_APERTURA} {lineas ? "Los tramos sin línea son intervalos con la unidad detenida (sin generación) o en arranque o parada (en línea menos de la mitad del intervalo): no son datos faltantes; el tooltip y la tabla dicen cuál es el caso." : ""}</Nota>
     </>
   );
 }
