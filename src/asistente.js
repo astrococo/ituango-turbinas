@@ -70,6 +70,8 @@ function estadoActual({ vivo: v }) {
       potencia_total_mw: r(a.pTotal, 1), potencia_unidad_mw: a.p.map((p) => r(p, 1)), en_linea: a.enLinea,
       fc: r(a.fc, 4), caudal_regulado_m3s: r(a.qReg, 1), vertedero_m3s: r(a.qVert, 1), descargado_m3s: r(a.qDesc, 1),
     },
+    potencia_ultima_hora_cerrada: hCerrada ? { hora: `${hCerrada.t} (promedio de esa hora)`, total_mw: r((hCerrada.p || []).reduce((x, y) => x + (y || 0), 0), 1), por_unidad_mw: (hCerrada.p || []).map((x) => r(x, 1)) } : null,
+    despacho_xm: { disponible: false, nota: "El despacho de XM no llega al asistente (se pega en la pestaña Despacho). Sin él no se puede decir si una hora cumple la banda XM ±5 %: no calcules esa banda con la potencia medida." },
     apertura_ultima_hora_cerrada: hCerrada ? { hora: `${hCerrada.t} (promedio de esa hora)`, por_unidad_pct: hCerrada.gamma.map(pct), por_unidad_grados: hCerrada.gamma.map((g) => r(g, 2)), nota: "estimada con el modelo de la colina; null = unidad detenida o en arranque/parada" } : null,
     entrada_hoy_m3s: v.resHoy ? r(v.resHoy.balance.qEntrada, 1) : null,
     regla_1891_hoy: v.resHoy ? {
