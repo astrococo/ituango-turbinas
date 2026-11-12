@@ -136,7 +136,7 @@ export default function Asistente({ T }) {
         logras="Respuestas en segundos que cruzan varios módulos, con las cifras sacadas de los datos (el asistente no tiene cifras propias: consulta herramientas y dice cuáles usó)."
         resultados="Respuesta escrita con las cifras y la hora del dato, y la lista de consultas que hizo (estado en vivo, histórico, serie horaria, HydroForecast, simulación de nivel, colina)." />
 
-      <Tarjeta T={T} titulo="Configuración" subtitulo="Elija dónde corre el modelo de IA. Las herramientas y los datos que consulta son los mismos en ambos casos.">
+      <Tarjeta T={T} titulo="Configuración" subtitulo="Elija dónde corre el modelo de IA. Las herramientas y los datos que consulta son los mismos en los tres casos.">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
           {[["github", "Claude vía GitHub · cualquier equipo"], ["local", "Modelo local (Ollama) · gratis"], ["claude", "Claude con clave propia"]].map(([id, n]) => (
             <button key={id} onClick={() => setProveedor(id)} disabled={ocupado} style={{ ...chip, borderRadius: 6, padding: "7px 12px", fontWeight: proveedor === id ? 700 : 400, color: proveedor === id ? T.onAccent : T.inkMuted, background: proveedor === id ? T.teal : T.panelSoft, borderColor: proveedor === id ? T.teal : T.line }}>{n}</button>

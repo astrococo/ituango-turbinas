@@ -2,7 +2,8 @@
    Fuentes de datos de la app, compartidas por todos los módulos:
    - Repositorio privado de datos (GitHub): CSV del relay de LoggerNet
      (día en curso) y el histórico que arma el proceso automático
-     (derivados/). Requiere un token de solo lectura, que se guarda
+     (derivados/). Requiere un token de lectura (y de escritura solo para
+     enviar preguntas al Asistente vía GitHub), que se guarda
      solo en este navegador si el usuario lo pide.
    - HydroForecast Ituango (Space público): pronóstico, observado y
      aguas arriba. Si no responde, se usa el archivo del repositorio.
