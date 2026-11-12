@@ -237,40 +237,81 @@ async function listarModelosLocales(url, fetchFn = fetch) {
   return (cuerpo.data || []).map((m) => m.id).filter(Boolean).sort();
 }
 
-/* También sirve para un servicio en la nube compatible con OpenAI (p. ej. Groq): url = base sin /v1, clave = Bearer. */
-async function preguntarLocal({ url, modelo, historial, ctx, onPaso = () => {}, fetchFn = fetch, senal, clave = null, esperar429 = 0 }) {
+/* Segundos que pide esperar un 429: cabecera retry-after o el texto «try again in 21.8s» / «1m3.2s». */
+function segundosDeEspera(resp, msg) {
+  const hv = resp && resp.headers && resp.headers.get ? resp.headers.get("retry-after") : null;
+  const h = hv != null && hv !== "" ? Number(hv) : NaN;
+  if (Number.isFinite(h) && h >= 0) return h;
+  const m = /try again in (?:(\d+)m)?([\d.]+)s/i.exec(String(msg || ""));
+  return m ? (m[1] ? +m[1] * 60 : 0) + +m[2] : NaN;
+}
+
+/* También sirve para un servicio en la nube compatible con OpenAI (p. ej. Groq): url = base sin /v1, clave = Bearer.
+   - modelosAlternos: si un modelo llega a su límite (por minuto o por día), se sigue con el siguiente
+     (en Groq cada modelo tiene su propio cupo).
+   - esperar429: segundos totales que se puede esperar a que se libere el cupo por minuto.
+   - opciones: campos extra del cuerpo (p. ej. reasoning_effort, max_tokens); si el servicio no los
+     acepta, se reintenta sin ellos.
+   - contexto: texto que se agrega a la pregunta (p. ej. el estado en vivo ya consultado) para
+     ahorrar una vuelta. */
+async function preguntarLocal({ url, modelo, historial, ctx, onPaso = () => {}, fetchFn = fetch, senal, clave = null, esperar429 = 0, modelosAlternos = [], opciones = {}, contexto = null, dormir = (ms) => new Promise((ok) => setTimeout(ok, ms)) }) {
   const base = baseLocal(url);
   if (!modelo) throw new Error("Elija un modelo local (botón «Probar conexión»).");
   const sistema = { role: "system", content: `${SISTEMA}\nFecha y hora actual (Colombia): ${ctx.ahora || "desconocida"}.\nPara cualquier cifra de operación, llama primero a la herramienta que corresponda.` };
   const mensajes = historial.slice();
+  if (contexto && mensajes.length && mensajes[mensajes.length - 1].role === "user") {
+    const u = mensajes[mensajes.length - 1];
+    mensajes[mensajes.length - 1] = { role: "user", content: `${u.content}\n\n[Contexto ya consultado, no repitas la consulta: ${contexto}]` };
+  }
+  const modelos = [modelo, ...modelosAlternos.filter((m) => m && m !== modelo)];
+  const agotados = new Set(); // modelos sin cupo diario
+  const ocupados = new Set(); // modelos en su límite por minuto
+  let espera = Infinity;
+  let k = 0, extra = { ...opciones }, esperado = 0, usado = modelo;
   for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
-    let resp, cuerpo;
-    for (let intento = 0; ; intento++) {
+    let resp, cuerpo, msg;
+    for (let intento = 0; intento < 12; intento++) {
+      usado = modelos[k];
       try {
         resp = await fetchFn(`${base}/v1/chat/completions`, {
           method: "POST", signal: senal, headers: { "content-type": "application/json", ...(clave ? { Authorization: `Bearer ${clave}` } : {}) },
-          body: JSON.stringify({ model: modelo, messages: [sistema, ...mensajes], tools: HERRAMIENTAS_OPENAI, stream: false, temperature: 0.2 }),
+          body: JSON.stringify({ model: usado, messages: [sistema, ...mensajes], tools: HERRAMIENTAS_OPENAI, stream: false, temperature: 0.2, ...extra }),
         });
       } catch (e) { throw clave ? new Error(`No se pudo conectar con ${base}.`) : errorConexionLocal(base, e); }
       cuerpo = await resp.json().catch(() => null);
-      // Límite por minuto del plan gratuito: esperar lo que pide el servicio y reintentar (hasta 2 veces)
-      const espera = resp.status === 429 ? Number(resp.headers && resp.headers.get ? resp.headers.get("retry-after") : NaN) : NaN;
-      if (resp.status === 429 && intento < 2 && esperar429 > 0 && Number.isFinite(espera) && espera <= esperar429) { await new Promise((ok) => setTimeout(ok, (espera + 1) * 1000)); continue; }
-      break;
+      if (resp.ok) break;
+      msg = cuerpo && cuerpo.error ? cuerpo.error.message || cuerpo.error : `HTTP ${resp.status}`;
+      // Parámetro opcional no aceptado: reintentar sin los extras
+      if (resp.status === 400 && Object.keys(extra).length && /reasoning|max_tokens|unsupported|unknown|unrecognized/i.test(String(msg))) { extra = {}; continue; }
+      if (resp.status !== 429) break;
+      const diario = /per day|TPD|RPD/i.test(String(msg));
+      (diario ? agotados : ocupados).add(usado);
+      const s = segundosDeEspera(resp, msg);
+      if (!diario) espera = Math.min(espera, Number.isFinite(s) ? s : 20);
+      // Otro modelo con cupo: seguir con él de inmediato
+      const sig = modelos.findIndex((m) => !agotados.has(m) && !ocupados.has(m));
+      if (sig >= 0) { k = sig; continue; }
+      if (ocupados.size === 0) break; // todos sin cupo diario
+      // Todos en su límite por minuto: esperar lo que pide el servicio (dentro del presupuesto)
+      const seg = Math.min(espera, 60) + 1;
+      if (esperar429 <= 0 || esperado + seg > esperar429) break;
+      esperado += seg;
+      await dormir(seg * 1000);
+      ocupados.clear(); espera = Infinity;
+      k = modelos.findIndex((m) => !agotados.has(m));
     }
     if (!resp.ok) {
-      const msg = cuerpo && cuerpo.error ? cuerpo.error.message || cuerpo.error : `HTTP ${resp.status}`;
       if (clave && resp.status === 401) throw new Error("La clave del servicio no es válida (401).");
-      if (clave && resp.status === 429) throw new Error(`Se alcanzó el límite gratuito del servicio (por minuto o por día). Intente en unos minutos. (${msg})`);
+      if (clave && resp.status === 429) throw new Error(/per day|TPD|RPD/i.test(String(msg)) ? `Se acabó el cupo gratuito de hoy en todos los modelos disponibles; se renueva cada día. (${msg})` : `El servicio gratuito está muy ocupado en este momento; intente de nuevo en un minuto. (${msg})`);
       if (clave && resp.status === 413) throw new Error(`La consulta quedó muy grande para el límite gratuito; pida un periodo más corto. (${msg})`);
-      throw new Error(/not found/i.test(String(msg)) ? `El modelo «${modelo}» no está descargado en Ollama (ollama pull ${modelo}).` : /does not support tools/i.test(String(msg)) ? `El modelo «${modelo}» no admite herramientas; use uno con «tools», p. ej. qwen3:8b.` : `Error del modelo${clave ? "" : " local"}: ${msg}`);
+      throw new Error(/not found/i.test(String(msg)) ? `El modelo «${usado}» no está descargado en Ollama (ollama pull ${usado}).` : /does not support tools/i.test(String(msg)) ? `El modelo «${usado}» no admite herramientas; use uno con «tools», p. ej. qwen3:8b.` : `Error del modelo${clave ? "" : " local"}: ${msg}`);
     }
     const m = cuerpo && cuerpo.choices && cuerpo.choices[0] ? cuerpo.choices[0].message : null;
-    if (!m) throw new Error("Respuesta vacía del modelo local.");
+    if (!m) throw new Error("Respuesta vacía del modelo.");
     const llamadas = Array.isArray(m.tool_calls) ? m.tool_calls : [];
     mensajes.push({ role: "assistant", content: m.content || "", ...(llamadas.length ? { tool_calls: llamadas } : {}) });
     const uso = cuerpo.usage ? { input_tokens: cuerpo.usage.prompt_tokens, output_tokens: cuerpo.usage.completion_tokens } : null;
-    if (!llamadas.length) return { mensajes, uso, texto: limpiarRazonamiento(m.content) };
+    if (!llamadas.length) return { mensajes, uso, texto: limpiarRazonamiento(m.content), modelo: usado };
     for (const [i, c] of llamadas.entries()) {
       const nombre = c.function && c.function.name;
       let entrada = c.function ? c.function.arguments : {};
@@ -319,4 +360,4 @@ async function preguntarGitHub({ datos, pregunta, historial = [], modelo, onEsta
   throw new Error(`GitHub no respondió en ${Math.round(esperaMaxMs / 60000)} minutos. Revise en el repositorio de datos la pestaña Actions (flujo «Asistente (Claude)»); la respuesta puede llegar después con el id ${id}.`);
 }
 
-export { MODELOS, HERRAMIENTAS, SISTEMA, ejecutarHerramienta, preguntar, preguntarLocal, preguntarGitHub, idPregunta, rutaRespuesta, listarModelosLocales, limpiarRazonamiento, URL_LOCAL_DEFECTO };
+export { MODELOS, HERRAMIENTAS, SISTEMA, ejecutarHerramienta, segundosDeEspera, preguntar, preguntarLocal, preguntarGitHub, idPregunta, rutaRespuesta, listarModelosLocales, limpiarRazonamiento, URL_LOCAL_DEFECTO };

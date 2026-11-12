@@ -213,3 +213,44 @@ describe("asistente vía GitHub (despacho y respuesta simulados)", () => {
     await expect(preguntarGitHub({ datos: datos(null), pregunta: "x", intervaloMs: 1, esperaMaxMs: 20 })).rejects.toThrow(/Actions/);
   });
 });
+
+describe("límites del servicio gratuito", () => {
+  const ok = (texto) => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ choices: [{ message: { role: "assistant", content: texto } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }) });
+  const lim = (msg) => ({ ok: false, status: 429, headers: { get: () => null }, json: async () => ({ error: { message: msg } }) });
+  const ctx = { vivo: null, leerJSON: async () => ({}) };
+  it("lee la espera del mensaje", async () => {
+    const { segundosDeEspera } = await import("../src/asistente.js");
+    expect(segundosDeEspera(null, "Please try again in 21.8325s.")).toBeCloseTo(21.8325);
+    expect(segundosDeEspera(null, "try again in 1m3.5s")).toBeCloseTo(63.5);
+    expect(segundosDeEspera({ headers: { get: () => "7" } }, "")).toBe(7);
+  });
+  it("cambia de modelo ante el límite por minuto y espera si todos están llenos", async () => {
+    const { preguntarLocal } = await import("../src/asistente.js");
+    const usados = []; const esperas = [];
+    const seq = [lim("Rate limit reached on tokens per minute (TPM). Please try again in 10s."), lim("tokens per minute (TPM). Please try again in 4s."), ok("listo")];
+    const fetchFn = async (u, op) => { usados.push(JSON.parse(op.body).model); return seq.shift(); };
+    const r = await preguntarLocal({ url: "https://x/openai", clave: "k", modelo: "a", modelosAlternos: ["b"], esperar429: 120, historial: [{ role: "user", content: "hola" }], ctx, fetchFn, dormir: async (ms) => esperas.push(ms) });
+    expect(usados).toEqual(["a", "b", "a"]);
+    expect(esperas).toEqual([5000]); // espera la menor (4 s) + 1
+    expect(r.texto).toBe("listo");
+    expect(r.modelo).toBe("a");
+  });
+  it("cupo diario agotado: sigue con otro modelo y, si no queda ninguno, avisa", async () => {
+    const { preguntarLocal } = await import("../src/asistente.js");
+    const seq = [lim("Rate limit reached on tokens per day (TPD)"), ok("con b")];
+    const r = await preguntarLocal({ url: "https://x/openai", clave: "k", modelo: "a", modelosAlternos: ["b"], esperar429: 60, historial: [{ role: "user", content: "x" }], ctx, fetchFn: async () => seq.shift(), dormir: async () => {} });
+    expect(r.modelo).toBe("b");
+    const seq2 = [lim("tokens per day (TPD)"), lim("requests per day (RPD)")];
+    await expect(preguntarLocal({ url: "https://x/openai", clave: "k", modelo: "a", modelosAlternos: ["b"], esperar429: 60, historial: [{ role: "user", content: "x" }], ctx, fetchFn: async () => seq2.shift(), dormir: async () => {} })).rejects.toThrow(/cupo gratuito de hoy/);
+  });
+  it("si el servicio no acepta un parámetro opcional, reintenta sin él; el contexto va en la pregunta", async () => {
+    const { preguntarLocal } = await import("../src/asistente.js");
+    const cuerpos = [];
+    const seq = [{ ok: false, status: 400, headers: { get: () => null }, json: async () => ({ error: { message: "unsupported parameter reasoning_effort" } }) }, ok("bien")];
+    const r = await preguntarLocal({ url: "https://x/openai", clave: "k", modelo: "a", opciones: { reasoning_effort: "low" }, contexto: "{\"nivel\":419}", historial: [{ role: "user", content: "¿nivel?" }], ctx, fetchFn: async (u, op) => { cuerpos.push(JSON.parse(op.body)); return seq.shift(); } });
+    expect(cuerpos[0].reasoning_effort).toBe("low");
+    expect(cuerpos[1].reasoning_effort).toBeUndefined();
+    expect(cuerpos[0].messages[1].content).toMatch(/Contexto ya consultado.*419/);
+    expect(r.texto).toBe("bien");
+  });
+});
