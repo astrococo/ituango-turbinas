@@ -272,4 +272,40 @@ async function preguntarLocal({ url, modelo, historial, ctx, onPaso = () => {}, 
   throw new Error(`El asistente no terminó en ${MAX_VUELTAS} pasos.`);
 }
 
-export { MODELOS, HERRAMIENTAS, SISTEMA, ejecutarHerramienta, preguntar, preguntarLocal, listarModelosLocales, limpiarRazonamiento, URL_LOCAL_DEFECTO };
+/* ---------- Claude vía GitHub (cualquier equipo) ----------
+   La pregunta va al repositorio de datos como repository_dispatch
+   «asistente»; GitHub Actions ejecuta este mismo agente con la clave
+   guardada como secret y deja la respuesta en la rama «asistente».
+   datos = { despachar(evento, carga), leerRama(ruta, rama) }. */
+const RAMA_RESPUESTAS = "asistente";
+function idPregunta(fecha = new Date()) {
+  const c = new Date(fecha.getTime() - 5 * 3600e3).toISOString(); // hora de Colombia (UTC−5)
+  const al = Math.random().toString(36).slice(2, 8).padEnd(6, "0");
+  return `${c.slice(0, 4)}${c.slice(5, 7)}${c.slice(8, 10)}T${c.slice(11, 13)}${c.slice(14, 16)}${c.slice(17, 19)}-${al}`;
+}
+const rutaRespuesta = (id) => `respuestas/${id.slice(0, 4)}-${id.slice(4, 6)}/${id}.json`;
+const esperar = (ms, senal) => new Promise((ok, mal) => {
+  const t = setTimeout(ok, ms);
+  if (senal) senal.addEventListener("abort", () => { clearTimeout(t); const e = new Error("cancelada"); e.name = "AbortError"; mal(e); }, { once: true });
+});
+
+async function preguntarGitHub({ datos, pregunta, historial = [], modelo, onEstado = () => {}, senal, esperaMaxMs = 300000, intervaloMs = 4000 }) {
+  const id = idPregunta();
+  const hist = historial.slice(-6).map((m) => ({ rol: m.rol, texto: String(m.texto || "").slice(0, 6000) }));
+  await datos.despachar("asistente", { id, pregunta: String(pregunta).slice(0, 4000), historial: hist, modelo });
+  const t0 = Date.now();
+  onEstado({ fase: "enviada", segundos: 0, id });
+  while (Date.now() - t0 < esperaMaxMs) {
+    await esperar(intervaloMs, senal);
+    const txt = await datos.leerRama(rutaRespuesta(id), RAMA_RESPUESTAS).catch(() => null);
+    if (txt) {
+      const r = JSON.parse(txt);
+      if (r.error) throw new Error(r.error);
+      return { texto: r.texto, pasos: r.pasos || [], uso: r.uso || null, modelo: r.modelo, ultimoDato: r.ultimoDato, id };
+    }
+    onEstado({ fase: "esperando", segundos: Math.round((Date.now() - t0) / 1000), id });
+  }
+  throw new Error(`GitHub no respondió en ${Math.round(esperaMaxMs / 60000)} minutos. Revise en el repositorio de datos la pestaña Actions (flujo «Asistente (Claude)»); la respuesta puede llegar después con el id ${id}.`);
+}
+
+export { MODELOS, HERRAMIENTAS, SISTEMA, ejecutarHerramienta, preguntar, preguntarLocal, preguntarGitHub, idPregunta, rutaRespuesta, listarModelosLocales, limpiarRazonamiento, URL_LOCAL_DEFECTO };

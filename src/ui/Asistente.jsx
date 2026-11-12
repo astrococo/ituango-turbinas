@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useVivo } from "../datos/vivo.jsx";
 import { useDatos } from "../datos/fuentes.jsx";
 import { ahoraColombia } from "../datos/tiempo.js";
-import { MODELOS, preguntar, preguntarLocal, listarModelosLocales, URL_LOCAL_DEFECTO } from "../asistente.js";
+import { MODELOS, preguntar, preguntarLocal, preguntarGitHub, listarModelosLocales, URL_LOCAL_DEFECTO } from "../asistente.js";
 import { Proposito, Tarjeta } from "./comunes.jsx";
 import { Estado } from "./graficos.jsx";
 
@@ -58,7 +58,7 @@ export default function Asistente({ T }) {
   const [recordar, setRecordar] = useState(() => !!leerLocal(CLAVE_API));
   const [modelo, setModelo] = useState(() => leerLocal(CLAVE_MODELO) || MODELOS[0][0]);
   const [espacio, setEspacio] = useState(() => leerLocal(CLAVE_ESPACIO) || "");
-  const [proveedor, setProveedor] = useState(() => leerLocal(CLAVE_PROVEEDOR) || "local"); // "local" (Ollama, gratis) | "claude"
+  const [proveedor, setProveedor] = useState(() => leerLocal(CLAVE_PROVEEDOR) || "github"); // "github" (Claude vía GitHub) | "local" (Ollama) | "claude" (clave propia)
   const [urlLocal, setUrlLocal] = useState(() => leerLocal(CLAVE_URL_LOCAL) || URL_LOCAL_DEFECTO);
   const [modeloLocal, setModeloLocal] = useState(() => leerLocal(CLAVE_MODELO_LOCAL) || "");
   const [modelosLocales, setModelosLocales] = useState(null);
@@ -78,7 +78,9 @@ export default function Asistente({ T }) {
   useEffect(() => { escribirLocal(CLAVE_URL_LOCAL, urlLocal.trim() || null); }, [urlLocal]);
   useEffect(() => { escribirLocal(CLAVE_MODELO_LOCAL, modeloLocal || null); }, [modeloLocal]);
   const local = proveedor === "local";
-  const listo = local ? !!modeloLocal : !!clave;
+  const github = proveedor === "github";
+  const listo = github ? datos.conectado : local ? !!modeloLocal : !!clave;
+  const [espera, setEspera] = useState(null);
 
   async function probarConexion() {
     setConexion({ estado: "probando", msg: "" });
@@ -106,16 +108,21 @@ export default function Asistente({ T }) {
         ctx, senal: ctrl.current.signal, historial: [...historial, { role: "user", content: q }],
         onPaso: (p) => { pasos.push(p); setVista((v) => { const c = v.slice(); c[c.length - 1] = { ...c[c.length - 1], pasos: pasos.slice() }; return c; }); },
       };
-      const res = local ? await preguntarLocal({ ...comun, url: urlLocal, modelo: modeloLocal })
-        : await preguntar({ ...comun, clave, espacio: espacio.trim() || null, modelo });
-      const respuesta = res.texto;
-      setHistorial(res.mensajes);
-      setVista((v) => { const c = v.slice(); c[c.length - 1] = { rol: "asistente", texto: respuesta || "(sin texto)", pasos: pasos.slice(), uso: res.uso }; return c; });
+      if (github) {
+        const previos = vista.filter((m) => m.texto).map((m) => ({ rol: m.rol, texto: m.texto }));
+        const r = await preguntarGitHub({ datos, pregunta: q, historial: previos, modelo, senal: ctrl.current.signal, onEstado: setEspera });
+        setVista((v) => { const c = v.slice(); c[c.length - 1] = { rol: "asistente", texto: r.texto || "(sin texto)", pasos: r.pasos, uso: r.uso, nota: r.ultimoDato ? `Dato usado: ${r.ultimoDato} · ${r.modelo}` : r.modelo }; return c; });
+      } else {
+        const res = local ? await preguntarLocal({ ...comun, url: urlLocal, modelo: modeloLocal })
+          : await preguntar({ ...comun, clave, espacio: espacio.trim() || null, modelo });
+        setHistorial(res.mensajes);
+        setVista((v) => { const c = v.slice(); c[c.length - 1] = { rol: "asistente", texto: res.texto || "(sin texto)", pasos: pasos.slice(), uso: res.uso }; return c; });
+      }
     } catch (e) {
       setVista((v) => v.slice(0, -2));
       setError(e.name === "AbortError" ? "Consulta cancelada." : e.message);
       setPregunta(q);
-    } finally { setOcupado(false); }
+    } finally { setOcupado(false); setEspera(null); }
   }
 
   const entrada = { padding: "8px 10px", borderRadius: 6, border: `1px solid ${T.line}`, background: T.panel, color: T.ink, fontSize: 13, boxSizing: "border-box" };
@@ -124,19 +131,30 @@ export default function Asistente({ T }) {
 
   return (
     <>
-      <Proposito T={T} id="asistente" titulo="Asistente (IA)" fuente="Modelo local (Ollama, gratis) o Claude (API de Anthropic), con herramientas que leen los datos de la app y usan sus modelos"
+      <Proposito T={T} id="asistente" titulo="Asistente (IA)" fuente="Claude vía GitHub (cualquier equipo), modelo local (Ollama, gratis) o Claude con clave propia, con herramientas que leen los datos de la app y usan sus modelos"
         para="Hacer preguntas en lenguaje natural sobre la operación: cómo va el día, qué pasó en un periodo, qué apertura o caudal tendría un punto de operación, o dónde quedaría el nivel con un programa de potencia."
         logras="Respuestas en segundos que cruzan varios módulos, con las cifras sacadas de los datos (el asistente no tiene cifras propias: consulta herramientas y dice cuáles usó)."
         resultados="Respuesta escrita con las cifras y la hora del dato, y la lista de consultas que hizo (estado en vivo, histórico, serie horaria, HydroForecast, simulación de nivel, colina)." />
 
       <Tarjeta T={T} titulo="Configuración" subtitulo="Elija dónde corre el modelo de IA. Las herramientas y los datos que consulta son los mismos en ambos casos.">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-          {[["local", "Modelo local (Ollama) · gratis"], ["claude", "Claude (API de Anthropic) · de pago"]].map(([id, n]) => (
+          {[["github", "Claude vía GitHub · cualquier equipo"], ["local", "Modelo local (Ollama) · gratis"], ["claude", "Claude con clave propia"]].map(([id, n]) => (
             <button key={id} onClick={() => setProveedor(id)} disabled={ocupado} style={{ ...chip, borderRadius: 6, padding: "7px 12px", fontWeight: proveedor === id ? 700 : 400, color: proveedor === id ? T.onAccent : T.inkMuted, background: proveedor === id ? T.teal : T.panelSoft, borderColor: proveedor === id ? T.teal : T.line }}>{n}</button>
           ))}
         </div>
 
-        {local ? (
+        {github ? (
+          <>
+            <div style={{ padding: "10px 12px", borderRadius: 8, background: T.panelSoft, border: `1px solid ${T.amber}`, color: T.ink, fontSize: 12.5, lineHeight: 1.5, marginBottom: 12 }}>
+              <b>Funciona en cualquier equipo, sin instalar nada.</b> La pregunta va al repositorio de datos y GitHub Actions la responde con Claude usando la clave guardada allí como secret (nunca llega al navegador); tarda de 30 a 90 segundos. Las cifras que el asistente consulte se envían a la API de Anthropic: úselo solo si la política de EPM lo permite. Requiere que su token de GitHub tenga permiso de escritura (<i>Contents: Read and write</i>) en el repositorio de datos.
+            </div>
+            <label style={{ fontSize: 12.5, color: T.inkMuted, display: "block", maxWidth: 360 }}>Modelo
+              <select value={modelo} onChange={(e) => setModelo(e.target.value)} style={{ ...entrada, width: "100%", marginTop: 4 }}>
+                {MODELOS.map(([id, n]) => <option key={id} value={id}>{n}</option>)}
+              </select>
+            </label>
+          </>
+        ) : local ? (
           <>
             <div style={{ padding: "10px 12px", borderRadius: 8, background: T.panelSoft, border: `1px solid ${T.line}`, color: T.ink, fontSize: 12.5, lineHeight: 1.5, marginBottom: 12 }}>
               <b>Los datos no salen de este computador.</b> El modelo corre en Ollama, instalado en este equipo; la página le habla en <code>localhost</code>. Requiere Ollama abierto, un modelo con herramientas (recomendado <code>qwen3:8b</code>) y la variable <code>OLLAMA_ORIGINS</code> con esta dirección. La primera vez Chrome pide permiso para acceder a la red local: acéptelo. Las respuestas son más lentas y menos precisas que con Claude.
@@ -182,7 +200,7 @@ export default function Asistente({ T }) {
           </>
         )}
         <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", fontSize: 12.5 }}>
-          <Estado T={T} compacto tipo={listo ? "bien" : "neutro"}>{local ? (modeloLocal ? `Modelo: ${modeloLocal}` : "Sin modelo") : clave ? "Clave lista" : "Sin clave"}</Estado>
+          <Estado T={T} compacto tipo={listo ? "bien" : "neutro"}>{github ? (datos.conectado ? "Token de GitHub listo" : "Falta el token de GitHub") : local ? (modeloLocal ? `Modelo: ${modeloLocal}` : "Sin modelo") : clave ? "Clave lista" : "Sin clave"}</Estado>
           <Estado T={T} compacto tipo={vivo && vivo.ultima ? "bien" : "aviso"}>{vivo && vivo.ultima ? `Datos en vivo: ${vivo.ultima.t}` : "Sin datos en vivo"}</Estado>
           <Estado T={T} compacto tipo={datos.conectado ? "bien" : "aviso"}>{datos.conectado ? "Histórico disponible" : "Sin token del repositorio: no hay histórico"}</Estado>
         </div>
@@ -199,14 +217,15 @@ export default function Asistente({ T }) {
           <div key={i} style={{ margin: "8px 0", padding: "10px 12px", borderRadius: 8, background: m.rol === "usuario" ? T.accentSoft : T.panelSoft }}>
             <div style={{ fontSize: 11.5, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>{m.rol === "usuario" ? "Usted" : "Asistente"}</div>
             {m.pasos && m.pasos.length > 0 && <div style={{ fontSize: 12, color: T.inkFaint, marginBottom: 6 }}>Consultó: {m.pasos.map((p) => NOMBRE_HERR[p.nombre] || p.nombre).join(" · ")}</div>}
-            {m.rol === "usuario" ? <div style={{ fontSize: 13.5, color: T.ink }}>{m.texto}</div> : m.texto ? <Texto T={T} texto={m.texto} /> : <div style={{ fontSize: 13, color: T.inkFaint }}>Pensando…</div>}
+            {m.rol === "usuario" ? <div style={{ fontSize: 13.5, color: T.ink }}>{m.texto}</div> : m.texto ? <Texto T={T} texto={m.texto} /> : <div style={{ fontSize: 13, color: T.inkFaint }}>{github && espera ? (espera.fase === "enviada" ? "Pregunta enviada a GitHub…" : `GitHub está respondiendo… ${espera.segundos} s (normal: 30–90 s)`) : "Pensando…"}</div>}
+            {m.nota && <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 6 }}>{m.nota}</div>}
             {m.uso && <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 6 }}>Tokens: {m.uso.input_tokens} de entrada · {m.uso.output_tokens} de salida (última llamada){local && m.uso.input_tokens >= 3900 ? " · cerca del límite de contexto de Ollama: suba OLLAMA_CONTEXT_LENGTH" : ""}</div>}
           </div>
         ))}
         {error && <div style={{ margin: "8px 0" }}><Estado T={T} tipo="critico">{error}</Estado></div>}
         <div ref={fin} />
         <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "flex-end" }}>
-          <textarea value={pregunta} onChange={(e) => setPregunta(e.target.value)} rows={2} placeholder={listo ? "Escriba su pregunta… (Enter para enviar, Mayús+Enter para nueva línea)" : local ? "Primero pruebe la conexión con Ollama y elija un modelo" : "Ingrese primero la clave de API"}
+          <textarea value={pregunta} onChange={(e) => setPregunta(e.target.value)} rows={2} placeholder={listo ? "Escriba su pregunta… (Enter para enviar, Mayús+Enter para nueva línea)" : github ? "Conecte primero el token del repositorio de datos (arriba a la derecha)" : local ? "Primero pruebe la conexión con Ollama y elija un modelo" : "Ingrese primero la clave de API"}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }} disabled={!listo}
             style={{ ...entrada, flex: 1, resize: "vertical", fontFamily: "inherit" }} />
           {ocupado ? <button style={boton(true)} onClick={() => ctrl.current && ctrl.current.abort()}>Cancelar</button>

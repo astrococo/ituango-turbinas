@@ -67,6 +67,29 @@ function ProveedorDatos({ children }) {
   }, [repo, token]);
   const leerJSON = useCallback(async (ruta) => JSON.parse(await leerTexto(ruta)), [leerTexto]);
   const listar = useCallback((ruta) => pedirGitHub(repo, token, ruta, { raw: false }), [repo, token]);
+  // Envía un evento repository_dispatch al repositorio de datos (requiere token con Contents: Read and write)
+  const despachar = useCallback(async (evento, carga) => {
+    if (!token) throw new ErrorDatos("Falta el token del repositorio de datos.", "token");
+    let r;
+    try {
+      r = await fetch(`https://api.github.com/repos/${repo}/dispatches`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json" },
+        body: JSON.stringify({ event_type: evento, client_payload: carga }),
+      });
+    } catch { throw new ErrorDatos("No hay conexión con GitHub.", "red"); }
+    if (r.status === 204) return true;
+    if (r.status === 401) throw new ErrorDatos("El token no es válido o venció (401).", 401);
+    if (r.status === 403 || r.status === 404) throw new ErrorDatos("El token no tiene permiso de escritura en el repositorio de datos: en GitHub, edite el token y dé «Contents: Read and write».", r.status);
+    const cuerpo = await r.json().catch(() => null);
+    throw new ErrorDatos(`GitHub respondió ${r.status}${cuerpo && cuerpo.message ? `: ${cuerpo.message}` : ""}.`, r.status);
+  }, [repo, token]);
+  // Lee un archivo de otra rama sin caché; null si todavía no existe
+  const leerRama = useCallback(async (ruta, rama) => {
+    const r = await fetch(`https://api.github.com/repos/${repo}/contents/${ruta}?ref=${encodeURIComponent(rama)}`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" }, cache: "no-store" });
+    if (r.status === 404) return null;
+    if (!r.ok) throw new ErrorDatos(`GitHub respondió ${r.status}.`, r.status);
+    return r.text();
+  }, [repo, token]);
   const verificar = useCallback(async () => {
     try {
       const r = await fetch(`https://api.github.com/repos/${repo}`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" } });
@@ -90,8 +113,8 @@ function ProveedorDatos({ children }) {
     }
   }, [repo, token]);
 
-  const valor = useMemo(() => ({ repo, setRepo, token, setToken, recordar, setRecordar, conectado: !!token, verificado, verificar, leerTexto, leerJSON, listar, leerHF }),
-    [repo, token, recordar, verificado, verificar, leerTexto, leerJSON, listar, leerHF, setToken]);
+  const valor = useMemo(() => ({ repo, setRepo, token, setToken, recordar, setRecordar, conectado: !!token, verificado, verificar, leerTexto, leerJSON, listar, leerHF, despachar, leerRama }),
+    [repo, token, recordar, verificado, verificar, leerTexto, leerJSON, listar, leerHF, despachar, leerRama, setToken]);
   return <Contexto.Provider value={valor}>{children}</Contexto.Provider>;
 }
 const useDatos = () => useContext(Contexto);

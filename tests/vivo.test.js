@@ -188,3 +188,28 @@ describe("asistente con modelo local (Ollama, API simulada)", () => {
     expect(await listarModelosLocales("http://localhost:11434/v1", async (u) => { expect(u).toBe("http://localhost:11434/v1/models"); return { ok: true, json: async () => ({ data: [{ id: "qwen3:8b" }, { id: "llama3.1:8b" }] }) }; })).toEqual(["llama3.1:8b", "qwen3:8b"]);
   });
 });
+
+describe("asistente vía GitHub (despacho y respuesta simulados)", () => {
+  it("envía el evento, espera el archivo de la rama asistente y devuelve la respuesta", async () => {
+    const { preguntarGitHub, idPregunta, rutaRespuesta } = await import("../src/asistente.js");
+    expect(idPregunta(new Date("2026-11-11T19:30:05Z"))).toMatch(/^20261111T143005-[a-z0-9]{6}$/);
+    let carga = null, lecturas = 0;
+    const datos = {
+      despachar: async (ev, c) => { expect(ev).toBe("asistente"); carga = c; return true; },
+      leerRama: async (ruta, rama) => { expect(rama).toBe("asistente"); expect(ruta).toBe(rutaRespuesta(carga.id)); lecturas++; return lecturas < 3 ? null : JSON.stringify({ id: carga.id, texto: "Listo.", pasos: [{ nombre: "estado_actual", entrada: {} }], modelo: "claude-sonnet-5-5", ultimoDato: "2026-11-11 14:25" }); },
+    };
+    const estados = [];
+    const r = await preguntarGitHub({ datos, pregunta: "¿cómo vamos?", historial: [{ rol: "usuario", texto: "a" }, { rol: "asistente", texto: "b" }], modelo: "claude-sonnet-5-5", intervaloMs: 1, onEstado: (e) => estados.push(e.fase) });
+    expect(carga.id).toMatch(/^\d{8}T\d{6}-[a-z0-9]{6}$/);
+    expect(carga.historial).toHaveLength(2);
+    expect(r.texto).toBe("Listo.");
+    expect(r.pasos[0].nombre).toBe("estado_actual");
+    expect(estados[0]).toBe("enviada");
+  });
+  it("propaga el error que deja el flujo y avisa si no llega a tiempo", async () => {
+    const { preguntarGitHub } = await import("../src/asistente.js");
+    const datos = (txt) => ({ despachar: async () => true, leerRama: async () => txt });
+    await expect(preguntarGitHub({ datos: datos(JSON.stringify({ error: "Falta el secret ANTHROPIC_API_KEY" })), pregunta: "x", intervaloMs: 1 })).rejects.toThrow(/ANTHROPIC_API_KEY/);
+    await expect(preguntarGitHub({ datos: datos(null), pregunta: "x", intervaloMs: 1, esperaMaxMs: 20 })).rejects.toThrow(/Actions/);
+  });
+});
