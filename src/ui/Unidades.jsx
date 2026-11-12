@@ -125,12 +125,13 @@ export default function Unidades({ T }) {
                       <td style={th}>{fmtNum(r.horas, 0)}</td><td style={th}>{fmtNum(r.energia / 1000, 1)} GWh</td><td style={th}>{r.arranques}</td><td style={th}>{fmtNum(r.pMedia, 1)} MW</td>
                       <td style={{ ...th, fontWeight: 700 }}>{fmtNum(r.fcWK, 3)}</td><td style={th}>{fmtNum(r.factor, 3)}</td>
                       <td style={th}>{fmtNum(r.relWKFC, 3)}</td><td style={th}>{fmtNum(r.relModFC, 3)}</td>
-                      <td style={th}>{r.etaWK != null ? `${fmtNum(r.etaWK, 1)} %` : "—"}</td><td style={th}>{r.etaMod != null ? `${fmtNum(r.etaMod, 1)} %` : "—"}</td>
+                      <td style={{ ...th, color: r.etaWK > 100 ? T.inkFaint : undefined }} title={r.etaWK > 100 ? "Más de 100 %: el Winter-Kennedy no está calibrado; es un índice relativo, no una eficiencia real" : undefined}>{r.etaWK != null ? `${fmtNum(r.etaWK, 1)} %${r.etaWK > 100 ? " *" : ""}` : "—"}</td><td style={th}>{r.etaMod != null ? `${fmtNum(r.etaMod, 1)} %` : "—"}</td>
                     </tr>
                   );
                 })}</tbody>
               </table>
             </div>
+            {resumen.some((r) => r.etaWK > 100) && <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6 }}>* Más de 100 %: el Winter-Kennedy no está calibrado; el η aparente se usa solo para comparar unidades, no es la eficiencia real.</div>}
             <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13, color: T.inkMuted }}>
               <b style={{ color: T.ink }}>Orden de mérito (índice WK del periodo):</b>
               {merito.length ? merito.map((u, i) => <span key={u} style={{ padding: "2px 10px", borderRadius: 999, border: `1px solid ${T.line}`, background: T.panelSoft }}>{i + 1}. U{u}</span>) : "sin datos suficientes"}

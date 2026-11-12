@@ -119,18 +119,27 @@ describe("asistente: herramientas y bucle del agente (API simulada)", () => {
     expect(est.apertura_ultima_hora_cerrada.por_unidad_pct[3]).toBeNull();
     expect(est.regla_1891_hoy.banda_m3s.min).toBeCloseTo(dias[0].regla.qReg * 0.953, 1);
     const hist = await ejecutarHerramienta(ctx, "historico_diario", { desde: "2026-11-10", hasta: "2026-11-11" });
-    expect(hist.dias.map((d) => d.dia)).toEqual(["2026-11-10", "2026-11-11"]);
-    expect((await ejecutarHerramienta(ctx, "historico_diario", { desde: "2026-01-01", hasta: "2026-11-11" })).error).toMatch(/120/);
+    expect(hist.filas.map((d) => d[0])).toEqual(["2026-11-10", "2026-11-11"]);
+    expect((await ejecutarHerramienta(ctx, "historico_diario", { desde: "2026-01-01", hasta: "2026-11-11" })).error).toMatch(/10 días/);
+    const res = await ejecutarHerramienta(ctx, "resumen_periodo", { desde: "2026-11-01", hasta: "2026-11-30" });
+    expect(res.periodo.dias_con_datos).toBe(2);
+    const sumaU = res.unidades.reduce((a, u) => a + u.energia_mwh, 0);
+    expect(Math.abs(sumaU - res.central.energia_mwh)).toBeLessThanOrEqual(4); // redondeo por unidad
+    expect(res.unidades[0].p_media_en_linea_mw).toBeGreaterThan(0);
+    expect(res.unidades[3].horas_en_linea).toBe(0);
+    expect(res.unidades[3].p_media_en_linea_mw).toBeNull();
+    expect((await ejecutarHerramienta(ctx, "resumen_periodo", { desde: "2025-01-01", hasta: "2026-11-30" })).error).toMatch(/366/);
+    expect((await ejecutarHerramienta({ ...ctx, maxCaracteresHerramienta: 200 }, "historico_diario", { desde: "2026-11-10", hasta: "2026-11-11" })).error).toMatch(/demasiado grande/);
     const sim = await ejecutarHerramienta(ctx, "simular_nivel", { potencias_mw: [600, 600, 600], caudal_entrada_m3s: 300 });
-    expect(sim.horas).toHaveLength(3);
-    expect(sim.horas[0].unidades).toBe(2);
+    expect(sim.filas).toHaveLength(3);
+    expect(sim.filas[0][2]).toBe(2);
     expect(sim.nivel_final_msnm).toBeLessThan(sim.supuestos.nivel_inicial_msnm + 0.5);
     const pto = await ejecutarHerramienta(ctx, "punto_operacion", { nivel_msnm: 410, potencias_unidad_mw: [250, 250] });
     expect(pto.unidades).toHaveLength(2);
     expect(pto.unidades[0].apertura_pct).toBeCloseTo(pctFromDeg(pto.unidades[0].apertura_grados), 0);
     expect((await ejecutarHerramienta(ctx, "pronostico_caudal", {})).error).toBeTruthy();
     expect((await ejecutarHerramienta(ctx, "no_existe", {})).error).toMatch(/desconocida/);
-    expect(HERRAMIENTAS.map((h) => h.name).sort()).toEqual(["estado_actual", "historico_diario", "pronostico_caudal", "punto_operacion", "serie_horaria", "simular_nivel"]);
+    expect(HERRAMIENTAS.map((h) => h.name).sort()).toEqual(["estado_actual", "historico_diario", "pronostico_caudal", "punto_operacion", "resumen_periodo", "serie_horaria", "simular_nivel"]);
   });
 
   it("bucle: pide una herramienta, recibe el resultado y responde", async () => {
@@ -145,7 +154,7 @@ describe("asistente: herramientas y bucle del agente (API simulada)", () => {
     expect(llamadas).toHaveLength(2);
     expect(llamadas[0].url).toBe("https://api.anthropic.com/v1/messages");
     expect(llamadas[0].op.headers["anthropic-dangerous-direct-browser-access"]).toBe("true");
-    expect(llamadas[0].cuerpo.tools).toHaveLength(6);
+    expect(llamadas[0].cuerpo.tools).toHaveLength(7);
     const resultado = llamadas[1].cuerpo.messages[2].content[0];
     expect(resultado.type).toBe("tool_result");
     expect(JSON.parse(resultado.content).ultimo_dato).toBe("2026-11-11 11:59");
@@ -242,6 +251,27 @@ describe("límites del servicio gratuito", () => {
     expect(r.modelo).toBe("b");
     const seq2 = [lim("tokens per day (TPD)"), lim("requests per day (RPD)")];
     await expect(preguntarLocal({ url: "https://x/openai", clave: "k", modelo: "a", modelosAlternos: ["b"], esperar429: 60, historial: [{ role: "user", content: "x" }], ctx, fetchFn: async () => seq2.shift(), dormir: async () => {} })).rejects.toThrow(/cupo gratuito de hoy/);
+  });
+  it("petición muy grande (413): recorta el resultado de herramienta más largo y sigue", async () => {
+    const { preguntarLocal } = await import("../src/asistente.js");
+    const cuerpos = [];
+    const pideHerr = { ok: true, json: async () => ({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", function: { name: "estado_actual", arguments: "{}" } }] } }] }) };
+    const grande = { ok: false, status: 413, headers: { get: () => null }, json: async () => ({ error: { message: "Request too large for model on tokens per minute (TPM): Limit 8000, Requested 9500, please reduce your message size" } }) };
+    const seq = [pideHerr, grande, ok("con resumen")];
+    const ctx2 = { vivo: { ultima: null }, leerJSON: async () => ({}) };
+    // estado_actual sin datos devuelve un error corto; forzamos un resultado largo con un ejecutor falso vía historial
+    const r = await preguntarLocal({ url: "https://x/openai", clave: "k", modelo: "a", historial: [{ role: "user", content: "x" }, { role: "assistant", content: "" , tool_calls: [{ id: "v", function: { name: "estado_actual", arguments: "{}" } }] }, { role: "tool", tool_call_id: "v", content: "x".repeat(5000) }, { role: "user", content: "otra" }], ctx: ctx2, fetchFn: async (u, op) => { cuerpos.push(JSON.parse(op.body)); return seq.shift(); } });
+    expect(r.texto).toBe("con resumen");
+    const ultimo = cuerpos[cuerpos.length - 1].messages.filter((m) => m.role === "tool");
+    expect(ultimo.some((m) => /demasiado grande/.test(m.content))).toBe(true);
+    expect(ultimo.every((m) => m.content.length < 1000)).toBe(true);
+  });
+  it("plazo total: si el servicio no responde a tiempo, avisa en vez de quedarse esperando", async () => {
+    const { preguntarLocal } = await import("../src/asistente.js");
+    const colgado = (u, op) => new Promise((_, mal) => op.signal.addEventListener("abort", () => mal(op.signal.reason)));
+    const t0 = Date.now();
+    await expect(preguntarLocal({ url: "https://x/openai", clave: "k", modelo: "a", plazoMs: 300, tiempoLlamadaMs: 200, historial: [{ role: "user", content: "x" }], ctx, fetchFn: colgado })).rejects.toThrow(/tardó demasiado/);
+    expect(Date.now() - t0).toBeLessThan(2000);
   });
   it("si el servicio no acepta un parámetro opcional, reintenta sin él; el contexto va en la pregunta", async () => {
     const { preguntarLocal } = await import("../src/asistente.js");

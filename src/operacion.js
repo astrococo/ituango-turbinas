@@ -369,7 +369,14 @@ function aplicarCalidad(filas, exclusiones = [], { minCongelado = 30, excluirCon
     }
     i = j + 1;
   }
-  return { filas: fuera.size ? filas.filter((_, i) => !fuera.has(i)) : filas, excluidas, congelados };
+  // Winter-Kennedy en 0 con la unidad generando (p. ej. al reiniciarse el registrador): sin dato, no cero
+  let wkSinDato = 0;
+  const salida = (fuera.size ? filas.filter((_, i) => !fuera.has(i)) : filas).map((r) => {
+    if (!r.q2 || !r.p || !r.q2.some((q, i) => q != null && q < 1 && r.p[i] > P_EN_LINEA_MW)) return r;
+    wkSinDato++;
+    return { ...r, q2: r.q2.map((q, i) => (q != null && q < 1 && r.p[i] > P_EN_LINEA_MW ? null : q)) };
+  });
+  return { filas: salida, excluidas, congelados, wkSinDato };
 }
 
 export { aplicarCalidad, UNIDAD_COLUMNA, unidadColumna, UNIDADES_LOGGERNET, P_EN_LINEA_MW, separarCampos, leerLoggerNet, unirNivel, caudalRegulado, caudalColumnaLoggerNet, verificarColumnaLoggerNet, reglaOperativaDiaria, fcImplicito, nivelDesdeFC, agregarIntervalos, caudalModeloIntervalos, verificarFC, resumenPorUnidad };

@@ -1,13 +1,12 @@
 /* ============================================================
-   Asistente (agente con IA): Claude, vía la API de Anthropic, con
-   herramientas que leen SOLO los datos que la app ya tiene (estado en
-   vivo, histórico del repositorio privado, HydroForecast) y los modelos
-   de la app (colina, simulación de nivel). El modelo no inventa cifras:
-   las pide a las herramientas, y las herramientas usan el mismo código
-   que los módulos de la app.
-   La llamada sale del navegador con la clave de API del usuario
-   (cabecera anthropic-dangerous-direct-browser-access). Nada se envía
-   hasta que el usuario hace una pregunta.
+   Asistente (agente con IA) con herramientas que leen SOLO los datos que
+   la app ya tiene (estado en vivo, histórico del repositorio privado,
+   HydroForecast) y los modelos de la app (colina, simulación de nivel).
+   El modelo no inventa cifras: las pide a las herramientas, y las
+   herramientas usan el mismo código que los módulos de la app.
+   Motores: servidor de la app (Groq, gratis), GitHub Actions (Groq) u
+   Ollama en el equipo (preguntarLocal); Claude (preguntar) se conserva
+   para pruebas.
    ============================================================ */
 import {
   NAMO, CONDICION_DESCARGA_DEFECTO, pctFromDeg, GAMMA_ENSAYADO_MAX, P_MAXIMO_ESPERADO_MW,
@@ -37,12 +36,19 @@ Reglas:
   * Apertura del distribuidor: 100 % = 30,2° (límite ampliado), 97 % = 29,29° (techo de operación normal; el 3 % restante es reserva para frecuencia), 87,7 % = 26,5° (límite original). LoggerNet no mide la apertura: la app la estima con el modelo de la colina (ensayo 2013) a partir de la potencia medida.
   * El caudal Winter-Kennedy (WK) de cada unidad NO está calibrado: solo sirve como índice relativo entre unidades.
   * Hoy operan U1–U4 (almenara N°1); U5–U8 entran desde 2028. Potencia máxima garantizada: 307 MW en el eje por unidad. NAMO ${NAMO} msnm.
-- Si te piden una decisión operativa, entrega los números y las opciones; la decisión es del ingeniero.`;
+- Si te piden una decisión operativa, entrega los números y las opciones; la decisión es del ingeniero.
+- Elección de herramienta:
+  * Promedios, totales, máximos o comparaciones de un periodo (un mes, una semana, varios días): usa resumen_periodo (una sola llamada, hasta 366 días). historico_diario solo si piden el detalle día a día (máx. 10 días) y serie_horaria solo para horas puntuales.
+  * «Promedio de generación» de una unidad o de la central: entrega la potencia media (MW) y la energía (MWh) del periodo; aclara si el promedio es sobre las horas en línea o sobre todo el periodo.
+  * Simulaciones: pasa a simular_nivel SOLO las horas que pidió el usuario (p. ej. 10 h a 900 MW = 10 valores de 900). No agregues horas con 0 MW ni supongas paradas.
+  * El despacho de XM NO está en tus datos: se pega en la pestaña Despacho de la app. Si preguntan por el cumplimiento del despacho, dilo en una frase y entrega la potencia medida de las últimas horas cerradas.
+- Formato: respuesta corta (3 a 8 líneas). La cifra pedida primero, en negrita, con su unidad y la hora o el periodo del dato. Tablas solo si piden detalle hora a hora o por unidad. No repitas los supuestos completos; menciona solo los que cambian la lectura.`;
 
 const HERRAMIENTAS = [
   { name: "estado_actual", description: "Estado en vivo de la central con el último dato de LoggerNet: nivel y su tendencia, potencia y caudal por unidad, apertura estimada por unidad, vertedero, caudal descargado, entrada al embalse de hoy, regla 1891 del día (promedio, banda, lo requerido el resto del día, cierre si sigue como la última hora), nivel estimado a las 24:00, pronóstico de HydroForecast para hoy y alertas activas.", input_schema: { type: "object", properties: {} } },
-  { name: "historico_diario", description: "Resumen diario del histórico entre dos fechas (máximo 120 días): regla 1891 (promedio regulado, banda, estado), nivel (inicio, fin, mín., máx.), energía, potencia media, vertimiento, caudal descargado, caudal de entrada (balance de masa) y, por unidad, horas en línea, energía, arranques, potencia media y máxima.", input_schema: { type: "object", properties: { desde: { type: "string", description: "AAAA-MM-DD" }, hasta: { type: "string", description: "AAAA-MM-DD" } }, required: ["desde", "hasta"] } },
-  { name: "serie_horaria", description: "Promedios horarios entre dos fechas (máximo 14 días): nivel, caudal regulado, vertedero, descargado, F.C. y, por unidad, potencia, fracción de la hora en línea y apertura estimada (%).", input_schema: { type: "object", properties: { desde: { type: "string", description: "AAAA-MM-DD" }, hasta: { type: "string", description: "AAAA-MM-DD" } }, required: ["desde", "hasta"] } },
+  { name: "resumen_periodo", description: "Resumen agregado de un periodo (1 a 366 días), calculado con el histórico diario: energía, potencia media y máxima de la central y de cada unidad (sobre las horas en línea y sobre todo el periodo), horas en línea y arranques por unidad, nivel (inicio, fin, mín., máx.), caudal regulado medio, entrada media, días con vertimiento y días de la regla 1891 dentro/fuera/en excepción. Úsala para promedios, totales y comparaciones de meses o semanas.", input_schema: { type: "object", properties: { desde: { type: "string", description: "AAAA-MM-DD" }, hasta: { type: "string", description: "AAAA-MM-DD (puede ser hoy: el día en curso cuenta parcial)" } }, required: ["desde", "hasta"] } },
+  { name: "historico_diario", description: "Detalle día a día entre dos fechas (máximo 10 días; para periodos largos use resumen_periodo): regla 1891 (promedio regulado, banda, estado), nivel (inicio, fin, mín., máx.), energía, potencia media, vertimiento, caudal descargado, caudal de entrada (balance de masa) y, por unidad, horas en línea, energía, arranques, potencia media y máxima.", input_schema: { type: "object", properties: { desde: { type: "string", description: "AAAA-MM-DD" }, hasta: { type: "string", description: "AAAA-MM-DD" } }, required: ["desde", "hasta"] } },
+  { name: "serie_horaria", description: "Promedios horarios entre dos fechas (máximo 2 días): nivel, caudal regulado, vertedero, descargado, F.C. y, por unidad, potencia, fracción de la hora en línea y apertura estimada (%).", input_schema: { type: "object", properties: { desde: { type: "string", description: "AAAA-MM-DD" }, hasta: { type: "string", description: "AAAA-MM-DD" } }, required: ["desde", "hasta"] } },
   { name: "pronostico_caudal", description: "Pronóstico diario de HydroForecast (Sitio Presa y Olaya: media, mínimo y máximo, hasta 15 días) y lo observado de los últimos 7 días.", input_schema: { type: "object", properties: {} } },
   { name: "simular_nivel", description: "Simula el nivel del embalse hora a hora con el modelo de la app (colina + curvas cota-volumen; sin vertimiento) para un programa de potencia total en bornes. Unidades: el mínimo que entrega la potencia (máx. 4). Devuelve nivel por hora, caudal turbinado, apertura por unidad y el caudal regulado (Hidrometría) resultante.", input_schema: { type: "object", properties: { potencias_mw: { type: "array", items: { type: "number" }, description: "Potencia total en bornes (MW) de cada hora a simular, en orden (1 a 24 valores)." }, caudal_entrada_m3s: { type: "number", description: "Caudal de entrada al embalse. Si falta, el balance de masa de hoy." }, nivel_inicial_msnm: { type: "number", description: "Si falta, el nivel actual." } }, required: ["potencias_mw"] } },
   { name: "punto_operacion", description: "Para un nivel del embalse y una potencia por unidad, la apertura del distribuidor (% y grados), el caudal turbinado, la eficiencia y el salto neto de cada unidad, con la colina común (estimación del modelo).", input_schema: { type: "object", properties: { nivel_msnm: { type: "number" }, potencias_unidad_mw: { type: "array", items: { type: "number" }, description: "Potencia en bornes de cada unidad en línea (MW), p. ej. [250, 250, 250]." } }, required: ["nivel_msnm", "potencias_unidad_mw"] } },
@@ -88,43 +94,82 @@ function validarRango(desde, hasta, max) {
 }
 
 async function historicoDiario(ctx, { desde, hasta }) {
-  const e = validarRango(desde, hasta, (ctx.limites && ctx.limites.historicoDias) || 120); if (e) return { error: e };
+  const e = validarRango(desde, hasta, (ctx.limites && ctx.limites.historicoDias) || 10); if (e) return { error: e };
   const anios = [...new Set([desde.slice(0, 4), hasta.slice(0, 4)])];
   const partes = await Promise.all(anios.map((a) => ctx.leerJSON(`derivados/diario/${a}.json`).catch(() => null)));
   const dias = partes.filter(Boolean).flatMap((p) => p.dias).filter((d) => d.dia >= desde && d.dia <= hasta).sort((a, b) => (a.dia < b.dia ? -1 : 1));
+  if (!dias.length) return { error: `No hay días en el histórico entre ${desde} y ${hasta}.` };
+  // Formato de tabla (columnas + filas): la mitad de tamaño que objetos con nombres repetidos
   return {
-    nota: "parcial = día incompleto en los datos (o día en curso).",
-    dias: dias.map((d) => ({
-      dia: d.dia, parcial: d.parcial,
-      regla: { promedio_regulado_m3s: r(d.regla.qReg, 2), banda_min: d.regla.banda ? r(d.regla.banda.min, 2) : null, banda_max: d.regla.banda ? r(d.regla.banda.max, 2) : null, estado: d.regla.estado },
-      nivel: d.nivel ? { ini: r(d.nivel.ini, 3), fin: r(d.nivel.fin, 3), min: r(d.nivel.min, 3), max: r(d.nivel.max, 3) } : null,
-      energia_mwh: r(d.energia, 0), potencia_media_mw: r(d.pMedia, 1), fc: r(d.fc, 4),
-      vertedero: d.vertedero ? { q_media: r(d.vertedero.qMedia, 1), q_max: r(d.vertedero.qMax, 1), con_vertimiento: d.vertedero.conVertimiento } : null,
-      descargado_q_media: d.descargado ? r(d.descargado.qMedia, 1) : null, entrada_q_m3s: d.balance ? r(d.balance.qEntrada, 1) : null,
-      unidades: (d.unidades || []).map((u, i) => ({ unidad: `U${i + 1}`, horas: r(u.horas, 1), energia_mwh: r(u.energia, 0), arranques: u.arranques, p_media_mw: r(u.pMedia, 1), p_max_mw: r(u.pMax, 1) })),
-    })),
+    nota: "parcial = día incompleto (o en curso). Por unidad: [horas en línea, energía MWh, arranques, P media en línea MW, P máx MW].",
+    columnas: ["dia", "parcial", "regla_q_m3s", "banda_min", "banda_max", "regla_estado", "nivel_ini", "nivel_fin", "energia_mwh", "p_media_mw", "vertimiento", "entrada_m3s", "U1", "U2", "U3", "U4"],
+    filas: dias.map((d) => [
+      d.dia, !!d.parcial, r(d.regla.qReg, 1), d.regla.banda ? r(d.regla.banda.min, 1) : null, d.regla.banda ? r(d.regla.banda.max, 1) : null, d.regla.estado,
+      d.nivel ? r(d.nivel.ini, 2) : null, d.nivel ? r(d.nivel.fin, 2) : null, r(d.energia, 0), r(d.pMedia, 0),
+      d.vertedero ? !!d.vertedero.conVertimiento : null, d.balance ? r(d.balance.qEntrada, 0) : null,
+      ...[0, 1, 2, 3].map((i) => { const u = (d.unidades || [])[i]; return u ? [r(u.horas, 1), r(u.energia, 0), u.arranques, r(u.pMedia, 0), r(u.pMax, 0)] : null; }),
+    ]),
+  };
+}
+
+async function resumenPeriodo(ctx, { desde, hasta }) {
+  const e = validarRango(desde, hasta, 366); if (e) return { error: e };
+  const anios = [...new Set([desde.slice(0, 4), hasta.slice(0, 4)])];
+  const partes = await Promise.all(anios.map((a) => ctx.leerJSON(`derivados/diario/${a}.json`).catch(() => null)));
+  const dias = partes.filter(Boolean).flatMap((p) => p.dias).filter((d) => d.dia >= desde && d.dia <= hasta).sort((a, b) => (a.dia < b.dia ? -1 : 1));
+  if (!dias.length) return { error: `No hay días en el histórico entre ${desde} y ${hasta}.` };
+  const horasPeriodo = dias.reduce((a, d) => a + (Number.isFinite(d.minutos) ? d.minutos / 60 : 24), 0);
+  const suma = (f) => dias.reduce((a, d) => { const v = f(d); return Number.isFinite(v) ? a + v : a; }, 0);
+  const maximo = (f) => dias.reduce((a, d) => { const v = f(d); return Number.isFinite(v) && (a == null || v > a) ? v : a; }, null);
+  const minimo = (f) => dias.reduce((a, d) => { const v = f(d); return Number.isFinite(v) && (a == null || v < a) ? v : a; }, null);
+  const energia = suma((d) => d.energia);
+  const conRegla = dias.filter((d) => d.regla && Number.isFinite(d.regla.qReg));
+  const cuenta = (est) => dias.filter((d) => d.regla && d.regla.estado === est).length;
+  const nivIni = dias.find((d) => d.nivel), nivFin = [...dias].reverse().find((d) => d.nivel);
+  const unidades = [0, 1, 2, 3].map((i) => {
+    const horas = suma((d) => (d.unidades && d.unidades[i] ? d.unidades[i].horas : NaN));
+    const en = suma((d) => (d.unidades && d.unidades[i] ? d.unidades[i].energia : NaN));
+    return {
+      unidad: `U${i + 1}`, horas_en_linea: r(horas, 1), energia_mwh: r(en, 0),
+      p_media_en_linea_mw: horas > 0 ? r(en / horas, 1) : null, p_media_periodo_mw: horasPeriodo > 0 ? r(en / horasPeriodo, 1) : null,
+      p_max_mw: r(maximo((d) => (d.unidades && d.unidades[i] ? d.unidades[i].pMax : NaN)), 1),
+      arranques: suma((d) => (d.unidades && d.unidades[i] ? d.unidades[i].arranques : NaN)),
+    };
+  });
+  const parciales = dias.filter((d) => d.parcial).map((d) => d.dia);
+  return {
+    periodo: { desde: dias[0].dia, hasta: dias[dias.length - 1].dia, dias_con_datos: dias.length, horas_con_datos: r(horasPeriodo, 1), dias_parciales: parciales.length ? parciales : undefined },
+    central: {
+      energia_mwh: r(energia, 0), p_media_mw: horasPeriodo > 0 ? r(energia / horasPeriodo, 1) : null,
+      p_media_diaria_max_mw: r(maximo((d) => d.pMedia), 1), p_media_diaria_min_mw: r(minimo((d) => d.pMedia), 1),
+      caudal_regulado_medio_m3s: conRegla.length ? r(conRegla.reduce((a, d) => a + d.regla.qReg, 0) / conRegla.length, 1) : null,
+      entrada_media_m3s: r(suma((d) => (d.balance ? d.balance.qEntrada : NaN)) / Math.max(1, dias.filter((d) => d.balance && Number.isFinite(d.balance.qEntrada)).length), 1),
+      dias_con_vertimiento: dias.filter((d) => d.vertedero && d.vertedero.conVertimiento).length,
+    },
+    nivel_msnm: nivIni ? { inicio: r(nivIni.nivel.ini, 2), fin: r(nivFin.nivel.fin, 2), min: r(minimo((d) => (d.nivel ? d.nivel.min : NaN)), 2), max: r(maximo((d) => (d.nivel ? d.nivel.max : NaN)), 2) } : null,
+    regla_1891_dias: { cumple: cuenta("cumple"), por_encima: cuenta("por_encima"), por_debajo: cuenta("por_debajo"), excepcion: cuenta("excepcion"), sin_banda: dias.filter((d) => d.regla && !d.regla.banda).length },
+    unidades,
+    nota: "p_media_en_linea = energía / horas en línea; p_media_periodo = energía / horas con datos del periodo. Energía en bornes (LoggerNet).",
   };
 }
 
 async function serieHorariaHerr(ctx, { desde, hasta }) {
-  const e = validarRango(desde, hasta, (ctx.limites && ctx.limites.horariaDias) || 14); if (e) return { error: e };
+  const e = validarRango(desde, hasta, (ctx.limites && ctx.limites.horariaDias) || 2); if (e) return { error: e };
   const meses = [...new Set([desde.slice(0, 7), hasta.slice(0, 7)])];
   const partes = await Promise.all(meses.map((m) => ctx.leerJSON(`derivados/horario/${m}.json`).catch(() => null)));
   const filas = [];
   for (const p of partes.filter(Boolean)) p.t.forEach((t, i) => {
     if (t.slice(0, 10) < desde || t.slice(0, 10) > hasta) return;
-    filas.push({
-      t, nivel: r(p.nivel[i], 3), q_regulado: r(p.qReg[i], 1), vertedero: r(p.qVert[i], 1), descargado: r(p.qDesc[i], 1), fc: r(p.fc[i], 4),
-      p_mw: (p.p[i] || []).map((x) => r(x, 1)), en_linea: (p.linea[i] || []).map((x) => r(x, 2)), apertura_pct: p.gamma ? (p.gamma[i] || []).map(pct) : null,
-    });
+    filas.push([t, r(p.nivel[i], 2), r(p.qReg[i], 1), r(p.qVert[i], 1), r(p.qDesc[i], 0), (p.p[i] || []).map((x) => r(x, 0)), p.gamma ? (p.gamma[i] || []).map(pct) : null]);
   });
   // Horas de hoy (aún no en el histórico)
   const v = ctx.vivo;
   if (v && v.resHoy && hasta >= v.hoy) {
-    const ya = new Set(filas.map((x) => x.t));
-    v.resHoy.horas.forEach((h) => { if (h && !ya.has(h.t)) filas.push({ t: h.t, nivel: r(h.nivel, 3), q_regulado: r(h.qReg, 1), vertedero: r(h.qVert, 1), descargado: r(h.qDesc, 1), fc: r(h.fc, 4), p_mw: h.p.map((x) => r(x, 1)), en_linea: h.linea, apertura_pct: (h.gamma || []).map(pct) }); });
+    const ya = new Set(filas.map((x) => x[0]));
+    v.resHoy.horas.forEach((h) => { if (h && !ya.has(h.t) && h.t >= desde && h.t.slice(0, 10) <= hasta) filas.push([h.t, r(h.nivel, 2), r(h.qReg, 1), r(h.qVert, 1), r(h.qDesc, 0), h.p.map((x) => r(x, 0)), (h.gamma || []).map(pct)]); });
   }
-  return { nota: "Hora = inicio de la hora (Colombia). apertura_pct estimada con el modelo; null = detenida o en arranque/parada.", horas: filas };
+  if (!filas.length) return { error: `No hay horas entre ${desde} y ${hasta}.` };
+  return { nota: "Hora = inicio de la hora (Colombia), promedio de esa hora. apertura_pct estimada con el modelo; null = detenida o en arranque/parada.", columnas: ["hora", "nivel_msnm", "q_regulado_m3s", "vertedero_m3s", "descargado_m3s", "p_mw_U1_U4", "apertura_pct_U1_U4"], filas };
 }
 
 function pronosticoCaudal({ vivo: v }) {
@@ -149,11 +194,11 @@ function simularNivel({ vivo: v }, { potencias_mw, caudal_entrada_m3s, nivel_ini
   return {
     supuestos: { nivel_inicial_msnm: r(nivel, 3), caudal_entrada_m3s: r(qIn, 1), desde: t0, condicion_descarga: "río colmatado (ASE)", techo_apertura: "100 % (30,2°) y 307 MW en el eje por unidad", sin_vertimiento: true },
     nivel_final_msnm: r(sim.Hfinal, 3), cambio_cm: r(sim.deltaH * 100, 1),
-    horas: sim.detalle.map((d, i) => ({
-      hora: i + 1, potencia_mw: d.potenciaMW, unidades: d.unidades, apertura_pct: pct(d.gamma), q_turbinado_m3s: r(d.qTurbinado, 1),
-      q_regulado_hidrometria_m3s: d.potenciaMW > 0 ? r(d.potenciaMW / factorConversionHidrometria(d.Hinicio, t0 || "2099-01-01 00:00"), 1) : 0,
-      nivel_fin_msnm: r(d.Hfin, 3), alcanzable: d.alcanzable || d.potenciaMW === 0,
-    })),
+    horas_simuladas: potencias_mw.length,
+    columnas: ["hora", "potencia_mw", "unidades", "apertura_pct", "q_turbinado_m3s", "q_regulado_hidrometria_m3s", "nivel_fin_msnm", "alcanzable"],
+    filas: sim.detalle.map((d, i) => [i + 1, d.potenciaMW, d.unidades, pct(d.gamma), r(d.qTurbinado, 1),
+      d.potenciaMW > 0 ? r(d.potenciaMW / factorConversionHidrometria(d.Hinicio, t0 || "2099-01-01 00:00"), 1) : 0,
+      r(d.Hfin, 3), !!(d.alcanzable || d.potenciaMW === 0)]),
   };
 }
 
@@ -169,6 +214,7 @@ function puntoOperacion(_, { nivel_msnm, potencias_unidad_mw }) {
 
 const EJECUTORES = {
   estado_actual: (ctx) => estadoActual(ctx),
+  resumen_periodo: resumenPeriodo,
   historico_diario: historicoDiario,
   serie_horaria: serieHorariaHerr,
   pronostico_caudal: (ctx) => pronosticoCaudal(ctx),
@@ -179,7 +225,15 @@ const EJECUTORES = {
 async function ejecutarHerramienta(ctx, nombre, entrada) {
   const f = EJECUTORES[nombre];
   if (!f) return { error: `Herramienta desconocida: ${nombre}` };
-  try { return await f(ctx, entrada || {}); } catch (e) { return { error: String(e && e.message ? e.message : e) }; }
+  try {
+    const salida = await f(ctx, entrada || {});
+    // Tope de tamaño (el plan gratuito de Groq admite ~8.000 tokens por petición)
+    const max = ctx.maxCaracteresHerramienta;
+    if (max && salida && !salida.error && JSON.stringify(salida).length > max) {
+      return { error: `El resultado es demasiado grande para el servicio gratuito (${JSON.stringify(salida).length} caracteres). Use resumen_periodo para promedios o totales, o pida menos días.` };
+    }
+    return salida;
+  } catch (e) { return { error: String(e && e.message ? e.message : e) }; }
 }
 
 /* Bucle del agente: llama a la API, ejecuta las herramientas que pida y
@@ -254,8 +308,29 @@ function segundosDeEspera(resp, msg) {
      acepta, se reintenta sin ellos.
    - contexto: texto que se agrega a la pregunta (p. ej. el estado en vivo ya consultado) para
      ahorrar una vuelta. */
-async function preguntarLocal({ url, modelo, historial, ctx, onPaso = () => {}, fetchFn = fetch, senal, clave = null, esperar429 = 0, modelosAlternos = [], opciones = {}, contexto = null, dormir = (ms) => new Promise((ok) => setTimeout(ok, ms)) }) {
+/* Señal que se cancela con la del usuario o al vencer ms. */
+function senalConTiempo(senal, ms) {
+  if (!ms) return { senal, limpiar: () => {} };
+  const c = new AbortController();
+  const t = setTimeout(() => { const e = new Error("tiempo"); e.name = "TimeoutError"; c.abort(e); }, ms);
+  const alAbortar = () => c.abort(senal.reason);
+  if (senal) { if (senal.aborted) c.abort(senal.reason); else senal.addEventListener("abort", alAbortar, { once: true }); }
+  return { senal: c.signal, limpiar: () => { clearTimeout(t); if (senal) senal.removeEventListener("abort", alAbortar); } };
+}
+/* Petición muy grande (413): reemplaza el resultado de herramienta más largo por un aviso. */
+function recortarMasLargo(mensajes) {
+  let k = -1, largo = 0;
+  mensajes.forEach((m, i) => { if (m.role === "tool" && String(m.content).length > largo && !/demasiado grande/.test(m.content)) { k = i; largo = String(m.content).length; } });
+  if (k < 0 || largo < 400) return false;
+  mensajes[k] = { ...mensajes[k], content: JSON.stringify({ error: "Resultado demasiado grande para el servicio gratuito. Use resumen_periodo para promedios o totales, o pida menos días." }) };
+  return true;
+}
+
+async function preguntarLocal({ url, modelo, historial, ctx, onPaso = () => {}, fetchFn = fetch, senal, clave = null, esperar429 = 0, modelosAlternos = [], opciones = {}, contexto = null, dormir = (ms) => new Promise((ok) => setTimeout(ok, ms)), plazoMs = 0, tiempoLlamadaMs = 0 }) {
   const base = baseLocal(url);
+  const inicio = Date.now();
+  const restante = () => (plazoMs ? plazoMs - (Date.now() - inicio) : Infinity);
+  const sinTiempo = () => new Error("El asistente tardó demasiado (el servicio gratuito está lento u ocupado). Intente de nuevo o haga una pregunta más concreta.");
   if (!modelo) throw new Error("Elija un modelo local (botón «Probar conexión»).");
   const sistema = { role: "system", content: `${SISTEMA}\nFecha y hora actual (Colombia): ${ctx.ahora || "desconocida"}.\nPara cualquier cifra de operación, llama primero a la herramienta que corresponda.` };
   const mensajes = historial.slice();
@@ -272,15 +347,29 @@ async function preguntarLocal({ url, modelo, historial, ctx, onPaso = () => {}, 
     let resp, cuerpo, msg;
     for (let intento = 0; intento < 12; intento++) {
       usado = modelos[k];
+      if (restante() < 3000) throw sinTiempo();
+      const limite = Math.min(tiempoLlamadaMs || Infinity, restante());
+      const st = senalConTiempo(senal, Number.isFinite(limite) ? limite : 0);
       try {
         resp = await fetchFn(`${base}/v1/chat/completions`, {
-          method: "POST", signal: senal, headers: { "content-type": "application/json", ...(clave ? { Authorization: `Bearer ${clave}` } : {}) },
+          method: "POST", signal: st.senal, headers: { "content-type": "application/json", ...(clave ? { Authorization: `Bearer ${clave}` } : {}) },
           body: JSON.stringify({ model: usado, messages: [sistema, ...mensajes], tools: HERRAMIENTAS_OPENAI, stream: false, temperature: 0.2, ...extra }),
         });
-      } catch (e) { throw clave ? new Error(`No se pudo conectar con ${base}.`) : errorConexionLocal(base, e); }
-      cuerpo = await resp.json().catch(() => null);
+        cuerpo = await resp.json().catch(() => null);
+      } catch (e) {
+        if (senal && senal.aborted) throw e;
+        if (e && (e.name === "TimeoutError" || (st.senal && st.senal.aborted && st.senal.reason && st.senal.reason.name === "TimeoutError"))) {
+          // El modelo no respondió a tiempo: otro modelo, si queda tiempo
+          const sig = modelos.findIndex((m, j) => j !== k && !agotados.has(m));
+          if (sig >= 0 && restante() > 8000) { k = sig; continue; }
+          throw sinTiempo();
+        }
+        throw clave ? new Error(`No se pudo conectar con ${base}.`) : errorConexionLocal(base, e);
+      } finally { st.limpiar(); }
       if (resp.ok) break;
       msg = cuerpo && cuerpo.error ? cuerpo.error.message || cuerpo.error : `HTTP ${resp.status}`;
+      // Petición muy grande: recortar el resultado de herramienta más largo y reintentar
+      if ((resp.status === 413 || /too large|reduce your message/i.test(String(msg))) && recortarMasLargo(mensajes)) continue;
       // Parámetro opcional no aceptado: reintentar sin los extras
       if (resp.status === 400 && Object.keys(extra).length && /reasoning|max_tokens|unsupported|unknown|unrecognized/i.test(String(msg))) { extra = {}; continue; }
       if (resp.status !== 429) break;
@@ -294,7 +383,7 @@ async function preguntarLocal({ url, modelo, historial, ctx, onPaso = () => {}, 
       if (ocupados.size === 0) break; // todos sin cupo diario
       // Todos en su límite por minuto: esperar lo que pide el servicio (dentro del presupuesto)
       const seg = Math.min(espera, 60) + 1;
-      if (esperar429 <= 0 || esperado + seg > esperar429) break;
+      if (esperar429 <= 0 || esperado + seg > esperar429 || seg * 1000 > restante() - 8000) break;
       esperado += seg;
       await dormir(seg * 1000);
       ocupados.clear(); espera = Infinity;
@@ -302,8 +391,8 @@ async function preguntarLocal({ url, modelo, historial, ctx, onPaso = () => {}, 
     }
     if (!resp.ok) {
       if (clave && resp.status === 401) throw new Error("La clave del servicio no es válida (401).");
-      if (clave && resp.status === 429) throw new Error(/per day|TPD|RPD/i.test(String(msg)) ? `Se acabó el cupo gratuito de hoy en todos los modelos disponibles; se renueva cada día. (${msg})` : `El servicio gratuito está muy ocupado en este momento; intente de nuevo en un minuto. (${msg})`);
-      if (clave && resp.status === 413) throw new Error(`La consulta quedó muy grande para el límite gratuito; pida un periodo más corto. (${msg})`);
+      if (clave && resp.status === 429) throw new Error(/per day|TPD|RPD/i.test(String(msg)) ? "Se acabó el cupo gratuito de hoy del servicio de IA; se renueva cada día." : "El servicio gratuito de IA está ocupado en este momento; intente de nuevo en un minuto.");
+      if (clave && (resp.status === 413 || /too large/i.test(String(msg)))) throw new Error("La consulta quedó muy grande para el servicio gratuito. Pida un periodo más corto o un dato más puntual.");
       throw new Error(/not found/i.test(String(msg)) ? `El modelo «${usado}» no está descargado en Ollama (ollama pull ${usado}).` : /does not support tools/i.test(String(msg)) ? `El modelo «${usado}» no admite herramientas; use uno con «tools», p. ej. qwen3:8b.` : `Error del modelo${clave ? "" : " local"}: ${msg}`);
     }
     const m = cuerpo && cuerpo.choices && cuerpo.choices[0] ? cuerpo.choices[0].message : null;

@@ -247,13 +247,16 @@ function ChartFamilia({ ejeX, ejeY, xLabel, yLabel, xDomain, yDomain, waeCampoX,
         {WAE_PUNTOS.map((p, i) => <circle key={i} cx={sx(p[waeCampoX])} cy={sy(p[waeCampoY] * (waeEscala || 1))} r={4} fill={T.amber} stroke={T.bg} strokeWidth={1} />)}
         <circle cx={sx(bepXY[0])} cy={sy(bepXY[1])} r={7} fill={T.red} stroke={T.bg} strokeWidth={1.5} />
         {puntoActualXY && <circle cx={sx(puntoActualXY[0])} cy={sy(puntoActualXY[1])} r={6} fill="none" stroke={T.ink} strokeWidth={2.2} />}
+        {/* Escenarios 2023: los 6 puntos quedan casi encima; una sola etiqueta y el detalle al pasar el puntero */}
         {puntosExtra && puntosExtra.map((p, i) => (
-          <g key={i}>
-            <rect x={sx(p.x) - 5} y={sy(p.y) - 5} width={10} height={10} fill="#8E4EC6" stroke={T.bg} strokeWidth={1.2} transform={`rotate(45, ${sx(p.x)}, ${sy(p.y)})`} />
-            <line x1={sx(p.x) + 7} y1={sy(p.y)} x2={sx(p.x) + 16} y2={sy(p.y) - 8 - i * 13} stroke="#8E4EC6" strokeWidth={0.8} opacity={0.6} />
-            <text x={sx(p.x) + 18} y={sy(p.y) - 6 - i * 13} fontSize="10" fill={T.ink} fontFamily={FONT_BODY} fontWeight="700">{p.label}</text>
-          </g>
+          <rect key={i} x={sx(p.x) - 5} y={sy(p.y) - 5} width={10} height={10} fill="#8E4EC6" stroke={T.bg} strokeWidth={1.2} transform={`rotate(45, ${sx(p.x)}, ${sy(p.y)})`}>
+            <title>{`${p.label}: H ${fx(p.x, 2)} m · ${fx(p.y, 2)}`}</title>
+          </rect>
         ))}
+        {puntosExtra && puntosExtra.length > 0 && (() => {
+          const x = Math.max(...puntosExtra.map((p) => sx(p.x))), y = Math.min(...puntosExtra.map((p) => sy(p.y)));
+          return <text x={x + 10} y={y - 8} fontSize="10.5" fill={T.ink} fontFamily={FONT_BODY} fontWeight="700">Escenarios 2023 ({puntosExtra.length})</text>;
+        })()}
         {hover && <circle cx={hover.xPix} cy={hover.yPix} r={5} fill={T.cyan} stroke={T.bg} strokeWidth={1.5} />}
         {arrastre && (
           <rect x={Math.min(arrastre.x0, arrastre.x1)} y={Math.min(arrastre.y0, arrastre.y1)}
@@ -268,7 +271,7 @@ function ChartFamilia({ ejeX, ejeY, xLabel, yLabel, xDomain, yDomain, waeCampoX,
         <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="16" height="8"><line x1="0" y1="4" x2="16" y2="4" stroke="#5FA85A" strokeWidth="1.3" /></svg>Isolíneas de eficiencia</span>
         <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill={T.amber} /></svg>WAE</span>
         <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill={T.red} /></svg>BEP</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="none" stroke={T.ink} strokeWidth="2" /></svg>Tu selección</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="none" stroke={T.ink} strokeWidth="2" /></svg>Punto seleccionado</span>
         {puntosExtra && <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="10" height="10"><rect x="1" y="1" width="8" height="8" fill="#8E4EC6" transform="rotate(45,5,5)" /></svg>Escenarios 2023</span>}
         <span style={{ marginLeft: "auto", fontSize: 10.5, color: T.inkFaint }}>Arrastra sobre el gráfico para hacer zoom</span>
       </div>
@@ -438,7 +441,7 @@ function InputNumeroLibre({ value, onChange, className, style, min, max, step, d
 const NOMBRE_PROGRAMA = { xm: "Despacho XM", rt: "Promedio RT (y XM donde falta)", rtPlano: "Promedio RT (y plano donde falta)", plano: "Plano por regla operativa" };
 const nombrePrograma = (modo, progs) => (modo === "rt" && progs && progs.rt && progs.rt.conPlano ? NOMBRE_PROGRAMA.rtPlano : NOMBRE_PROGRAMA[modo]);
 const HORAS_DIA = Array.from({ length: 24 }, (_, i) => i);
-const filaDespachoVacia = (h) => ({ hora: h, despacho: 0, rt: null, unidades: null, qEntrada: null, nivelMedido: null });
+const filaDespachoVacia = (h) => ({ hora: h, despacho: null, rt: null, unidades: null, qEntrada: null, nivelMedido: null });
 
 function InputOpcional({ value, onChange, placeholder, step, style }) {
   const [texto, setTexto] = useState(value == null ? "" : String(value));
@@ -706,8 +709,10 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
     const s = [
       { nombre: `Entrada −${sensQ} m³/s`, datos: g.map((x) => x.qMenos), color: T.inkFaint, dash: true, ancho: 1.2 },
       { nombre: `Entrada +${sensQ} m³/s`, datos: g.map((x) => x.qMas), color: T.inkFaint, dash: true, ancho: 1.2 },
-      { nombre: `Despacho XM −${bandaPct} %`, datos: g.map((x) => x.bandaInf), indice: 1, dash: true, ancho: 1.2 },
-      { nombre: `Despacho XM +${bandaPct} %`, datos: g.map((x) => x.bandaSup), indice: 1, dash: true, ancho: 1.2 },
+      ...(calc.hayXM ? [
+        { nombre: `Despacho XM −${bandaPct} %`, datos: g.map((x) => x.bandaInf), indice: 1, dash: true, ancho: 1.2 },
+        { nombre: `Despacho XM +${bandaPct} %`, datos: g.map((x) => x.bandaSup), indice: 1, dash: true, ancho: 1.2 },
+      ] : []),
       { nombre: nombrePrograma(calc.modo, calc.progs), datos: g.map((x) => x.principal), indice: 0, ancho: 2.6 },
     ];
     if (calc.comparar.xm) s.push({ nombre: "Despacho XM", datos: g.map((x) => x.xm), indice: 1, ancho: 1.6 });
@@ -860,9 +865,9 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
           <div className="itu-kpis" style={{ marginBottom: 10 }}>
             <Kpi T={T} rotulo={`Nivel a las 24 h · ${nombrePrograma(calc.modo, calc.progs)}`} valor={calc.principal.Hfinal} decimales={3} unidad="msnm"
               nota={`${calc.principal.deltaH >= 0 ? "+" : ""}${fx(calc.principal.deltaH * 100, 1)} cm en el día`} />
-            <Kpi T={T} rotulo={calc.inf ? `Rango con XM ±${bandaPct} %` : `Rango con entrada ±${sensQ} m³/s`}
+            <Kpi T={T} rotulo={calc.inf ? `Nivel a las 24 h con XM ±${bandaPct} %` : `Nivel a las 24 h con entrada ±${sensQ} m³/s`}
               valor={calc.inf ? `${fx(calc.sup.Hfinal, 2)} – ${fx(calc.inf.Hfinal, 2)}` : `${fx(calc.qMenos.Hfinal, 2)} – ${fx(calc.qMas.Hfinal, 2)}`} unidad="msnm"
-              nota={calc.inf ? `Entrada ±${sensQ} m³/s: ${fx(calc.qMenos.Hfinal, 2)} – ${fx(calc.qMas.Hfinal, 2)} msnm` : "Pegue el despacho de XM para la banda operativa"} />
+              nota={calc.inf ? `Entrada ±${sensQ} m³/s: ${fx(calc.qMenos.Hfinal, 2)} – ${fx(calc.qMas.Hfinal, 2)} msnm` : `Con el despacho de XM pegado se muestra también el rango por la banda ±${bandaPct} %`} />
             <Kpi T={T} rotulo="Regla 1891 · programa" valor={calc.regla.principal ? calc.regla.principal.q : null} unidad="m³/s"
               estado={chip("principal")} nota={calc.regla.banda ? `Banda ${fx(calc.regla.banda.min, 1)} – ${fx(calc.regla.banda.max, 1)} m³/s` : "Falta el Q regulado de ayer"} />
             <Kpi T={T} rotulo="Promedio RT hasta ahora" valor={calc.regla.rt ? calc.regla.rt.q : null} unidad="m³/s"
@@ -871,9 +876,18 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
         );
       })()}
       <div style={{ ...resumen, marginBottom: 12 }}>
-        {noAlcanzables.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {noAlcanzables.map((d) => d.hora).join(", ")}: la potencia no se alcanza con esas unidades, el techo de apertura {etiquetaTecho} (se elige en "Rango de apertura" del Buscador) y {P_MAXIMO_ESPERADO_MW} MW por unidad. Aumenta las unidades de esa hora o revisa el techo; el nivel se calcula con la potencia máxima alcanzable.</div>}
-        {reducidas.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {reducidas.map((d) => `${d.hora} (${d.unidadesPedidas}→${d.unidades} ud.)`).join(", ")}: con las unidades pedidas, cada una quedaría por debajo de la apertura mínima ensayada ({fx(pctFromDeg(GAMMAS_HILL[0]), 1)} % = {fx(GAMMAS_HILL[0], 2)}°); se calculó con la cantidad de unidades que turbina menos agua.</div>}
-        {bajoMinimo.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {bajoMinimo.map((d) => d.hora).join(", ")}: la potencia es menor que la de una unidad en la apertura mínima ensayada ({fx(pctFromDeg(GAMMAS_HILL[0]), 1)} % = {fx(GAMMAS_HILL[0], 2)}°); se tomó el caudal de esa apertura mínima con una unidad.</div>}
+        {(() => {
+          // Causa por hora: la potencia garantizada en el eje (307 MW por unidad) o el techo de apertura
+          const hh = (d) => `${String(d.hora).padStart(2, "0")}:00`;
+          const porPotencia = noAlcanzables.filter((d) => d.pEjeUnidad > P_MAXIMO_ESPERADO_MW + 1e-6);
+          const porApertura = noAlcanzables.filter((d) => !(d.pEjeUnidad > P_MAXIMO_ESPERADO_MW + 1e-6));
+          return <>
+            {porPotencia.length > 0 && <div style={{ color: T.inkMuted }}>ⓘ {porPotencia.length === 1 ? "Hora" : "Horas"} {porPotencia.map(hh).join(", ")}: el programa pide {fx(Math.max(...porPotencia.map((d) => d.pBornesUnidad)), 1)} MW en bornes por unidad (≈ {fx(Math.max(...porPotencia.map((d) => d.pEjeUnidad)), 1)} MW en el eje), por encima de la garantía de {P_MAXIMO_ESPERADO_MW} MW en el eje. El nivel se calculó con {P_MAXIMO_ESPERADO_MW} MW en el eje por unidad, así que puede quedar un poco más alto que el real.</div>}
+            {porApertura.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ {porApertura.length === 1 ? "Hora" : "Horas"} {porApertura.map(hh).join(", ")}: la potencia no se alcanza con esas unidades dentro del techo de apertura {etiquetaTecho} (se elige en «Rango de apertura» del Buscador). Aumente las unidades de esa hora o revise el techo; el nivel se calcula con la potencia máxima alcanzable.</div>}
+          </>;
+        })()}
+        {reducidas.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {reducidas.map((d) => `${String(d.hora).padStart(2, "0")}:00 (${d.unidadesPedidas}→${d.unidades} ud.)`).join(", ")}: con las unidades pedidas, cada una quedaría por debajo de la apertura mínima ensayada ({fx(pctFromDeg(GAMMAS_HILL[0]), 1)} % = {fx(GAMMAS_HILL[0], 2)}°); se calculó con la cantidad de unidades que turbina menos agua.</div>}
+        {bajoMinimo.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {bajoMinimo.map((d) => `${String(d.hora).padStart(2, "0")}:00`).join(", ")}: la potencia es menor que la de una unidad en la apertura mínima ensayada ({fx(pctFromDeg(GAMMAS_HILL[0]), 1)} % = {fx(GAMMAS_HILL[0], 2)}°); se tomó el caudal de esa apertura mínima con una unidad.</div>}
         {sobreDisponibles.length > 0 && <div style={{ color: T.amber, fontWeight: 600 }}>⚠ Horas {sobreDisponibles.map((f) => f.hora).join(", ")}: más unidades que las disponibles ({unidadesDisp}).</div>}
         <Nota T={T} rotulo="Detalle del cálculo">
           <div>Caudal turbinado medio (modelo): {fx(calc.principal.qTurbMedio, 1)} m³/s frente a {fx(qEntrada, 0)} m³/s de entrada pronosticada{calc.prog.rellenadas.length > 0 && <> · horas sin dato propio (se repite la anterior): {calc.prog.rellenadas.join(", ")}</>}.</div>
@@ -920,7 +934,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
       <GraficoSeries T={T} tipoX="numero" ejeX="Hora" x={seriesApertura.x} series={seriesApertura.s} unidad="%" ejeY="apertura (%)" decimales={1} alto={240} grupo="desp" nombreArchivo={`apertura_horaria_${fecha}`} referencias={referenciasApertura(T)} equivalente={EQUIV_APERTURA} />
       <div style={{ margin: "-6px 0 14px" }}><Nota T={T} rotulo="Cómo se estima la apertura">{NOTA_APERTURA} El techo del programa es el elegido en "Rango de apertura" ({etiquetaTecho}).</Nota></div>
 
-      <ChartHeader titulo="Nivel del embalse — evolución intradiaria" T={T} accion={<BotonCSV data={csv} filename="despacho_intradiario.csv" T={T} />} />
+      <ChartHeader titulo="Nivel del embalse — evolución intradiaria" T={T} />
       <GraficoSeries T={T} tipoX="numero" ejeX="Hora" grupo="desp" x={seriesNivel.x} series={seriesNivel.s} unidad="msnm" ejeY="msnm" decimales={3} alto={300} nombreArchivo="despacho_nivel" bandas={[{ desde: 0, hasta: 1, relleno: "rgba(148,163,184,0.10)" }, { desde: 2, hasta: 3 }]} />
 
       <div style={{ marginTop: 14, overflowX: "auto" }}>
@@ -935,7 +949,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
           <tbody>
             {det.map((d, i) => {
               const f = filas[i];
-              const lo = f.despacho != null ? f.despacho * (1 - bandaPct / 100) : null, hi = f.despacho != null ? f.despacho * (1 + bandaPct / 100) : null;
+              const lo = f.despacho > 0 ? f.despacho * (1 - bandaPct / 100) : null, hi = f.despacho > 0 ? f.despacho * (1 + bandaPct / 100) : null;
               const est = calc.estados[i];
               const fuera = est === "por_debajo" || est === "por_encima";
               const auto = unidadesMinimasParaPotencia(d.potenciaMW, unidadesDisp);
@@ -1649,7 +1663,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
             <button onClick={garantizarPotencia} style={{
               padding: "8px 16px", background: "transparent", color: T.cyan, border: `1.5px solid ${T.cyan}`, borderRadius: 6,
               fontFamily: FONT_BODY, fontSize: 13, fontWeight: 700, cursor: "pointer",
-            }}>🎯 Garantizar potencia objetivo</button>
+            }}>Garantizar potencia objetivo</button>
           </div>
         </div>
 
@@ -1687,17 +1701,17 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
             style={{
               padding: "10px 20px", background: "transparent", color: T.teal, border: `1.5px solid ${T.teal}`, borderRadius: 6,
               fontFamily: FONT_BODY, fontSize: 13.5, fontWeight: 700, cursor: "pointer",
-            }}>⚡ Maximizar eficiencia</button>
+            }}>Maximizar eficiencia</button>
           <button onClick={maximizarPotencia} title={considerarAjusteEmbalse ? "Empuja la apertura hasta la potencia máxima garantizada (307 MW) o el techo mecánico del rango elegido, lo que se alcance primero — sin importar la eficiencia. Calcula automáticamente el ajuste de embalse necesario." : "Empuja la apertura hasta el máximo ALCANZABLE con el caudal de entrada disponible, sin tomar agua del embalse. Activa 'Considerar ajuste de caudal del embalse' arriba para ignorar el caudal de entrada como techo."}
             style={{
               padding: "10px 20px", background: "transparent", color: T.amber, border: `1.5px solid ${T.amber}`, borderRadius: 6,
               fontFamily: FONT_BODY, fontSize: 13.5, fontWeight: 700, cursor: "pointer",
-            }}>🔋 Maximizar potencia</button>
+            }}>Maximizar potencia</button>
           <button onClick={decidirAutomatico} title="Decide por sí solo entre las tres lógicas anteriores, según el caudal de entrada realmente disponible: usa el techo de potencia si hay agua de sobra hasta para eso, el pico de eficiencia si alcanza para ese pero no más, o reparte equitativamente si el agua es limitada. Nunca toma agua del embalse por sí mismo."
             style={{
               padding: "10px 20px", background: "transparent", color: T.ink, border: `1.5px solid ${T.ink}`, borderRadius: 6,
               fontFamily: FONT_BODY, fontSize: 13.5, fontWeight: 700, cursor: "pointer",
-            }}>🤖 Automático</button>
+            }}>Automático</button>
         </div>
         <div style={{ fontSize: 11.5, color: T.inkFaint, fontFamily: FONT_BODY, marginTop: 6 }}>
           {considerarAjusteEmbalse
@@ -1711,8 +1725,8 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
             <div style={{ padding: "12px 14px", background: T.panelSoft, borderRadius: 8, marginBottom: 10 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: T.teal, fontFamily: FONT_BODY, marginBottom: 4 }}>
                 {resultadoOptimo.mejor.gamma != null
-                  ? <>Con {resultadoOptimo.mejor.n} unidad(es) a este nivel: cada una turbina {fx(resultadoOptimo.mejor.Q, 1)} m³/s a {fx(pctFromDeg(resultadoOptimo.mejor.gamma), 1)}% ({fx(resultadoOptimo.mejor.gamma, 2)}°) — eficiencia {fx(resultadoOptimo.mejor.eta, 2)}%</>
-                  : <>Con {resultadoOptimo.mejor.n} unidad(es) a este nivel, con reparto personalizado por unidad (ver tabla abajo) — eficiencia promedio ponderada {fx(resultadoOptimo.mejor.eta, 2)}%</>}
+                  ? <>Con {resultadoOptimo.mejor.n} {resultadoOptimo.mejor.n === 1 ? "unidad" : "unidades"} a este nivel: cada una turbina {fx(resultadoOptimo.mejor.Q, 1)} m³/s a {fx(pctFromDeg(resultadoOptimo.mejor.gamma), 1)}% ({fx(resultadoOptimo.mejor.gamma, 2)}°) — eficiencia {fx(resultadoOptimo.mejor.eta, 2)}%</>
+                  : <>Con {resultadoOptimo.mejor.n} {resultadoOptimo.mejor.n === 1 ? "unidad" : "unidades"} a este nivel, con reparto personalizado por unidad (ver tabla abajo) — eficiencia promedio ponderada {fx(resultadoOptimo.mejor.eta, 2)}%</>}
               </div>
               <div style={{ fontSize: 12.5, color: T.inkMuted, fontFamily: FONT_BODY, lineHeight: 1.5 }}>
                 {resultadoOptimo.mejor.gamma != null && <>{fx(resultadoOptimo.mejor.P, 1)} MW por unidad en el eje ({fx(resultadoOptimo.mejor.P * resultadoOptimo.mejor.n, 1)} MW total; ≈ {fx(potenciaBornesDesdeEje(resultadoOptimo.mejor.P) * resultadoOptimo.mejor.n, 1)} MW en bornes) · </>}
@@ -1788,8 +1802,8 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
               {resultadoOptimo.esMaximizacion && !resultadoOptimo.esMaximizacionPotencia && (
                 <div style={{ marginTop: 8, fontSize: 12, color: T.teal, fontFamily: FONT_BODY, lineHeight: 1.5 }}>
                   {resultadoOptimo.considerarAjusteEmbalse
-                    ? <>⚡ Considerando el ajuste de caudal del embalse: se lograría el punto de máxima eficiencia posible con {resultadoOptimo.mejor.n} unidad(es) a este nivel, sin la restricción de no superar el caudal de entrada. El campo "Considerar ajuste de caudal del embalse" ya quedó en {fx(ajusteEmbalse, 1)} m³/s para reflejarlo.</>
-                    : <>⚡ Sin considerar ajuste de embalse (apagado): esta es la MEJOR eficiencia alcanzable con {resultadoOptimo.mejor.n} unidad(es) usando solo los {qObjetivoOptimo} m³/s de entrada.
+                    ? <>Considerando el ajuste de caudal del embalse: se lograría el punto de máxima eficiencia posible con {resultadoOptimo.mejor.n} {resultadoOptimo.mejor.n === 1 ? "unidad" : "unidades"} a este nivel, sin la restricción de no superar el caudal de entrada. El campo "Considerar ajuste de caudal del embalse" ya quedó en {fx(ajusteEmbalse, 1)} m³/s para reflejarlo.</>
+                    : <>Sin considerar ajuste de embalse (apagado): esta es la MEJOR eficiencia alcanzable con {resultadoOptimo.mejor.n} {resultadoOptimo.mejor.n === 1 ? "unidad" : "unidades"} usando solo los {qObjetivoOptimo} m³/s de entrada.
                       {resultadoOptimo.necesitariaEmbalseParaIdeal > 0 && <> Para llegar al verdadero pico de eficiencia (η={fx(resultadoOptimo.etaIdealSinAgua, 2)}%) haría falta tomar {fx(resultadoOptimo.necesitariaEmbalseParaIdeal, 1)} m³/s adicionales del embalse — no aplicados; activa "Considerar ajuste de caudal del embalse" arriba para incluirlos.</>}
                     </>}
                 </div>
@@ -1797,18 +1811,18 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
               {resultadoOptimo.esMaximizacionPotencia && (
                 <div style={{ marginTop: 8, fontSize: 12, color: T.amber, fontFamily: FONT_BODY, lineHeight: 1.5 }}>
                   {resultadoOptimo.considerarAjusteEmbalse
-                    ? <>🔋 Considerando el ajuste de caudal del embalse: se lograría el punto de máxima potencia posible (techo de 307 MW o mecánico) con {resultadoOptimo.mejor.n} unidad(es) a este nivel, sacrificando algo de eficiencia a cambio de más generación. El campo "Considerar ajuste de caudal del embalse" ya quedó en {fx(ajusteEmbalse, 1)} m³/s para reflejarlo.</>
-                    : <>🔋 Sin considerar ajuste de embalse (apagado): esta es la MÁXIMA potencia alcanzable con {resultadoOptimo.mejor.n} unidad(es) usando solo los {qObjetivoOptimo} m³/s de entrada.
+                    ? <>Considerando el ajuste de caudal del embalse: se lograría el punto de máxima potencia posible (techo de 307 MW o mecánico) con {resultadoOptimo.mejor.n} {resultadoOptimo.mejor.n === 1 ? "unidad" : "unidades"} a este nivel, sacrificando algo de eficiencia a cambio de más generación. El campo "Considerar ajuste de caudal del embalse" ya quedó en {fx(ajusteEmbalse, 1)} m³/s para reflejarlo.</>
+                    : <>Sin considerar ajuste de embalse (apagado): esta es la MÁXIMA potencia alcanzable con {resultadoOptimo.mejor.n} {resultadoOptimo.mejor.n === 1 ? "unidad" : "unidades"} usando solo los {qObjetivoOptimo} m³/s de entrada.
                       {resultadoOptimo.necesitariaEmbalseParaIdeal > 0 && <> Para llegar al techo de potencia (P={fx(resultadoOptimo.PtotalIdealSinAgua, 1)} MW total) haría falta tomar {fx(resultadoOptimo.necesitariaEmbalseParaIdeal, 1)} m³/s adicionales del embalse — no aplicados; activa "Considerar ajuste de caudal del embalse" arriba para incluirlos.</>}
                     </>}
                 </div>
               )}
               {resultadoOptimo.esGarantizarPotencia && (
                 <div style={{ marginTop: 8, fontSize: 12, color: T.cyan, fontFamily: FONT_BODY, lineHeight: 1.5 }}>
-                  🎯 Objetivo: garantizar {fx(resultadoOptimo.potenciaObjetivoMW, 1)} MW totales en bornes.{" "}
+                  Objetivo: garantizar {fx(resultadoOptimo.potenciaObjetivoMW, 1)} MW totales en bornes.{" "}
                   {resultadoOptimo.mejor.alcanzable
-                    ? <>Se logra con {resultadoOptimo.mejor.n} unidad(es) a {fx(pctFromDeg(resultadoOptimo.mejor.gamma), 1)}% ({fx(resultadoOptimo.mejor.gamma, 2)}°) cada una{resultadoOptimo.considerarAjusteEmbalse && ajusteEmbalse > 0 ? <>, considerando el ajuste de caudal del embalse ({fx(ajusteEmbalse, 1)} m³/s adicionales, campo ya actualizado)</> : ""}.</>
-                    : <>No se alcanza el objetivo completo con las condiciones dadas — se entrega el máximo posible: {fx(resultadoOptimo.mejor.PtotalBornes ?? resultadoOptimo.mejor.Ptotal, 1)} MW totales en bornes ({fx(resultadoOptimo.mejor.Ptotal, 1)} MW en el eje) con {resultadoOptimo.mejor.n} unidad(es).
+                    ? <>Se logra con {resultadoOptimo.mejor.n} {resultadoOptimo.mejor.n === 1 ? "unidad" : "unidades"} a {fx(pctFromDeg(resultadoOptimo.mejor.gamma), 1)}% ({fx(resultadoOptimo.mejor.gamma, 2)}°) cada una{resultadoOptimo.considerarAjusteEmbalse && ajusteEmbalse > 0 ? <>, considerando el ajuste de caudal del embalse ({fx(ajusteEmbalse, 1)} m³/s adicionales, campo ya actualizado)</> : ""}.</>
+                    : <>No se alcanza el objetivo completo con las condiciones dadas — se entrega el máximo posible: {fx(resultadoOptimo.mejor.PtotalBornes ?? resultadoOptimo.mejor.Ptotal, 1)} MW totales en bornes ({fx(resultadoOptimo.mejor.Ptotal, 1)} MW en el eje) con {resultadoOptimo.mejor.n} {resultadoOptimo.mejor.n === 1 ? "unidad" : "unidades"}.
                       {resultadoOptimo.necesitariaEmbalseParaObjetivo > 0 && <> Para completar el objetivo haría falta tomar {fx(resultadoOptimo.necesitariaEmbalseParaObjetivo, 1)} m³/s adicionales del embalse — no aplicados; activa "Considerar ajuste de caudal del embalse" arriba para incluirlos.</>}
                       {resultadoOptimo.necesitariaEmbalseParaObjetivo === 0 && <> El objetivo excede lo que el rango mecánico y/o los 307 MW garantizados por unidad permiten con las unidades disponibles, incluso con agua de sobra.</>}
                     </>}
@@ -1816,7 +1830,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
               )}
               {resultadoOptimo.esAutomatico && (
                 <div style={{ marginTop: 8, fontSize: 12, color: T.ink, fontFamily: FONT_BODY, lineHeight: 1.5 }}>
-                  🤖 Modo elegido automáticamente: <b>{resultadoOptimo.modoElegido === "potencia" ? "máxima potencia (307 MW)" : resultadoOptimo.modoElegido === "eficiencia" ? "pico de eficiencia" : resultadoOptimo.modoElegido === "personalizado" ? "% operativo personalizado por unidad" : "reparto equitativo (agua limitada)"}</b>, porque
+                  Modo elegido automáticamente: <b>{resultadoOptimo.modoElegido === "potencia" ? "máxima potencia (307 MW)" : resultadoOptimo.modoElegido === "eficiencia" ? "pico de eficiencia" : resultadoOptimo.modoElegido === "personalizado" ? "% operativo personalizado por unidad" : "reparto equitativo (agua limitada)"}</b>, porque
                   {resultadoOptimo.modoElegido === "potencia" && " el caudal de entrada alcanza incluso para llevar todas las unidades hasta el techo de potencia — no tiene sentido quedarse en el pico de eficiencia y verter el resto."}
                   {resultadoOptimo.modoElegido === "eficiencia" && " el caudal de entrada alcanza para el pico de eficiencia, pero no para más — llevarlas más allá solo sacrificaría eficiencia sin que sobre agua que se estuviera desperdiciando."}
                   {resultadoOptimo.modoElegido === "personalizado" && " tienes activo el % operativo personalizado por unidad — cada unidad opera en el punto que le corresponde según su propio %, sin buscar un óptimo compartido."}
@@ -2053,9 +2067,9 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
             <RTooltip content={<CustomTooltip unidad="m³/s" T={T} labelPrefix="Nivel = " labelSuffix=" msnm" />} />
             <Legend verticalAlign="bottom" wrapperStyle={{ fontSize: 11.5, fontFamily: FONT_BODY, paddingTop: 20 }} />
             {Array.from({ length: N_TURBINAS_MAX }, (_, i) => i + 1).map((n) => (
-              <Line key={n} type="monotone" dataKey={`n${n}`} name={`${n} unidad(es)`} stroke={COLORES_GAMMA[(n - 1) % COLORES_GAMMA.length]} strokeWidth={n === nTurbActivasExploracion ? 3 : 1.4} dot={false} isAnimationActive={false} connectNulls />
+              <Line key={n} type="monotone" dataKey={`n${n}`} name={`${n} ${n === 1 ? "unidad" : "unidades"}`} stroke={COLORES_GAMMA[(n - 1) % COLORES_GAMMA.length]} strokeWidth={n === nTurbActivasExploracion ? 3 : 1.4} dot={false} isAnimationActive={false} connectNulls />
             ))}
-            <ReferenceLine x={nivelEmbalseExploracion <= NAMO ? nivelEmbalseExploracion : null} stroke={T.ink} strokeDasharray="4 3" label={{ value: "Tu nivel", fontSize: 10, fill: T.ink }} />
+            <ReferenceLine x={nivelEmbalseExploracion <= NAMO ? nivelEmbalseExploracion : null} stroke={T.ink} strokeDasharray="4 3" label={{ value: "Nivel actual", fontSize: 10, fill: T.ink }} />
             {zoomBrush(T, "H")}
           </LineChart>
         </ResponsiveContainer>
@@ -2145,8 +2159,8 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
       </div>
 
       <div style={cardStyle}>
-        <ChartHeader titulo="Estudio de ampliación 2023" subtitulo="Los puntos morados (◆) en las gráficas de arriba son estos 6 escenarios reales, no proyecciones mías." T={T}
-          tip="Estudio de ampliación de GE (2023): extiende el límite mecánico del distribuidor de 26.5° (87,7 %) a 30.2° (100 %) (carrera del servomotor de 390 a 433 mm). Numeral 3.1.1 (2 escenarios, 1 unidad, evaluación exploratoria — NO garantizados) y (4 escenarios, condición de potencias en generador/subestación). Todos los valores de esta tarjeta están tomados directamente del documento, no calculados por mi modelo (aunque mi modelo los reproduce con error <0.15% en Q y P — ver validación)." />
+        <ChartHeader titulo="Estudio de ampliación 2023" subtitulo="Los puntos morados (◆) en las gráficas de arriba son estos 6 escenarios reales, no proyecciones del modelo." T={T}
+          tip="Estudio de ampliación de GE (2023): extiende el límite mecánico del distribuidor de 26.5° (87,7 %) a 30.2° (100 %) (carrera del servomotor de 390 a 433 mm). Numeral 3.1.1 (2 escenarios, 1 unidad, evaluación exploratoria — NO garantizados) y (4 escenarios, condición de potencias en generador/subestación). Todos los valores de esta tarjeta están tomados directamente del documento, no calculados por el modelo de la app (aunque el modelo los reproduce con error <0.15% en Q y P — ver validación)." />
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, fontFamily: FONT_BODY }}>
             <thead>
@@ -2198,7 +2212,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
         Fuente: ensayo de modelo físico (2013), transpuesto al prototipo según IEC 60193
         (N=180 rpm, D=4.05972 m — existe una discrepancia documentada con 4.0584 m en los pies de las Figuras 4.3/4.4).
         186 puntos de la tabla final de transposición, 12 aperturas ensayadas (4.87°-31.98°, es decir {fx(pctFromDeg(GAMMAS_HILL[0]), 1)} %-{fx(pctFromDeg(GAMMA_ENSAYADO_MAX), 1)} %), 6 puntos WAE
-        (círculos ámbar) con sus pesos porcentuales de la Tabla 4.1. Punto resaltado en negro: tu selección actual
+        (círculos ámbar) con sus pesos porcentuales de la Tabla 4.1. Punto resaltado en negro: el punto seleccionado
         de γ y H. Isolíneas de eficiencia (verde) trazadas con marching squares sobre una malla de 60×60 nodos,
         interpolada con el mismo método PCHIP (en el BEP publicado el modelo da Q −0,4 %, P −0,5 % y η −0,10 pp) — usan la eficiencia MEDIDA
         del modelo (sin step-up, máx. ~94.7%) en los gráficos n₁₁, y la eficiencia de PROTOTIPO (con la corrección
@@ -2279,6 +2293,8 @@ function Aplicacion() {
   const [theme, setTheme] = useState(() => leerPref("ituango-turbinas-tema", "dark"));
   const [altoContraste, setAltoContraste] = useState(() => leerPref("ituango-turbinas-contraste", "0") === "1");
   const [tab, setTab] = useState(pestanaDeHash);
+  const [asistenteAbierto, setAsistenteAbierto] = useState(() => pestanaDeHash() === "asistente");
+  useEffect(() => { if (tab === "asistente") setAsistenteAbierto(true); }, [tab]);
   const [condDescarga, setCondDescarga] = useState(CONDICION_DESCARGA_DEFECTO);
   const datos = useDatos();
   const sesion = useSesion();
@@ -2361,7 +2377,8 @@ function Aplicacion() {
 
       <main style={{ maxWidth: 1240, margin: "0 auto", padding: "18px max(16px, env(safe-area-inset-left)) 40px" }}>
         {tab === "tablero" && <Tablero T={T} condDescarga={condDescarga} />}
-        {tab === "asistente" && <Asistente T={T} />}
+        {/* El asistente queda montado al cambiar de pestaña: conserva la conversación y la respuesta en curso */}
+        {asistenteAbierto && <div style={{ display: tab === "asistente" ? "block" : "none" }}><Asistente T={T} /></div>}
         {tab === "vertedero" && <Vertedero T={T} />}
         {tab === "regla" && <ReglaAnla T={T} />}
         {tab === "unidades" && <Unidades T={T} />}

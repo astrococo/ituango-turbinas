@@ -7,6 +7,7 @@ import { useCallback, useMemo, useState } from "react";
 import { textoHoraColombia } from "../modelo.js";
 import { useDatos, useCargaPeriodica } from "../datos/fuentes.jsx";
 import { useVivo } from "../datos/vivo.jsx";
+import { errorPronosticoHF } from "../analitica.js";
 import { useHistoricoDiario } from "../datos/historico.js";
 import { GraficoSeries, Estado, fmtNum } from "./graficos.jsx";
 import { Proposito, Tarjeta, Kpi, RequiereConexion, SelectorRango, rangoUltimos, fechaCorta } from "./comunes.jsx";
@@ -57,12 +58,7 @@ export default function Confiabilidad({ T }) {
     const em = tend.datos?.emisiones, obs = vivo?.hf?.observado?.datos?.data;
     if (!em || !obs) return null;
     const o = new Map(obs.map((r) => [String(r.timestamp).slice(0, 10), r.QSitioPresa_obs]));
-    const hoy = vivo.hoy;
-    return [1, 3, 7].map((L) => {
-      const err = [];
-      for (const e of em) { const f = e.fecha[L]; if (f && f < hoy && o.has(f) && e.sp[L] != null) err.push(Math.abs(e.sp[L] - o.get(f)) / o.get(f)); }
-      return { L, n: err.length, mape: err.length ? (100 * err.reduce((a, b) => a + b, 0)) / err.length : null };
-    });
+    return errorPronosticoHF(em, o, vivo.hoy);
   }, [tend.datos, vivo]);
 
   const hoy = vivo?.hoy;
@@ -96,13 +92,13 @@ export default function Confiabilidad({ T }) {
   const filas = m ? [
     fila("Datos de LoggerNet completos", "1.440 minutos por día (generación y nivel)", `${m.completos} de ${m.nDias} días ≥ 95 %; hueco máximo ${fmtNum(m.huecoMax, 0)} min`, "≥ 95 % de los minutos", m.completos >= 0.95 * m.nDias ? NIVEL.alta : NIVEL.media),
     fila("Nivel del radar sin congelarse", "Cambios del valor minuto a minuto", `Máximo ${fmtNum(m.congelado, 0)} min seguidos con el mismo valor`, "< 3 h", m.congelado < 180 ? NIVEL.alta : NIVEL.media),
-    fila("Segundo sensor de nivel", "Radar", m.difSensores != null ? `Diferencia mediana ${fmtNum(m.difSensores, 2)} m` : "Sin dato", "< 0,5 m", m.difSensores == null ? NIVEL.sin : Math.abs(m.difSensores) < 0.5 ? NIVEL.alta : NIVEL.baja),
+    fila("Segundo sensor de nivel", "Radar", m.difSensores != null ? `Diferencia mediana ${fmtNum(m.difSensores, 2)} m${Math.abs(m.difSensores) > 5 ? " (otra referencia o sensor fuera de servicio: la app usa solo el radar)" : ""}` : "Sin dato", "< 0,5 m", m.difSensores == null ? NIVEL.sin : Math.abs(m.difSensores) < 0.5 ? NIVEL.alta : NIVEL.baja),
     fila("Caudal regulado (P / F.C.)", "Columna QTurbinadoUx_FC de LoggerNet (Hidrometría), desde el 31-oct", m.columna ? `${fmtNum(m.columna.pct, 2)} % de ${m.columna.minutos.toLocaleString("es-CO")} minutos coinciden (±0,2 %)` : "Sin datos", "100 %", m.columna ? (m.columna.pct > 99.5 ? NIVEL.alta : NIVEL.media) : NIVEL.sin),
     fila("Regla operativa diaria", "Recálculo independiente (pandas) y tablero de Hidrometría", "Mismo estado en todos los días revisados y diferencias de redondeo (3-nov-2026); promedio y banda iguales a los del tablero de Hidrometría", "Mismo estado todos los días", NIVEL.alta),
     fila("Caudal del vertedero", "Tabla 10.6 de calibración con las aperturas medidas", m.vertedero ? `Diferencia media ${fmtNum(m.vertedero.err, 2)} %, máx. ${fmtNum(m.vertedero.errMax, 1)} % (${m.vertedero.minutos.toLocaleString("es-CO")} min en ${m.vertedero.dias} días)` : "Sin vertimiento en el rango", "< 1 %", m.vertedero ? (Math.abs(m.vertedero.err) < 1 ? NIVEL.alta : NIVEL.media) : NIVEL.sin),
     fila("Modelo de la turbina", "Caudal de Hidrometría (P / F.C.), central completa", m.modelo ? `Q modelo / Q Hidrometría entre ${fmtNum(m.modelo.min, 3)} y ${fmtNum(m.modelo.max, 3)}${m.modelo.medDesde != null ? `; desde el F.C. por nivel, ${fmtNum(m.modelo.medDesde, 3)}` : ""}` : "Sin datos", "±3 %", m.modelo ? (Math.abs((m.modelo.medDesde ?? m.modelo.med) - 1) <= 0.03 ? NIVEL.media : NIVEL.baja) : NIVEL.sin),
     fila("Nivel proyectado a 24 h (Despacho)", "Nivel medido del radar a las 24 h, días sin vertimiento", m.despacho ? `Con la entrada de ayer: ${fmtNum(m.despacho.ayerMed, 1)} cm (P90 ${fmtNum(m.despacho.ayerP90, 0)} cm). Solo el modelo: ${fmtNum(m.despacho.mismoMed, 1)} cm (P90 ${fmtNum(m.despacho.mismoP90, 0)} cm). ${m.despacho.n} días` : "Sin días evaluables", "< 10 cm (mediana)", m.despacho ? (m.despacho.ayerMed < 10 ? NIVEL.media : NIVEL.baja) : NIVEL.sin),
-    fila("Pronóstico de HydroForecast (Sitio Presa)", "Observado diario", pron ? pron.map((p) => `${p.L} d: ${p.mape != null ? fmtNum(p.mape, 1) + " %" : "—"} (${p.n})`).join(" · ") : "Sin emisiones archivadas", "Indicativo con pocas emisiones", pron && pron.some((p) => p.n >= 10) ? NIVEL.media : NIVEL.relativa),
+    fila("Pronóstico de HydroForecast (Sitio Presa)", "Observado diario", pron ? pron.map((p) => `${p.L} d: ${p.mape != null ? `${fmtNum(p.mape, 1)} % (${p.n} día${p.n === 1 ? "" : "s"})` : "aún sin días"}`).join(" · ") : "Sin emisiones archivadas", "Indicativo con pocas emisiones", pron && pron.some((p) => p.n >= 10) ? NIVEL.media : NIVEL.relativa),
     fila("Colina (diagrama de la turbina)", "186 puntos del ensayo de modelo (2013) y 35 BEP fuera de muestra", "Error medio 0,035 % en Q y 0,06 % en P; 0,08 pp en η (pruebas automáticas en cada publicación)", "< 0,5 %", NIVEL.alta),
     fila("Winter-Kennedy por unidad", "Sin referencia: no está calibrado", "Se usa solo para comparar unidades y ver tendencias", "Calibración pendiente", NIVEL.relativa),
   ] : [];

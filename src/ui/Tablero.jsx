@@ -222,7 +222,7 @@ export default function Tablero({ T, condDescarga }) {
         <div className="itu-kpis" style={{ marginBottom: 16 }}>
           <Kpi T={T} grande rotulo="Nivel del embalse" actualizado={a.t} valor={a.nivel} decimales={2} unidad="msnm"
             nota={a.nivel == null ? "Sin dato del radar" : <>{v.tendencia[2].cmPorHora != null ? `${v.tendencia[2].cmPorHora >= 0 ? "Sube" : "Baja"} ${fmtNum(Math.abs(v.tendencia[2].cmPorHora), 1)} cm/h (6 h)` : ""}{v.tendencia[3].delta != null ? ` · ${fmtNum(v.tendencia[3].delta * 100, 0)} cm en 24 h` : ""}<br />A {fmtNum(NAMO - a.nivel, 2)} m del NAMO ({NAMO}){v.horasANAMO != null ? `; al ritmo de 6 h, en ${fmtNum(v.horasANAMO, 0)} h` : ""}</>} />
-          <Kpi T={T} grande rotulo="Potencia" actualizado={a.t} valor={a.pTotal} decimales={0} unidad="MW" nota={`${nUA} unidad(es) en línea · promedio de 15 min`} />
+          <Kpi T={T} grande rotulo="Potencia" actualizado={a.t} valor={a.pTotal} decimales={0} unidad="MW" nota={`${nUA} ${nUA === 1 ? "unidad" : "unidades"} en línea · promedio de 15 min`} />
           <Kpi T={T} grande rotulo="Q regulado ahora" actualizado={a.t} valor={a.qReg} decimales={1} unidad="m³/s" nota={`P / F.C. ${fmtNum(a.fc, 3)} (Hidrometría, nivel del radar)`} tip="Caudal regulado de Hidrometría: potencia total en bornes dividida por el factor de conversión vigente (0,0119·Nivel − 3,178 desde el 29-oct-2026)." />
           <Kpi T={T} grande rotulo="Vertedero" actualizado={a.t} valor={a.qVert != null ? Math.max(0, a.qVert) : null} decimales={1} unidad="m³/s"
             estado={a.qVert != null ? <Estado T={T} tipo={a.qVert > 1 ? "aviso" : "bien"} compacto>{a.qVert > 1 ? "Vertiendo" : "Sin vertimiento"}</Estado> : null}

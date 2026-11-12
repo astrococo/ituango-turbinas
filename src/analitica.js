@@ -417,7 +417,24 @@ function indiceRelativoUnidades(dias, { minHoras = 6 } = {}) {
   return fc.map((x, i) => ({ unidad: i + 1, fcWK: x, horas: hs[i], factor: x != null && media ? x / media : null }));
 }
 
+/* Error medio del pronóstico de HydroForecast (Sitio Presa) a L días de anticipación.
+   Un valor por día objetivo (cerrado): la última emisión que lo pronosticó a L días.
+   emisiones: [{ emision, fecha: [AAAA-MM-DD…], sp: [m³/s…] }]; obs: Map(día → observado). */
+function errorPronosticoHF(emisiones, obs, hoy, leads = [1, 3, 7]) {
+  const em = (emisiones || []).filter((e) => e && Array.isArray(e.fecha) && Array.isArray(e.sp));
+  const objetivo = [...new Set(em.flatMap((e) => e.fecha))].sort().filter((f) => obs.has(f) && obs.get(f) > 0 && (!hoy || f < hoy));
+  return leads.map((L) => {
+    const err = [];
+    for (const f of objetivo) {
+      const e = em.filter((x) => x.fecha[L] === f && x.sp[L] != null).slice(-1)[0];
+      if (e) err.push(Math.abs(e.sp[L] - obs.get(f)) / obs.get(f));
+    }
+    return { L, n: err.length, mape: err.length ? (100 * err.reduce((a, b) => a + b, 0)) / err.length : null };
+  });
+}
+
 export {
+  errorPronosticoHF,
   VERSION_ANALITICA, UMBRAL_VERTIMIENTO_M3S, GAMMA_MAX_MODELO,
   resumirMinutos, resumenHora, resumenDia, resumirDias, agruparPorDia, numeroUnidades,
   requeridoRestoDelDia, cierreProyectado, calidadDia, validarDespachoDia, tramosCumplimiento, estadisticasRegla, serieHoraria, aperturaIntervalos, filaDiaria, indiceRelativoUnidades,
