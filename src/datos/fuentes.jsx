@@ -16,6 +16,18 @@ import { ahoraColombia, hoyColombia, sumarDias } from "./tiempo.js";
 const REPO_DATOS_DEFECTO = "astrococo/ituango-turbinas-datos";
 const CLAVE_TOKEN = "ituango-turbinas-token";
 const CLAVE_REPO = "ituango-turbinas-repo";
+const CLAVE_RECORDAR = "ituango-turbinas-recordar"; // "0" = el usuario pidió no guardar el token
+
+/* Enlace de configuración: …/#conectar=<token> deja el token guardado en
+   este navegador y limpia la dirección (el fragmento # no viaja al
+   servidor). Sirve para conectar un equipo nuevo con un clic. */
+function tokenDeEnlace() {
+  if (typeof location === "undefined") return null;
+  const m = /^#conectar=([A-Za-z0-9_]+)$/.exec(location.hash || "");
+  if (!m) return null;
+  try { history.replaceState(null, "", `${location.pathname}${location.search}#tablero`); } catch { /* sin history */ }
+  return m[1];
+}
 const API_HF = "https://jdguarnizor-hydroforecast-ituango.hf.space";
 const leerLocal = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const escribirLocal = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* sin almacenamiento */ } };
@@ -55,11 +67,13 @@ const Contexto = createContext(null);
 /* Proveedor: guarda el token y el repositorio y expone funciones de lectura. */
 function ProveedorDatos({ children }) {
   const [repo, setRepo] = useState(() => leerLocal(CLAVE_REPO) || REPO_DATOS_DEFECTO);
-  const [token, setTokenEstado] = useState(() => leerLocal(CLAVE_TOKEN) || "");
-  const [recordar, setRecordar] = useState(() => !!leerLocal(CLAVE_TOKEN));
+  // El token queda guardado en el navegador por defecto: se pide una sola vez por equipo.
+  const [token, setTokenEstado] = useState(() => tokenDeEnlace() || leerLocal(CLAVE_TOKEN) || "");
+  const [recordar, setRecordar] = useState(() => leerLocal(CLAVE_RECORDAR) !== "0");
   const [verificado, setVerificado] = useState(null); // null | {ok, txt}
   useEffect(() => { escribirLocal(CLAVE_REPO, repo === REPO_DATOS_DEFECTO ? null : repo); }, [repo]);
-  useEffect(() => { escribirLocal(CLAVE_TOKEN, recordar && token ? token : null); }, [recordar, token]);
+  useEffect(() => { escribirLocal(CLAVE_TOKEN, recordar && token ? token : null); escribirLocal(CLAVE_RECORDAR, recordar ? null : "0"); }, [recordar, token]);
+  const enlaceConfiguracion = useMemo(() => (token && typeof location !== "undefined" ? `${location.origin}${location.pathname}#conectar=${token}` : null), [token]);
   const setToken = useCallback((t) => { setTokenEstado(t.trim()); setVerificado(null); }, []);
 
   const leerTexto = useCallback((ruta) => {
@@ -114,8 +128,8 @@ function ProveedorDatos({ children }) {
     }
   }, [repo, token]);
 
-  const valor = useMemo(() => ({ repo, setRepo, token, setToken, recordar, setRecordar, conectado: !!token, verificado, verificar, leerTexto, leerJSON, listar, leerHF, despachar, leerRama }),
-    [repo, token, recordar, verificado, verificar, leerTexto, leerJSON, listar, leerHF, despachar, leerRama, setToken]);
+  const valor = useMemo(() => ({ repo, setRepo, token, setToken, recordar, setRecordar, conectado: !!token, verificado, verificar, leerTexto, leerJSON, listar, leerHF, despachar, leerRama, enlaceConfiguracion }),
+    [repo, token, recordar, verificado, verificar, leerTexto, leerJSON, listar, leerHF, despachar, leerRama, setToken, enlaceConfiguracion]);
   return <Contexto.Provider value={valor}>{children}</Contexto.Provider>;
 }
 const useDatos = () => useContext(Contexto);

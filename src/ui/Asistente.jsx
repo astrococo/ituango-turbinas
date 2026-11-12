@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useVivo } from "../datos/vivo.jsx";
 import { useDatos } from "../datos/fuentes.jsx";
 import { ahoraColombia } from "../datos/tiempo.js";
-import { MODELOS, preguntar, preguntarLocal, preguntarGitHub, listarModelosLocales, URL_LOCAL_DEFECTO } from "../asistente.js";
+import { preguntarLocal, preguntarGitHub, listarModelosLocales, URL_LOCAL_DEFECTO } from "../asistente.js";
 import { Proposito, Tarjeta } from "./comunes.jsx";
 import { Estado } from "./graficos.jsx";
 
@@ -53,12 +53,7 @@ function Texto({ T, texto }) {
 export default function Asistente({ T }) {
   const { vivo } = useVivo() || {};
   const datos = useDatos();
-  const [clave, setClave] = useState(() => leerLocal(CLAVE_API) || "");
-  const [borrador, setBorrador] = useState(clave);
-  const [recordar, setRecordar] = useState(() => !!leerLocal(CLAVE_API));
-  const [modelo, setModelo] = useState(() => leerLocal(CLAVE_MODELO) || MODELOS[0][0]);
-  const [espacio, setEspacio] = useState(() => leerLocal(CLAVE_ESPACIO) || "");
-  const [proveedor, setProveedor] = useState(() => leerLocal(CLAVE_PROVEEDOR) || "github"); // "github" (Claude vía GitHub) | "local" (Ollama) | "claude" (clave propia)
+  const [proveedor, setProveedor] = useState(() => (leerLocal(CLAVE_PROVEEDOR) === "local" ? "local" : "github")); // "github" (gratis, en GitHub) | "local" (Ollama en este equipo)
   const [urlLocal, setUrlLocal] = useState(() => leerLocal(CLAVE_URL_LOCAL) || URL_LOCAL_DEFECTO);
   const [modeloLocal, setModeloLocal] = useState(() => leerLocal(CLAVE_MODELO_LOCAL) || "");
   const [modelosLocales, setModelosLocales] = useState(null);
@@ -71,15 +66,14 @@ export default function Asistente({ T }) {
   const ctrl = useRef(null);
   const fin = useRef(null);
 
-  useEffect(() => { escribirLocal(CLAVE_API, recordar && clave ? clave : null); }, [recordar, clave]);
-  useEffect(() => { escribirLocal(CLAVE_MODELO, modelo); }, [modelo]);
-  useEffect(() => { escribirLocal(CLAVE_ESPACIO, espacio.trim() || null); }, [espacio]);
+  // Las opciones de pago se retiraron: se borra cualquier clave de API que hubiera quedado guardada
+  useEffect(() => { [CLAVE_API, CLAVE_MODELO, CLAVE_ESPACIO].forEach((k) => escribirLocal(k, null)); }, []);
   useEffect(() => { escribirLocal(CLAVE_PROVEEDOR, proveedor); setVista([]); setHistorial([]); setError(null); }, [proveedor]);
   useEffect(() => { escribirLocal(CLAVE_URL_LOCAL, urlLocal.trim() || null); }, [urlLocal]);
   useEffect(() => { escribirLocal(CLAVE_MODELO_LOCAL, modeloLocal || null); }, [modeloLocal]);
   const local = proveedor === "local";
   const github = proveedor === "github";
-  const listo = github ? datos.conectado : local ? !!modeloLocal : !!clave;
+  const listo = github ? datos.conectado : !!modeloLocal;
   const [espera, setEspera] = useState(null);
 
   async function probarConexion() {
@@ -110,11 +104,10 @@ export default function Asistente({ T }) {
       };
       if (github) {
         const previos = vista.filter((m) => m.texto).map((m) => ({ rol: m.rol, texto: m.texto }));
-        const r = await preguntarGitHub({ datos, pregunta: q, historial: previos, modelo, senal: ctrl.current.signal, onEstado: setEspera });
+        const r = await preguntarGitHub({ datos, pregunta: q, historial: previos, senal: ctrl.current.signal, onEstado: setEspera });
         setVista((v) => { const c = v.slice(); c[c.length - 1] = { rol: "asistente", texto: r.texto || "(sin texto)", pasos: r.pasos, uso: r.uso, nota: r.ultimoDato ? `Dato usado: ${r.ultimoDato} · ${r.modelo}` : r.modelo }; return c; });
       } else {
-        const res = local ? await preguntarLocal({ ...comun, url: urlLocal, modelo: modeloLocal })
-          : await preguntar({ ...comun, clave, espacio: espacio.trim() || null, modelo });
+        const res = await preguntarLocal({ ...comun, url: urlLocal, modelo: modeloLocal });
         setHistorial(res.mensajes);
         setVista((v) => { const c = v.slice(); c[c.length - 1] = { rol: "asistente", texto: res.texto || "(sin texto)", pasos: pasos.slice(), uso: res.uso }; return c; });
       }
@@ -131,14 +124,14 @@ export default function Asistente({ T }) {
 
   return (
     <>
-      <Proposito T={T} id="asistente" titulo="Asistente (IA)" fuente="Claude vía GitHub (cualquier equipo), modelo local (Ollama, gratis) o Claude con clave propia, con herramientas que leen los datos de la app y usan sus modelos"
+      <Proposito T={T} id="asistente" titulo="Asistente (IA)" fuente="Gratis: modelo abierto en GitHub (cualquier equipo) o en Ollama (este equipo), con herramientas que leen los datos de la app y usan sus modelos"
         para="Hacer preguntas en lenguaje natural sobre la operación: cómo va el día, qué pasó en un periodo, qué apertura o caudal tendría un punto de operación, o dónde quedaría el nivel con un programa de potencia."
         logras="Respuestas en segundos que cruzan varios módulos, con las cifras sacadas de los datos (el asistente no tiene cifras propias: consulta herramientas y dice cuáles usó)."
         resultados="Respuesta escrita con las cifras y la hora del dato, y la lista de consultas que hizo (estado en vivo, histórico, serie horaria, HydroForecast, simulación de nivel, colina)." />
 
-      <Tarjeta T={T} titulo="Configuración" subtitulo="Elija dónde corre el modelo de IA. Las herramientas y los datos que consulta son los mismos en los tres casos.">
+      <Tarjeta T={T} titulo="Configuración" subtitulo="Elija dónde corre el modelo de IA. Las herramientas y los datos que consulta son los mismos en ambos casos. Las dos opciones son gratuitas.">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-          {[["github", "Claude vía GitHub · cualquier equipo"], ["local", "Modelo local (Ollama) · gratis"], ["claude", "Claude con clave propia"]].map(([id, n]) => (
+          {[["github", "Asistente en GitHub · gratis, cualquier equipo"], ["local", "Modelo local (Ollama) · gratis, sin salir del equipo"]].map(([id, n]) => (
             <button key={id} onClick={() => setProveedor(id)} disabled={ocupado} style={{ ...chip, borderRadius: 6, padding: "7px 12px", fontWeight: proveedor === id ? 700 : 400, color: proveedor === id ? T.onAccent : T.inkMuted, background: proveedor === id ? T.teal : T.panelSoft, borderColor: proveedor === id ? T.teal : T.line }}>{n}</button>
           ))}
         </div>
@@ -146,18 +139,13 @@ export default function Asistente({ T }) {
         {github ? (
           <>
             <div style={{ padding: "10px 12px", borderRadius: 8, background: T.panelSoft, border: `1px solid ${T.amber}`, color: T.ink, fontSize: 12.5, lineHeight: 1.5, marginBottom: 12 }}>
-              <b>Funciona en cualquier equipo, sin instalar nada.</b> La pregunta va al repositorio de datos y GitHub Actions la responde con Claude usando la clave guardada allí como secret (nunca llega al navegador); tarda de 30 a 90 segundos. Las cifras que el asistente consulte se envían a la API de Anthropic: úselo solo si la política de EPM lo permite. Requiere que su token de GitHub tenga permiso de escritura (<i>Contents: Read and write</i>) en el repositorio de datos.
+              <b>Gratis y en cualquier equipo, sin instalar nada.</b> La pregunta va al repositorio de datos y GitHub Actions la responde con un modelo abierto (gpt-oss-120b) en el plan gratuito de Groq; la clave está guardada en GitHub y nunca llega al navegador. Tarda de 30 a 90 segundos. Si se pasa del límite gratuito, responde que espere: no cobra. Las cifras que el asistente consulte se envían a Groq, que según su contrato no las usa para entrenar ni las guarda por defecto: úselo solo si la política de EPM lo permite. Requiere que su token de GitHub tenga permiso de escritura (<i>Contents: Read and write</i>) en el repositorio de datos. Para consultas largas del histórico use los módulos de Analítica: aquí el histórico va de a 10 días y la serie horaria de a 1 día.
             </div>
-            <label style={{ fontSize: 12.5, color: T.inkMuted, display: "block", maxWidth: 360 }}>Modelo
-              <select value={modelo} onChange={(e) => setModelo(e.target.value)} style={{ ...entrada, width: "100%", marginTop: 4 }}>
-                {MODELOS.map(([id, n]) => <option key={id} value={id}>{n}</option>)}
-              </select>
-            </label>
           </>
-        ) : local ? (
+        ) : (
           <>
             <div style={{ padding: "10px 12px", borderRadius: 8, background: T.panelSoft, border: `1px solid ${T.line}`, color: T.ink, fontSize: 12.5, lineHeight: 1.5, marginBottom: 12 }}>
-              <b>Los datos no salen de este computador.</b> El modelo corre en Ollama, instalado en este equipo; la página le habla en <code>localhost</code>. Requiere Ollama abierto, un modelo con herramientas (recomendado <code>qwen3:8b</code>) y la variable <code>OLLAMA_ORIGINS</code> con esta dirección. La primera vez Chrome pide permiso para acceder a la red local: acéptelo. Las respuestas son más lentas y menos precisas que con Claude.
+              <b>Los datos no salen de este computador.</b> El modelo corre en Ollama, instalado en este equipo; la página le habla en <code>localhost</code>. Requiere Ollama abierto, un modelo con herramientas (recomendado <code>qwen3:8b</code>) y la variable <code>OLLAMA_ORIGINS</code> con esta dirección. La primera vez Chrome pide permiso para acceder a la red local: acéptelo. Las respuestas son más lentas y menos precisas que en GitHub (modelo más pequeño).
             </div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
               <label style={{ fontSize: 12.5, color: T.inkMuted, flex: "1 1 240px" }}>Dirección de Ollama
@@ -174,33 +162,9 @@ export default function Asistente({ T }) {
             </div>
             {conexion.msg && <div style={{ marginTop: 8 }}><Estado T={T} tipo={conexion.estado}>{conexion.msg}</Estado></div>}
           </>
-        ) : (
-          <>
-            <div style={{ fontSize: 12.5, color: T.inkMuted, marginBottom: 8 }}>Necesita una clave de la API de Anthropic (Claude Console: platform.claude.com), de pago por uso. Créela dentro de un espacio de trabajo con límite de gasto. La clave se guarda solo en este navegador si marca «Recordar».</div>
-            <div style={{ padding: "10px 12px", borderRadius: 8, background: T.panelSoft, border: `1px solid ${T.amber}`, color: T.ink, fontSize: 12.5, lineHeight: 1.5, marginBottom: 12 }}>
-              <b>Datos que salen de la app.</b> Cada pregunta, y las cifras de operación que el asistente consulte para responderla, se envían a la API de Anthropic con su clave. Úselo solo si la política de EPM lo permite para estos datos. Nada se envía hasta que usted haga una pregunta; el resto de la app no usa la IA.
-            </div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-              <label style={{ fontSize: 12.5, color: T.inkMuted, flex: "1 1 260px" }}>Clave de API
-                <input type="password" autoComplete="off" value={borrador} onChange={(e) => setBorrador(e.target.value)} onBlur={() => setClave(borrador.trim())} placeholder="sk-ant-…" style={{ ...entrada, width: "100%", marginTop: 4 }} />
-              </label>
-              <label style={{ fontSize: 12.5, color: T.inkMuted, flex: "1 1 220px" }}>Modelo
-                <select value={modelo} onChange={(e) => setModelo(e.target.value)} style={{ ...entrada, width: "100%", marginTop: 4 }}>
-                  {MODELOS.map(([id, n]) => <option key={id} value={id}>{n}</option>)}
-                </select>
-              </label>
-              <label style={{ fontSize: 12.5, color: T.inkMuted, flex: "1 1 220px" }}>ID del espacio de trabajo (opcional)
-                <input value={espacio} onChange={(e) => setEspacio(e.target.value)} placeholder="wrkspc_… (solo si la clave no es de un espacio)" style={{ ...entrada, width: "100%", marginTop: 4 }} />
-              </label>
-              <label style={{ fontSize: 12.5, color: T.inkMuted, display: "flex", gap: 6, alignItems: "center", paddingBottom: 9 }}>
-                <input type="checkbox" checked={recordar} onChange={(e) => setRecordar(e.target.checked)} /> Recordar en este equipo
-              </label>
-              {clave && <button onClick={() => { setClave(""); setBorrador(""); }} style={{ ...chip, marginBottom: 4 }}>Borrar clave</button>}
-            </div>
-          </>
         )}
         <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", fontSize: 12.5 }}>
-          <Estado T={T} compacto tipo={listo ? "bien" : "neutro"}>{github ? (datos.conectado ? "Token de GitHub listo" : "Falta el token de GitHub") : local ? (modeloLocal ? `Modelo: ${modeloLocal}` : "Sin modelo") : clave ? "Clave lista" : "Sin clave"}</Estado>
+          <Estado T={T} compacto tipo={listo ? "bien" : "neutro"}>{github ? (datos.conectado ? "Conectado al repositorio de datos" : "Falta conectar el repositorio de datos") : (modeloLocal ? `Modelo: ${modeloLocal}` : "Sin modelo")}</Estado>
           <Estado T={T} compacto tipo={vivo && vivo.ultima ? "bien" : "aviso"}>{vivo && vivo.ultima ? `Datos en vivo: ${vivo.ultima.t}` : "Sin datos en vivo"}</Estado>
           <Estado T={T} compacto tipo={datos.conectado ? "bien" : "aviso"}>{datos.conectado ? "Histórico disponible" : "Sin token del repositorio: no hay histórico"}</Estado>
         </div>
@@ -225,7 +189,7 @@ export default function Asistente({ T }) {
         {error && <div style={{ margin: "8px 0" }}><Estado T={T} tipo="critico">{error}</Estado></div>}
         <div ref={fin} />
         <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "flex-end" }}>
-          <textarea value={pregunta} onChange={(e) => setPregunta(e.target.value)} rows={2} placeholder={listo ? "Escriba su pregunta… (Enter para enviar, Mayús+Enter para nueva línea)" : github ? "Conecte primero el token del repositorio de datos (arriba a la derecha)" : local ? "Primero pruebe la conexión con Ollama y elija un modelo" : "Ingrese primero la clave de API"}
+          <textarea value={pregunta} onChange={(e) => setPregunta(e.target.value)} rows={2} placeholder={listo ? "Escriba su pregunta… (Enter para enviar, Mayús+Enter para nueva línea)" : github ? "Conecte primero el repositorio de datos (Conexión de datos, arriba a la derecha)" : "Primero pruebe la conexión con Ollama y elija un modelo"}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }} disabled={!listo}
             style={{ ...entrada, flex: 1, resize: "vertical", fontFamily: "inherit" }} />
           {ocupado ? <button style={boton(true)} onClick={() => ctrl.current && ctrl.current.abort()}>Cancelar</button>

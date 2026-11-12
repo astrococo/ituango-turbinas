@@ -87,7 +87,7 @@ function validarRango(desde, hasta, max) {
 }
 
 async function historicoDiario(ctx, { desde, hasta }) {
-  const e = validarRango(desde, hasta, 120); if (e) return { error: e };
+  const e = validarRango(desde, hasta, (ctx.limites && ctx.limites.historicoDias) || 120); if (e) return { error: e };
   const anios = [...new Set([desde.slice(0, 4), hasta.slice(0, 4)])];
   const partes = await Promise.all(anios.map((a) => ctx.leerJSON(`derivados/diario/${a}.json`).catch(() => null)));
   const dias = partes.filter(Boolean).flatMap((p) => p.dias).filter((d) => d.dia >= desde && d.dia <= hasta).sort((a, b) => (a.dia < b.dia ? -1 : 1));
@@ -106,7 +106,7 @@ async function historicoDiario(ctx, { desde, hasta }) {
 }
 
 async function serieHorariaHerr(ctx, { desde, hasta }) {
-  const e = validarRango(desde, hasta, 14); if (e) return { error: e };
+  const e = validarRango(desde, hasta, (ctx.limites && ctx.limites.horariaDias) || 14); if (e) return { error: e };
   const meses = [...new Set([desde.slice(0, 7), hasta.slice(0, 7)])];
   const partes = await Promise.all(meses.map((m) => ctx.leerJSON(`derivados/horario/${m}.json`).catch(() => null)));
   const filas = [];
@@ -236,23 +236,33 @@ async function listarModelosLocales(url, fetchFn = fetch) {
   return (cuerpo.data || []).map((m) => m.id).filter(Boolean).sort();
 }
 
-async function preguntarLocal({ url, modelo, historial, ctx, onPaso = () => {}, fetchFn = fetch, senal }) {
+/* También sirve para un servicio en la nube compatible con OpenAI (p. ej. Groq): url = base sin /v1, clave = Bearer. */
+async function preguntarLocal({ url, modelo, historial, ctx, onPaso = () => {}, fetchFn = fetch, senal, clave = null, esperar429 = 0 }) {
   const base = baseLocal(url);
   if (!modelo) throw new Error("Elija un modelo local (botón «Probar conexión»).");
   const sistema = { role: "system", content: `${SISTEMA}\nFecha y hora actual (Colombia): ${ctx.ahora || "desconocida"}.\nPara cualquier cifra de operación, llama primero a la herramienta que corresponda.` };
   const mensajes = historial.slice();
   for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
-    let resp;
-    try {
-      resp = await fetchFn(`${base}/v1/chat/completions`, {
-        method: "POST", signal: senal, headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model: modelo, messages: [sistema, ...mensajes], tools: HERRAMIENTAS_OPENAI, stream: false, temperature: 0.2 }),
-      });
-    } catch (e) { throw errorConexionLocal(base, e); }
-    const cuerpo = await resp.json().catch(() => null);
+    let resp, cuerpo;
+    for (let intento = 0; ; intento++) {
+      try {
+        resp = await fetchFn(`${base}/v1/chat/completions`, {
+          method: "POST", signal: senal, headers: { "content-type": "application/json", ...(clave ? { Authorization: `Bearer ${clave}` } : {}) },
+          body: JSON.stringify({ model: modelo, messages: [sistema, ...mensajes], tools: HERRAMIENTAS_OPENAI, stream: false, temperature: 0.2 }),
+        });
+      } catch (e) { throw clave ? new Error(`No se pudo conectar con ${base}.`) : errorConexionLocal(base, e); }
+      cuerpo = await resp.json().catch(() => null);
+      // Límite por minuto del plan gratuito: esperar lo que pide el servicio y reintentar (hasta 2 veces)
+      const espera = resp.status === 429 ? Number(resp.headers && resp.headers.get ? resp.headers.get("retry-after") : NaN) : NaN;
+      if (resp.status === 429 && intento < 2 && esperar429 > 0 && Number.isFinite(espera) && espera <= esperar429) { await new Promise((ok) => setTimeout(ok, (espera + 1) * 1000)); continue; }
+      break;
+    }
     if (!resp.ok) {
       const msg = cuerpo && cuerpo.error ? cuerpo.error.message || cuerpo.error : `HTTP ${resp.status}`;
-      throw new Error(/not found/i.test(String(msg)) ? `El modelo «${modelo}» no está descargado en Ollama (ollama pull ${modelo}).` : /does not support tools/i.test(String(msg)) ? `El modelo «${modelo}» no admite herramientas; use uno con «tools», p. ej. qwen3:8b.` : `Error del modelo local: ${msg}`);
+      if (clave && resp.status === 401) throw new Error("La clave del servicio no es válida (401).");
+      if (clave && resp.status === 429) throw new Error(`Se alcanzó el límite gratuito del servicio (por minuto o por día). Intente en unos minutos. (${msg})`);
+      if (clave && resp.status === 413) throw new Error(`La consulta quedó muy grande para el límite gratuito; pida un periodo más corto. (${msg})`);
+      throw new Error(/not found/i.test(String(msg)) ? `El modelo «${modelo}» no está descargado en Ollama (ollama pull ${modelo}).` : /does not support tools/i.test(String(msg)) ? `El modelo «${modelo}» no admite herramientas; use uno con «tools», p. ej. qwen3:8b.` : `Error del modelo${clave ? "" : " local"}: ${msg}`);
     }
     const m = cuerpo && cuerpo.choices && cuerpo.choices[0] ? cuerpo.choices[0].message : null;
     if (!m) throw new Error("Respuesta vacía del modelo local.");

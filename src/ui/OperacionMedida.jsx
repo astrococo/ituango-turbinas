@@ -6,7 +6,7 @@
    (.dat de LoggerNet o CSV del relay), que se procesa en el
    navegador y no se envía a ningún lado.
    ============================================================ */
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { FC_HIDROMETRIA_POR_NIVEL, etiquetaCondicionDescarga, NIVEL_MIN_TEC, NAME, ETIQUETA_ESTADO_REGLA, pctFromDeg } from "../modelo.js";
 import { leerLoggerNet, unirNivel, agregarIntervalos, caudalModeloIntervalos, verificarColumnaLoggerNet, reglaOperativaDiaria, caudalRegulado, resumenPorUnidad, P_EN_LINEA_MW } from "../operacion.js";
 import { BotonCSV, ChartHeader, Etiqueta, FONT_BODY } from "./base.jsx";
@@ -61,14 +61,8 @@ const fmt = (v, d = 1) => (v == null || !Number.isFinite(v) ? "—" : v.toLocale
 
 export default function OperacionMedida({ T, condDescarga }) {
   const [fuente, setFuente] = useState("github");
-  // Token y repositorio compartidos con el resto de la app (panel de conexión)
-  const ctxDatos = useDatos();
-  const { repo, setRepo, token, setToken, recordar, setRecordar } = ctxDatos;
-  // Borradores: el token y el repositorio se aplican al salir del campo (no en cada tecla)
-  const [repoTxt, setRepoTxt] = useState(repo);
-  const [tokenTxt, setTokenTxt] = useState(token);
-  useEffect(() => { setRepoTxt(repo); }, [repo]);
-  useEffect(() => { setTokenTxt(token); }, [token]);
+  // Usa la conexión de la app (se configura una sola vez por equipo, arriba a la derecha)
+  const { repo, token } = useDatos();
   // Rango de fechas a cargar (por defecto, los últimos 3 días). Se baja también el día anterior al primero: es la base de su banda.
   const hoyTxt = new Date(Date.now() - 5 * 3600e3).toISOString().slice(0, 10);
   const [rango, setRango] = useState(() => rangoUltimos(hoyTxt, "3"));
@@ -80,11 +74,13 @@ export default function OperacionMedida({ T, condDescarga }) {
   const [progreso, setProgreso] = useState(null);
 
 
+  // Con la app conectada, carga sola los últimos 3 días al abrir el módulo
+  const autoCargado = useRef(false);
+  useEffect(() => { if (token && fuente === "github" && !autoCargado.current) { autoCargado.current = true; cargarGitHub(); } }, [token, fuente]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function cargarGitHub() {
-    const tk = (tokenTxt || token).trim(), rp = (repoTxt || repo).trim();
-    if (tk !== token) setToken(tk);
-    if (rp !== repo) setRepo(rp);
-    if (!tk) { setEstado({ tipo: "error", txt: "Falta el token de solo lectura del repositorio de datos." }); return; }
+    const tk = token, rp = repo;
+    if (!tk) { setEstado({ tipo: "error", txt: "Falta conectar el repositorio de datos: use «Conexión de datos» (indicador de arriba a la derecha), una sola vez por equipo." }); return; }
     setEstado({ tipo: "info", txt: "Consultando GitHub…" }); setLectura(null); setCalculo(null);
     try {
       const hoy = new Date(Date.now() - 5 * 3600e3);
@@ -257,16 +253,8 @@ export default function OperacionMedida({ T, condDescarga }) {
 
       {fuente === "github" ? (
         <div className="itu-grid-form" style={{ marginBottom: 12 }}>
-          <div>
-            <Etiqueta T={T} tip="Repositorio privado donde el relay deja un CSV por día (carpeta loggernet/AAAA/).">Repositorio</Etiqueta>
-            <input value={repoTxt} onChange={(e) => setRepoTxt(e.target.value)} onBlur={() => repoTxt.trim() !== repo && setRepo(repoTxt.trim())} style={entrada} spellCheck={false} />
-          </div>
-          <div>
-            <Etiqueta T={T} tip="Token fine-grained de GitHub con permiso Contents: Read-only, solo para el repositorio de datos. Se usa solo desde este navegador; no se envía a ningún otro sitio.">Token de solo lectura</Etiqueta>
-            <input type="password" value={tokenTxt} onChange={(e) => setTokenTxt(e.target.value)} onBlur={() => tokenTxt.trim() !== token && setToken(tokenTxt)} style={entrada} autoComplete="off" placeholder="github_pat_…" />
-            <label style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6, fontSize: 12, color: T.inkMuted, fontFamily: FONT_BODY }}>
-              <input type="checkbox" checked={recordar} onChange={(e) => setRecordar(e.target.checked)} /> Recordar en este equipo
-            </label>
+          <div style={{ gridColumn: "1 / -1", fontSize: 12.5, color: T.inkMuted, fontFamily: FONT_BODY }}>
+            {token ? <>Usa la conexión de la app al repositorio de datos (<code>{repo}</code>).</> : <>Conecte el repositorio de datos en <a href="#datos" style={{ color: T.teal }}>Conexión de datos</a> (indicador de arriba a la derecha): se hace una sola vez en este equipo.</>}
           </div>
           <div style={{ gridColumn: "1 / -1" }}>
             <Etiqueta T={T} tip="Días a descargar (dato de cada minuto). Se baja también el día anterior al primero, que es la base de la banda de la regla.">Fechas</Etiqueta>

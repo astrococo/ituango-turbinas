@@ -89,7 +89,7 @@ function PanelConexion({ T, compacto = false }) {
       <h3 style={{ margin: "0 0 4px", fontSize: 15.5, color: T.ink }}>Conexión a los datos de operación</h3>
       <p style={{ margin: "0 0 12px", fontSize: 12.5, color: T.inkMuted, lineHeight: 1.5 }}>
         Los datos de LoggerNet y el histórico están en un repositorio privado. Pegue el <b>token de solo lectura</b> (empieza por <code>github_pat_</code>).
-        {!compacto && " Se usa solo desde este navegador para leer el repositorio; con \"Recordar\" queda guardado aquí, sin eso se borra al cerrar la pestaña. HydroForecast es público y no lo necesita."}
+        {!compacto && " Se pide una sola vez: queda guardado en este navegador (desmarque «Recordar» en un equipo compartido). Se usa solo para leer el repositorio. HydroForecast es público y no lo necesita."}
       </p>
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
         <input type={mostrar ? "text" : "password"} value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="github_pat_…" autoComplete="off" spellCheck={false} style={input} aria-label="Token de lectura" />
@@ -109,6 +109,24 @@ function PanelConexion({ T, compacto = false }) {
         {d.conectado && <button onClick={() => d.verificar()} style={{ padding: "7px 12px", background: "transparent", color: T.inkMuted, border: `1px solid ${T.line}`, borderRadius: 7, fontSize: 12.5, cursor: "pointer" }}>Probar</button>}
         {d.conectado && <button onClick={() => { d.setToken(""); setTexto(""); }} style={{ padding: "7px 12px", background: "transparent", color: T.inkMuted, border: `1px solid ${T.line}`, borderRadius: 7, fontSize: 12.5, cursor: "pointer" }}>Desconectar</button>}
         {d.verificado && <Estado T={T} tipo={d.verificado.ok ? "bien" : "critico"} compacto>{d.verificado.txt}</Estado>}
+      </div>
+      {d.conectado && !compacto && <EnlaceOtroEquipo T={T} enlace={d.enlaceConfiguracion} />}
+    </div>
+  );
+}
+
+/* Enlace para conectar otro equipo con un clic (lleva el token: compártalo solo por un canal privado). */
+function EnlaceOtroEquipo({ T, enlace }) {
+  const [copiado, setCopiado] = useState(false);
+  if (!enlace) return null;
+  const copiar = async () => {
+    try { await navigator.clipboard.writeText(enlace); setCopiado(true); setTimeout(() => setCopiado(false), 2500); } catch { window.prompt("Copie el enlace:", enlace); }
+  };
+  return (
+    <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${T.lineSoft}`, fontSize: 12.5, color: T.inkMuted, lineHeight: 1.5 }}>
+      <b style={{ color: T.ink }}>Otro equipo sin pegar el token:</b> abra en ese equipo este enlace una vez; la app queda conectada allí y la dirección se limpia sola. El enlace contiene el token: envíelo solo a usted mismo o por un canal privado, nunca en un grupo.
+      <div style={{ marginTop: 6 }}>
+        <button onClick={copiar} style={{ padding: "6px 12px", background: "transparent", color: T.ink, border: `1px solid ${T.line}`, borderRadius: 7, fontSize: 12.5, cursor: "pointer" }}>{copiado ? "Enlace copiado" : "Copiar enlace de conexión"}</button>
       </div>
     </div>
   );
