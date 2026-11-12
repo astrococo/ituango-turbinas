@@ -36,7 +36,7 @@ import {
 } from "./modelo.js";
 import { P_EN_LINEA_MW, caudalRegulado, verificarColumnaLoggerNet } from "./operacion.js";
 
-const VERSION_ANALITICA = 4; // 2: estabilidad del WK continua entre horas; 3: calidad y validación por día; 4: apertura estimada por unidad en el horario
+const VERSION_ANALITICA = 5; // 2: estabilidad del WK continua entre horas; 3: calidad y validación por día; 4: apertura estimada por unidad en el horario; 5: calidad de la fuente (exclusiones y valores congelados)
 const UMBRAL_VERTIMIENTO_M3S = 1; // > 1 m³/s en el vertedero = hay vertimiento (igual que la regla diaria)
 const GAMMA_MAX_MODELO = 31.98;
 const MIN_ESTABLE = 10; // minutos seguidos en línea antes de usar el Winter-Kennedy de una unidad

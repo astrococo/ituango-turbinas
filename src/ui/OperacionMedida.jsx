@@ -8,7 +8,7 @@
    ============================================================ */
 import { useState, useMemo, useEffect, useRef } from "react";
 import { FC_HIDROMETRIA_POR_NIVEL, etiquetaCondicionDescarga, NIVEL_MIN_TEC, NAME, ETIQUETA_ESTADO_REGLA, pctFromDeg } from "../modelo.js";
-import { leerLoggerNet, unirNivel, agregarIntervalos, caudalModeloIntervalos, verificarColumnaLoggerNet, reglaOperativaDiaria, caudalRegulado, resumenPorUnidad, P_EN_LINEA_MW } from "../operacion.js";
+import { leerLoggerNet, unirNivel, agregarIntervalos, caudalModeloIntervalos, verificarColumnaLoggerNet, reglaOperativaDiaria, caudalRegulado, resumenPorUnidad, P_EN_LINEA_MW, aplicarCalidad } from "../operacion.js";
 import { BotonCSV, ChartHeader, Etiqueta, FONT_BODY } from "./base.jsx";
 import { useDatos } from "../datos/fuentes.jsx";
 import { GraficoSeries } from "./graficos.jsx";
@@ -41,12 +41,13 @@ async function leerArchivoLocal(file) {
 }
 
 /* Une varias lecturas: las de generación entre sí y las de nivel (All_Data) entre sí; luego el nivel a cada minuto. */
-function combinarLecturas(lecturas) {
+function combinarLecturas(lecturas, exclusiones = []) {
   const gen = lecturas.filter((r) => !r.soloNivel && r.filas.length);
   const niv = lecturas.filter((r) => r.soloNivel);
   const porT = new Map();
   gen.forEach((r) => r.filas.forEach((f) => porT.set(f.t, f)));
-  const filasGen = [...porT.values()].sort((a, b) => (a.t < b.t ? -1 : 1));
+  const calidad = aplicarCalidad([...porT.values()].sort((a, b) => (a.t < b.t ? -1 : 1)), exclusiones);
+  const filasGen = calidad.filas;
   const filasNiv = niv.flatMap((r) => r.filas).sort((a, b) => (a.t < b.t ? -1 : 1));
   const avisos = [...new Set(lecturas.flatMap((r) => r.avisos))];
   let sinNivel = filasGen.length;
@@ -54,6 +55,8 @@ function combinarLecturas(lecturas) {
   if (filasNiv.length) ({ filas, sinNivel } = unirNivel(filasGen, filasNiv));
   if (!filasNiv.length) avisos.push("Sin datos de nivel del embalse (archivo All_Data / carpeta nivel)");
   else if (sinNivel) avisos.push(`${sinNivel.toLocaleString("es-CO")} minutos sin nivel del radar a menos de 10 min`);
+  calidad.excluidas.forEach((e) => avisos.push(`Excluido ${e.desde}–${e.hasta.slice(11)} (${e.minutos} min): ${e.motivo}`));
+  calidad.congelados.forEach((e) => avisos.push(`Dato dudoso ${e.desde}–${e.hasta.slice(11)}: ${e.motivo} (se mantiene; regístrelo como exclusión si fue una falla)`));
   return { filas, avisos, formato: [...new Set(lecturas.map((r) => r.formato))].join(" + "), columnaNivel: filasNiv.length ? "Nivel_Radar_msnm_Avg" : null, tieneQ2: gen.some((r) => r.tieneQ2), minutosNivel: filasNiv.length };
 }
 
@@ -62,7 +65,8 @@ const fmt = (v, d = 1) => (v == null || !Number.isFinite(v) ? "—" : v.toLocale
 export default function OperacionMedida({ T, condDescarga }) {
   const [fuente, setFuente] = useState("github");
   // Usa la conexión de la app (se configura una sola vez por equipo, arriba a la derecha)
-  const { repo, token } = useDatos();
+  const { repo, token, leerJSON } = useDatos();
+  const leerExclusiones = () => (token ? leerJSON("calidad/exclusiones.json").then((x) => (Array.isArray(x) ? x : []), () => []) : Promise.resolve([]));
   // Rango de fechas a cargar (por defecto, los últimos 3 días). Se baja también el día anterior al primero: es la base de su banda.
   const hoyTxt = new Date(Date.now() - 5 * 3600e3).toISOString().slice(0, 10);
   const [rango, setRango] = useState(() => rangoUltimos(hoyTxt, "3"));
@@ -113,7 +117,7 @@ export default function OperacionMedida({ T, condDescarga }) {
         setEstado({ tipo: "info", txt: `Descargando ${f.path} (${k + 1} de ${todos.length})…` });
         lecturas.push(leerLoggerNet(await gh(`https://api.github.com/repos/${rp}/contents/${f.path}`, tk, true)));
       }
-      const r = combinarLecturas(lecturas);
+      const r = combinarLecturas(lecturas, await leerExclusiones());
       setLectura({ ...r, origen: `${rp} · ${gen[0].name.slice(0, 10)} a ${gen[gen.length - 1].name.slice(0, 10)}` });
       setEstado({ tipo: "ok", txt: `${r.filas.length.toLocaleString("es-CO")} minutos de generación y ${r.minutosNivel.toLocaleString("es-CO")} registros de nivel, de ${todos.length} archivo(s).` });
     } catch (e) { setEstado({ tipo: "error", txt: e.message }); }
@@ -131,7 +135,7 @@ export default function OperacionMedida({ T, condDescarga }) {
         lecturas.push(r);
         if (recortado) notas.push(`${file.name} pesa ${(file.size / 1048576).toFixed(0)} MB: se leyeron los últimos ${MAX_LOCAL_MB} MB.`);
       }
-      const r = combinarLecturas(lecturas);
+      const r = combinarLecturas(lecturas, await leerExclusiones());
       if (!r.filas.length) throw new Error("Falta el archivo de generación (Caudal_Vertedero).");
       setLectura({ ...r, origen: [...files].map((f) => f.name).join(" + ") });
       setEstado({ tipo: "ok", txt: `${r.filas.length.toLocaleString("es-CO")} minutos de generación y ${r.minutosNivel.toLocaleString("es-CO")} registros de nivel. ${notas.join(" ")}` });

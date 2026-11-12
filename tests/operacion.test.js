@@ -125,3 +125,23 @@ describe("Regla operativa con los datos medidos (como la app de Hidrometría)", 
     expect(verificarColumnaLoggerNet(filas)).toMatchObject({ minutos: 3, coinciden: 2, noCoinciden: 1, con162: 1, primero: "2026-10-29 14:35", ultimo: "2026-10-29 14:35" });
   });
 });
+
+describe("calidad del dato de LoggerNet", () => {
+  it("quita los tramos registrados y señala (sin quitar) los valores congelados", async () => {
+    const { aplicarCalidad } = await import("../src/operacion.js");
+    const filas = [];
+    for (let m = 0; m < 120; m++) {
+      const t = `2026-11-10 ${String(10 + Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+      const congelado = m >= 20 && m < 60; // 40 min idénticos
+      filas.push({ t, p: congelado ? [300, 301, 299, 300] : [300 + (m % 3), 301, 299 + (m % 2), 0] });
+    }
+    filas.push(...Array.from({ length: 40 }, (_, k) => ({ t: `2026-11-10 13:${String(k).padStart(2, "0")}`, p: [0, 0, 0, 0] }))); // parada real: no se toca
+    const r = aplicarCalidad(filas, [{ desde: "2026-11-10 11:30", hasta: "2026-11-10 11:39", motivo: "falla" }]);
+    expect(r.excluidas).toEqual([{ desde: "2026-11-10 11:30", hasta: "2026-11-10 11:39", minutos: 10, motivo: "falla" }]);
+    expect(r.filas).toHaveLength(150);
+    expect(r.congelados).toHaveLength(1);
+    expect(r.congelados[0]).toMatchObject({ desde: "2026-11-10 10:20", hasta: "2026-11-10 10:59", minutos: 40 });
+    const r2 = aplicarCalidad(filas, [], { excluirCongelados: true });
+    expect(r2.filas).toHaveLength(120);
+  });
+});

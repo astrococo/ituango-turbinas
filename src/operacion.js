@@ -335,4 +335,41 @@ function resumenPorUnidad(intervalos) {
   });
 }
 
-export { UNIDAD_COLUMNA, unidadColumna, UNIDADES_LOGGERNET, P_EN_LINEA_MW, separarCampos, leerLoggerNet, unirNivel, caudalRegulado, caudalColumnaLoggerNet, verificarColumnaLoggerNet, reglaOperativaDiaria, fcImplicito, nivelDesdeFC, agregarIntervalos, caudalModeloIntervalos, verificarFC, resumenPorUnidad };
+/* ---------- Calidad del dato de LoggerNet ----------
+   1) Exclusiones registradas (calidad/exclusiones.json del repositorio de
+      datos): [{ desde, hasta, motivo }], horas de Colombia "AAAA-MM-DD HH:MM",
+      ambos extremos incluidos. Son tramos confirmados como falla de la fuente
+      (p. ej. el servidor que actualiza el archivo plano): se quitan del cálculo.
+   2) Valores congelados: la potencia de todas las unidades idéntica (y no
+      nula) durante `minCongelado` minutos seguidos o más. En la operación
+      normal no se repite más de unos pocos minutos. Por defecto solo se
+      SEÑALAN (no se quitan): el archivo plano es la misma fuente del cálculo
+      oficial; para quitarlos, registre el tramo en las exclusiones.
+   Las unidades detenidas (potencia 0) no se tocan: una parada real se ve igual.
+   Devuelve { filas, excluidas: [...], congelados: [...] } con { desde, hasta, minutos, motivo }. */
+function aplicarCalidad(filas, exclusiones = [], { minCongelado = 30, excluirCongelados = false } = {}) {
+  const fuera = new Set(), excluidas = [], congelados = [];
+  for (const e of exclusiones || []) {
+    if (!e || !e.desde || !e.hasta) continue;
+    const idx = [];
+    filas.forEach((r, i) => { if (r.t >= e.desde && r.t <= e.hasta) idx.push(i); });
+    idx.forEach((i) => fuera.add(i));
+    if (idx.length) excluidas.push({ desde: filas[idx[0]].t, hasta: filas[idx[idx.length - 1]].t, minutos: idx.length, motivo: e.motivo || "Exclusión registrada" });
+  }
+  const clave = (r) => (r.p || []).map((x) => (x == null ? "n" : x)).join("|");
+  for (let i = 0; i < filas.length;) {
+    let j = i;
+    const k = clave(filas[i]);
+    while (j + 1 < filas.length && clave(filas[j + 1]) === k) j++;
+    const suma = (filas[i].p || []).reduce((a, x) => a + (x || 0), 0);
+    if (j - i + 1 >= minCongelado && suma > 0) {
+      let n = 0;
+      for (let q = i; q <= j; q++) if (!fuera.has(q)) { n++; if (excluirCongelados) fuera.add(q); }
+      if (n) congelados.push({ desde: filas[i].t, hasta: filas[j].t, minutos: n, motivo: `Valores congelados: ${j - i + 1} min idénticos en todas las unidades` });
+    }
+    i = j + 1;
+  }
+  return { filas: fuera.size ? filas.filter((_, i) => !fuera.has(i)) : filas, excluidas, congelados };
+}
+
+export { aplicarCalidad, UNIDAD_COLUMNA, unidadColumna, UNIDADES_LOGGERNET, P_EN_LINEA_MW, separarCampos, leerLoggerNet, unirNivel, caudalRegulado, caudalColumnaLoggerNet, verificarColumnaLoggerNet, reglaOperativaDiaria, fcImplicito, nivelDesdeFC, agregarIntervalos, caudalModeloIntervalos, verificarFC, resumenPorUnidad };

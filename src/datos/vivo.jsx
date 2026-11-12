@@ -9,7 +9,7 @@
    cerrados se leen igual.
    ============================================================ */
 import { createContext, useContext, useMemo } from "react";
-import { leerLoggerNet, unirNivel } from "../operacion.js";
+import { leerLoggerNet, unirNivel, aplicarCalidad } from "../operacion.js";
 import { useDatos, useCargaPeriodica, hoyColombia, ahoraColombia, sumarDias } from "./fuentes.jsx";
 import { calcularVivo, promedioUltimos } from "./vivoCalculo.js";
 
@@ -27,7 +27,7 @@ async function cargarVivo(datos) {
   ]);
   const out = { hoy, ayer, consultado: ahoraColombia(), errores, hf: { observado: obs, pronostico: pron, aguasArriba: aa } };
   if (!datos.conectado) return out;
-  const [gA, gH, nA, nH, diario, diarioAnt, estado] = await Promise.all([
+  const [gA, gH, nA, nH, diario, diarioAnt, estado, exclusiones] = await Promise.all([
     tarea(datos.leerTexto(ruta("loggernet", ayer)), "Generación de ayer"),
     tarea(datos.leerTexto(ruta("loggernet", hoy)), "Generación de hoy"),
     tarea(datos.leerTexto(ruta("nivel", ayer)), "Nivel de ayer"),
@@ -35,12 +35,15 @@ async function cargarVivo(datos) {
     tarea(datos.leerJSON(`derivados/diario/${hoy.slice(0, 4)}.json`), "Histórico diario"),
     hoy.slice(5) <= "01-31" ? tarea(datos.leerJSON(`derivados/diario/${+hoy.slice(0, 4) - 1}.json`), "Histórico del año anterior") : Promise.resolve(null),
     tarea(datos.leerJSON("derivados/estado.json"), "Estado del proceso"),
+    tarea(datos.leerJSON("calidad/exclusiones.json"), "Exclusiones de calidad"),
   ]);
-  const gen = [gA, gH].filter(Boolean).flatMap((t) => leerLoggerNet(t).filas);
+  // Tramos confirmados como falla de la fuente: fuera del cálculo; valores congelados: se señalan
+  const calidad = aplicarCalidad([gA, gH].filter(Boolean).flatMap((t) => leerLoggerNet(t).filas), Array.isArray(exclusiones) ? exclusiones : []);
+  const gen = calidad.filas;
   const niv = [nA, nH].filter(Boolean).flatMap((t) => leerLoggerNet(t).filas);
   const filas = niv.length ? unirNivel(gen, niv).filas : gen;
   const dias = [...(diarioAnt ? diarioAnt.dias : []), ...(diario ? diario.dias : [])];
-  Object.assign(out, { filas, diario: dias, estadoProceso: estado, conGeneracionHoy: !!gH, columnas: gH ? leerLoggerNet(gH.slice(0, 2000)).columnas : null });
+  Object.assign(out, { filas, diario: dias, estadoProceso: estado, calidadFuente: { excluidas: calidad.excluidas, congelados: calidad.congelados }, conGeneracionHoy: !!gH, columnas: gH ? leerLoggerNet(gH.slice(0, 2000)).columnas : null });
   return out;
 }
 
