@@ -25,9 +25,9 @@ const MAX_VUELTAS = 8;
 const r = (v, d = 2) => (v == null || !Number.isFinite(v) ? null : Math.round(v * 10 ** d) / 10 ** d);
 const pct = (g) => (g == null || !(g > 0) ? null : r(pctFromDeg(g), 1));
 
-const SISTEMA = `Eres el asistente de operación de la central hidroeléctrica Ituango (EPM) dentro de la app "Turbinas Ituango". Respondes en español, breve y concreto, a ingenieros de operación.
+const SISTEMA = `Eres el asistente de operación de la central hidroeléctrica Ituango (EPM) dentro de la app "Turbinas Ituango". Respondes en español, breve y concreto, a ingenieros de operación. Trata al usuario de «usted».
 Reglas:
-- No inventes cifras. Toda cifra de operación sale de una herramienta; si no hay dato, dilo. Cita la hora del dato (hora de Colombia).
+- No inventes cifras ni fechas. Toda cifra de operación sale de una herramienta; si la herramienta no trae el dato exacto (una fecha, una hora, un valor por unidad), dilo o pide el detalle con otra herramienta (p. ej. historico_diario), nunca lo deduzcas. Cita la hora del dato (hora de Colombia).
 - Cuando calcules algo con un modelo (apertura, caudal del modelo, simulación de nivel), dilo: es una estimación.
 - Conceptos de la app:
   * Caudal regulado (Hidrometría) = potencia en bornes / F.C. El F.C. es 1,62 hasta el 29-oct-2026 14:35; desde entonces 0,0119·nivel − 3,178 (nivel entre 390 y 420 msnm) y 1,80 fuera de ese rango.
@@ -41,12 +41,12 @@ Reglas:
   * Promedios, totales, máximos o comparaciones de un periodo (un mes, una semana, varios días): usa resumen_periodo (una sola llamada, hasta 366 días). historico_diario solo si piden el detalle día a día (máx. 10 días) y serie_horaria solo para horas puntuales.
   * «Promedio de generación» de una unidad o de la central: entrega la potencia media (MW) y la energía (MWh) del periodo; aclara si el promedio es sobre las horas en línea o sobre todo el periodo.
   * Simulaciones: pasa a simular_nivel SOLO las horas que pidió el usuario (p. ej. 10 h a 900 MW = 10 valores de 900). No agregues horas con 0 MW ni supongas paradas.
-  * El despacho de XM NO está en tus datos: se pega en la pestaña Despacho de la app. Si preguntan por el cumplimiento del despacho, dilo en una frase y entrega la potencia medida de las últimas horas cerradas.
+  * El despacho de XM NO está en tus datos: se pega en la pestaña Despacho de la app. Si preguntan por el cumplimiento del despacho, dilo en una frase y entrega la potencia medida de la última hora cerrada. La banda de despacho (XM ±5 %, hora a hora) y la regla 1891 (caudal regulado del día) son controles distintos: no los mezcles.
 - Formato: respuesta corta (3 a 8 líneas). La cifra pedida primero, en negrita, con su unidad y la hora o el periodo del dato. Tablas solo si piden detalle hora a hora o por unidad. No repitas los supuestos completos; menciona solo los que cambian la lectura.`;
 
 const HERRAMIENTAS = [
   { name: "estado_actual", description: "Estado en vivo de la central con el último dato de LoggerNet: nivel y su tendencia, potencia y caudal por unidad, apertura estimada por unidad, vertedero, caudal descargado, entrada al embalse de hoy, regla 1891 del día (promedio, banda, lo requerido el resto del día, cierre si sigue como la última hora), nivel estimado a las 24:00, pronóstico de HydroForecast para hoy y alertas activas.", input_schema: { type: "object", properties: {} } },
-  { name: "resumen_periodo", description: "Resumen agregado de un periodo (1 a 366 días), calculado con el histórico diario: energía, potencia media y máxima de la central y de cada unidad (sobre las horas en línea y sobre todo el periodo), horas en línea y arranques por unidad, nivel (inicio, fin, mín., máx.), caudal regulado medio, entrada media, días con vertimiento y días de la regla 1891 dentro/fuera/en excepción. Úsala para promedios, totales y comparaciones de meses o semanas.", input_schema: { type: "object", properties: { desde: { type: "string", description: "AAAA-MM-DD" }, hasta: { type: "string", description: "AAAA-MM-DD (puede ser hoy: el día en curso cuenta parcial)" } }, required: ["desde", "hasta"] } },
+  { name: "resumen_periodo", description: "Resumen agregado de un periodo (1 a 366 días), calculado con el histórico diario: energía, potencia media y máxima de la central y de cada unidad (sobre las horas en línea y sobre todo el periodo), horas en línea y arranques por unidad, nivel (inicio, fin, mín., máx.), días extremos con su fecha (mayor y menor energía, nivel más alto y más bajo), caudal regulado medio, entrada media, días con vertimiento y días de la regla 1891 dentro/fuera/en excepción. Úsala para promedios, totales y comparaciones de meses o semanas.", input_schema: { type: "object", properties: { desde: { type: "string", description: "AAAA-MM-DD" }, hasta: { type: "string", description: "AAAA-MM-DD (puede ser hoy: el día en curso cuenta parcial)" } }, required: ["desde", "hasta"] } },
   { name: "historico_diario", description: "Detalle día a día entre dos fechas (máximo 10 días; para periodos largos use resumen_periodo): regla 1891 (promedio regulado, banda, estado), nivel (inicio, fin, mín., máx.), energía, potencia media, vertimiento, caudal descargado, caudal de entrada (balance de masa) y, por unidad, horas en línea, energía, arranques, potencia media y máxima.", input_schema: { type: "object", properties: { desde: { type: "string", description: "AAAA-MM-DD" }, hasta: { type: "string", description: "AAAA-MM-DD" } }, required: ["desde", "hasta"] } },
   { name: "serie_horaria", description: "Promedios horarios entre dos fechas (máximo 2 días): nivel, caudal regulado, vertedero, descargado, F.C. y, por unidad, potencia, fracción de la hora en línea y apertura estimada (%).", input_schema: { type: "object", properties: { desde: { type: "string", description: "AAAA-MM-DD" }, hasta: { type: "string", description: "AAAA-MM-DD" } }, required: ["desde", "hasta"] } },
   { name: "pronostico_caudal", description: "Pronóstico diario de HydroForecast (Sitio Presa y Olaya: media, mínimo y máximo, hasta 15 días) y lo observado de los últimos 7 días.", input_schema: { type: "object", properties: {} } },
@@ -137,6 +137,12 @@ async function resumenPeriodo(ctx, { desde, hasta }) {
     };
   });
   const parciales = dias.filter((d) => d.parcial).map((d) => d.dia);
+  // Días extremos (solo días completos, para no comparar un día a medias)
+  const completos = dias.filter((d) => !d.parcial && Number.isFinite(d.energia));
+  const extremo = (f, mayor) => completos.reduce((a, d) => (a == null || (mayor ? f(d) > f(a) : f(d) < f(a)) ? d : a), null);
+  const dMax = extremo((d) => d.energia, true), dMin = extremo((d) => d.energia, false);
+  const nMax = completos.filter((d) => d.nivel).reduce((a, d) => (!a || d.nivel.max > a.nivel.max ? d : a), null);
+  const nMin = completos.filter((d) => d.nivel).reduce((a, d) => (!a || d.nivel.min < a.nivel.min ? d : a), null);
   return {
     periodo: { desde: dias[0].dia, hasta: dias[dias.length - 1].dia, dias_con_datos: dias.length, horas_con_datos: r(horasPeriodo, 1), dias_parciales: parciales.length ? parciales : undefined },
     central: {
@@ -146,6 +152,13 @@ async function resumenPeriodo(ctx, { desde, hasta }) {
       entrada_media_m3s: r(suma((d) => (d.balance ? d.balance.qEntrada : NaN)) / Math.max(1, dias.filter((d) => d.balance && Number.isFinite(d.balance.qEntrada)).length), 1),
       dias_con_vertimiento: dias.filter((d) => d.vertedero && d.vertedero.conVertimiento).length,
     },
+    dias_extremos: completos.length ? {
+      mayor_energia: dMax ? { dia: dMax.dia, energia_mwh: r(dMax.energia, 0), p_media_mw: r(dMax.pMedia, 1) } : null,
+      menor_energia: dMin ? { dia: dMin.dia, energia_mwh: r(dMin.energia, 0), p_media_mw: r(dMin.pMedia, 1) } : null,
+      nivel_mas_alto: nMax ? { dia: nMax.dia, max_msnm: r(nMax.nivel.max, 2) } : null,
+      nivel_mas_bajo: nMin ? { dia: nMin.dia, min_msnm: r(nMin.nivel.min, 2) } : null,
+      nota: "solo días completos",
+    } : null,
     nivel_msnm: nivIni ? { inicio: r(nivIni.nivel.ini, 2), fin: r(nivFin.nivel.fin, 2), min: r(minimo((d) => (d.nivel ? d.nivel.min : NaN)), 2), max: r(maximo((d) => (d.nivel ? d.nivel.max : NaN)), 2) } : null,
     regla_1891_dias: { cumple: cuenta("cumple"), por_encima: cuenta("por_encima"), por_debajo: cuenta("por_debajo"), excepcion: cuenta("excepcion"), sin_banda: dias.filter((d) => d.regla && !d.regla.banda).length },
     unidades,
