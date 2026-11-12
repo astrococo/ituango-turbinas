@@ -1,8 +1,9 @@
-/* Asistente con IA (Claude): preguntas en lenguaje natural sobre la
+/* Asistente con IA: preguntas en lenguaje natural sobre la
    operación, respondidas con las herramientas de src/asistente.js. */
 import { useState, useRef, useEffect } from "react";
 import { useVivo } from "../datos/vivo.jsx";
 import { useDatos } from "../datos/fuentes.jsx";
+import { useSesion } from "../datos/sesion.jsx";
 import { ahoraColombia } from "../datos/tiempo.js";
 import { preguntarLocal, preguntarGitHub, listarModelosLocales, URL_LOCAL_DEFECTO } from "../asistente.js";
 import { Proposito, Tarjeta } from "./comunes.jsx";
@@ -53,7 +54,11 @@ function Texto({ T, texto }) {
 export default function Asistente({ T }) {
   const { vivo } = useVivo() || {};
   const datos = useDatos();
-  const [proveedor, setProveedor] = useState(() => (leerLocal(CLAVE_PROVEEDOR) === "local" ? "local" : "github")); // "github" (gratis, en GitHub) | "local" (Ollama en este equipo)
+  const sesion = useSesion();
+  const conSesion = datos.modo === "sesion";
+  // "servidor" (con sesión: respuesta directa del servidor) | "github" (con token: vía GitHub Actions) | "local" (Ollama en este equipo)
+  const [proveedor, setProveedor] = useState(() => (leerLocal(CLAVE_PROVEEDOR) === "local" ? "local" : conSesion ? "servidor" : "github"));
+  useEffect(() => { if (conSesion && proveedor === "github") setProveedor("servidor"); if (!conSesion && proveedor === "servidor") setProveedor("github"); }, [conSesion, proveedor]);
   const [urlLocal, setUrlLocal] = useState(() => leerLocal(CLAVE_URL_LOCAL) || URL_LOCAL_DEFECTO);
   const [modeloLocal, setModeloLocal] = useState(() => leerLocal(CLAVE_MODELO_LOCAL) || "");
   const [modelosLocales, setModelosLocales] = useState(null);
@@ -72,8 +77,9 @@ export default function Asistente({ T }) {
   useEffect(() => { escribirLocal(CLAVE_URL_LOCAL, urlLocal.trim() || null); }, [urlLocal]);
   useEffect(() => { escribirLocal(CLAVE_MODELO_LOCAL, modeloLocal || null); }, [modeloLocal]);
   const local = proveedor === "local";
-  const github = proveedor === "github";
-  const listo = github ? datos.conectado : !!modeloLocal;
+  const servidor = proveedor === "servidor";
+  const github = proveedor === "github" || servidor; // ambos usan el modelo en la nube (Groq)
+  const listo = servidor ? conSesion : proveedor === "github" ? datos.conectado : !!modeloLocal;
   const [espera, setEspera] = useState(null);
 
   async function probarConexion() {
@@ -102,7 +108,19 @@ export default function Asistente({ T }) {
         ctx, senal: ctrl.current.signal, historial: [...historial, { role: "user", content: q }],
         onPaso: (p) => { pasos.push(p); setVista((v) => { const c = v.slice(); c[c.length - 1] = { ...c[c.length - 1], pasos: pasos.slice() }; return c; }); },
       };
-      if (github) {
+      if (servidor) {
+        const previos = vista.filter((m) => m.texto).map((m) => ({ rol: m.rol, texto: m.texto }));
+        setEspera({ fase: "servidor", segundos: 0 });
+        const t0 = Date.now(); const reloj = setInterval(() => setEspera({ fase: "servidor", segundos: Math.round((Date.now() - t0) / 1000) }), 1000);
+        let r, cuerpo;
+        try {
+          r = await sesion.llamar("asistente", { metodo: "POST", cuerpo: { pregunta: q, historial: previos.slice(-4) }, senal: ctrl.current.signal });
+          cuerpo = await r.json().catch(() => null);
+        } finally { clearInterval(reloj); }
+        if (ctrl.current.signal.aborted) throw Object.assign(new Error("cancelado"), { name: "AbortError" });
+        if (!r.ok || !cuerpo || cuerpo.error) throw new Error((cuerpo && cuerpo.error) || `El servidor respondió ${r.status}.`);
+        setVista((v) => { const c = v.slice(); c[c.length - 1] = { rol: "asistente", texto: cuerpo.texto || "(sin texto)", pasos: cuerpo.pasos || [], uso: cuerpo.uso, nota: cuerpo.ultimoDato ? `Dato usado: ${cuerpo.ultimoDato} · ${cuerpo.modelo}` : cuerpo.modelo }; return c; });
+      } else if (github) {
         const previos = vista.filter((m) => m.texto).map((m) => ({ rol: m.rol, texto: m.texto }));
         const r = await preguntarGitHub({ datos, pregunta: q, historial: previos, senal: ctrl.current.signal, onEstado: setEspera });
         setVista((v) => { const c = v.slice(); c[c.length - 1] = { rol: "asistente", texto: r.texto || "(sin texto)", pasos: r.pasos, uso: r.uso, nota: r.ultimoDato ? `Dato usado: ${r.ultimoDato} · ${r.modelo}` : r.modelo }; return c; });
@@ -131,12 +149,16 @@ export default function Asistente({ T }) {
 
       <Tarjeta T={T} titulo="Configuración" subtitulo="Elija dónde corre el modelo de IA. Las herramientas y los datos que consulta son los mismos en ambos casos. Las dos opciones son gratuitas.">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-          {[["github", "Asistente en GitHub · gratis, cualquier equipo"], ["local", "Modelo local (Ollama) · gratis, sin salir del equipo"]].map(([id, n]) => (
+          {[conSesion ? ["servidor", "Asistente en la nube · gratis, cualquier equipo"] : ["github", "Asistente en GitHub · gratis, cualquier equipo"], ["local", "Modelo local (Ollama) · gratis, sin salir del equipo"]].map(([id, n]) => (
             <button key={id} onClick={() => setProveedor(id)} disabled={ocupado} style={{ ...chip, borderRadius: 6, padding: "7px 12px", fontWeight: proveedor === id ? 700 : 400, color: proveedor === id ? T.onAccent : T.inkMuted, background: proveedor === id ? T.teal : T.panelSoft, borderColor: proveedor === id ? T.teal : T.line }}>{n}</button>
           ))}
         </div>
 
-        {github ? (
+        {servidor ? (
+          <div style={{ padding: "10px 12px", borderRadius: 8, background: T.panelSoft, border: `1px solid ${T.amber}`, color: T.ink, fontSize: 12.5, lineHeight: 1.5, marginBottom: 12 }}>
+            <b>Gratis y en cualquier equipo, con su sesión.</b> El servidor arma el estado en vivo y responde con un modelo abierto (gpt-oss-120b) en el plan gratuito de Groq, normalmente en 5 a 30 segundos. Si se pasa del límite gratuito, espera o responde que intente luego: no cobra. Las cifras consultadas se envían a Groq, que según su contrato no las usa para entrenar: úselo solo si la política de EPM lo permite. Para periodos largos use Analítica.
+          </div>
+        ) : github ? (
           <>
             <div style={{ padding: "10px 12px", borderRadius: 8, background: T.panelSoft, border: `1px solid ${T.amber}`, color: T.ink, fontSize: 12.5, lineHeight: 1.5, marginBottom: 12 }}>
               <b>Gratis y en cualquier equipo, sin instalar nada.</b> La pregunta va al repositorio de datos y GitHub Actions la responde con un modelo abierto (gpt-oss-120b) en el plan gratuito de Groq; la clave está guardada en GitHub y nunca llega al navegador. Tarda de 30 a 90 segundos. Si se pasa del límite gratuito, responde que espere: no cobra. Las cifras que el asistente consulte se envían a Groq, que según su contrato no las usa para entrenar ni las guarda por defecto: úselo solo si la política de EPM lo permite. Requiere que su token de GitHub tenga permiso de escritura (<i>Contents: Read and write</i>) en el repositorio de datos. Para consultas largas del histórico use los módulos de Analítica: aquí el histórico va de a 10 días y la serie horaria de a 1 día.
@@ -164,9 +186,9 @@ export default function Asistente({ T }) {
           </>
         )}
         <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", fontSize: 12.5 }}>
-          <Estado T={T} compacto tipo={listo ? "bien" : "neutro"}>{github ? (datos.conectado ? "Conectado al repositorio de datos" : "Falta conectar el repositorio de datos") : (modeloLocal ? `Modelo: ${modeloLocal}` : "Sin modelo")}</Estado>
+          <Estado T={T} compacto tipo={listo ? "bien" : "neutro"}>{servidor ? `Sesión: ${sesion.email}` : github ? (datos.conectado ? "Conectado al repositorio de datos" : "Falta conectar el repositorio de datos") : (modeloLocal ? `Modelo: ${modeloLocal}` : "Sin modelo")}</Estado>
           <Estado T={T} compacto tipo={vivo && vivo.ultima ? "bien" : "aviso"}>{vivo && vivo.ultima ? `Datos en vivo: ${vivo.ultima.t}` : "Sin datos en vivo"}</Estado>
-          <Estado T={T} compacto tipo={datos.conectado ? "bien" : "aviso"}>{datos.conectado ? "Histórico disponible" : "Sin token del repositorio: no hay histórico"}</Estado>
+          <Estado T={T} compacto tipo={datos.conectado ? "bien" : "aviso"}>{datos.conectado ? "Histórico disponible" : "Sin conexión a los datos: no hay histórico"}</Estado>
         </div>
       </Tarjeta>
 
@@ -181,7 +203,7 @@ export default function Asistente({ T }) {
           <div key={i} style={{ margin: "8px 0", padding: "10px 12px", borderRadius: 8, background: m.rol === "usuario" ? T.accentSoft : T.panelSoft }}>
             <div style={{ fontSize: 11.5, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>{m.rol === "usuario" ? "Usted" : "Asistente"}</div>
             {m.pasos && m.pasos.length > 0 && <div style={{ fontSize: 12, color: T.inkFaint, marginBottom: 6 }}>Consultó: {m.pasos.map((p) => NOMBRE_HERR[p.nombre] || p.nombre).join(" · ")}</div>}
-            {m.rol === "usuario" ? <div style={{ fontSize: 13.5, color: T.ink }}>{m.texto}</div> : m.texto ? <Texto T={T} texto={m.texto} /> : <div style={{ fontSize: 13, color: T.inkFaint }}>{github && espera ? (espera.fase === "enviada" ? "Pregunta enviada a GitHub…" : `GitHub está respondiendo… ${espera.segundos} s (normal: 30–90 s)`) : "Pensando…"}</div>}
+            {m.rol === "usuario" ? <div style={{ fontSize: 13.5, color: T.ink }}>{m.texto}</div> : m.texto ? <Texto T={T} texto={m.texto} /> : <div style={{ fontSize: 13, color: T.inkFaint }}>{servidor && espera ? `El servidor está respondiendo… ${espera.segundos} s` : github && espera ? (espera.fase === "enviada" ? "Pregunta enviada a GitHub…" : `GitHub está respondiendo… ${espera.segundos} s (normal: 30–90 s)`) : "Pensando…"}</div>}
             {m.nota && <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 6 }}>{m.nota}</div>}
             {m.uso && <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 6 }}>Tokens: {m.uso.input_tokens} de entrada · {m.uso.output_tokens} de salida (última llamada){local && m.uso.input_tokens >= 3900 ? " · cerca del límite de contexto de Ollama: suba OLLAMA_CONTEXT_LENGTH" : ""}</div>}
           </div>

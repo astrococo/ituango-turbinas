@@ -15,6 +15,9 @@ import OperacionMedida from "./ui/OperacionMedida.jsx";
 import { useVivo, ProveedorVivo } from "./datos/vivo.jsx";
 import { tramosCumplimiento } from "./analitica.js";
 import { ProveedorDatos, useDatos } from "./datos/fuentes.jsx";
+import { ProveedorSesion, useSesion } from "./datos/sesion.jsx";
+import { pantallaDeAcceso, PantallaNuevaClave, MenuUsuario } from "./ui/Ingreso.jsx";
+import Usuarios from "./ui/Usuarios.jsx";
 import { Proposito, PanelConexion, Nota, Kpi } from "./ui/comunes.jsx";
 import { GraficoSeries } from "./ui/graficos.jsx";
 import { EQUIV_APERTURA, referenciasApertura, NOTA_APERTURA, motivoSinApertura } from "./ui/Apertura.jsx";
@@ -2251,7 +2254,7 @@ const GRUPOS = [
   { k: "analitica", nombre: "Analítica", tabs: [["regla", "Regla 1891 y ANLA"], ["unidades", "Unidades"], ["hidrologia", "Hidrología y pronóstico"], ["operacion", "Operación medida"], ["confiabilidad", "Validación"]] },
   { k: "ingenieria", nombre: "Ingeniería", tabs: [["colina", "Colina"], ["curvas", "Curvas y F.C."], ["descarga", "Descarga"], ["referencia", "Referencia"]] },
 ];
-const PESTANAS = [...GRUPOS.flatMap((g) => g.tabs), ["datos", "Conexión de datos"]];
+const PESTANAS = [...GRUPOS.flatMap((g) => g.tabs), ["datos", "Conexión de datos"], ["usuarios", "Usuarios"]];
 const MODULO_COLINA = new Set(["buscador", "despacho", "operacion", "colina", "curvas", "descarga", "referencia"]);
 const leerPref = (k, def) => { try { return localStorage.getItem(k) || def; } catch { return def; } };
 const guardarPref = (k, v) => { try { localStorage.setItem(k, v); } catch { /* sin almacenamiento */ } };
@@ -2262,11 +2265,13 @@ const pestanaDeHash = () => {
 
 export default function ItuangoColinaTurbina() {
   return (
-    <ProveedorDatos>
-      <ProveedorVivo>
-        <Aplicacion />
-      </ProveedorVivo>
-    </ProveedorDatos>
+    <ProveedorSesion>
+      <ProveedorDatos>
+        <ProveedorVivo>
+          <Aplicacion />
+        </ProveedorVivo>
+      </ProveedorDatos>
+    </ProveedorSesion>
   );
 }
 
@@ -2276,6 +2281,8 @@ function Aplicacion() {
   const [tab, setTab] = useState(pestanaDeHash);
   const [condDescarga, setCondDescarga] = useState(CONDICION_DESCARGA_DEFECTO);
   const datos = useDatos();
+  const sesion = useSesion();
+  const [cambiandoClave, setCambiandoClave] = useState(false);
   const { vivo, cargando: cargandoVivo, error: errorVivo } = useVivo();
   const T = aplicarAltoContraste(THEMES[theme], theme, altoContraste);
   useEffect(() => { guardarPref("ituango-turbinas-tema", theme); }, [theme]);
@@ -2300,6 +2307,9 @@ function Aplicacion() {
   const grupo = GRUPOS.find((g) => g.tabs.some(([k]) => k === tab)) || null;
   const edad = vivo && vivo.edadMin;
   const estadoDatos = !datos.conectado ? { c: T.amber, txt: "Sin datos de operación" } : edad == null ? (cargandoVivo && !vivo ? { c: T.inkFaint, txt: "Conectando…" } : { c: "#d03b3b", txt: errorVivo ? "Error de datos" : "Sin datos de hoy" }) : edad <= 90 ? { c: "#0ca30c", txt: `Datos ${vivo.ultima.t.slice(11)}` } : { c: "#d03b3b", txt: `Datos con ${Math.round(edad / 60)} h de atraso` };
+
+  const acceso = cambiandoClave ? <PantallaNuevaClave T={T} alTerminar={() => setCambiandoClave(false)} /> : pantallaDeAcceso(sesion, T);
+  if (acceso) return <><GlobalStyles T={T} theme={theme} altoContraste={altoContraste} />{acceso}</>;
 
   return (
     <div style={{ background: T.bg, color: T.ink, fontFamily: FONT_BODY, minHeight: "100vh" }}>
@@ -2331,6 +2341,7 @@ function Aplicacion() {
               <button className="itu-pill" onClick={() => setAltoContraste((v) => !v)} title="Alto contraste" aria-pressed={altoContraste} style={altoContraste ? { borderColor: T.teal, color: T.teal } : undefined}>
                 <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.6" /><path d="M8 1.5a6.5 6.5 0 0 1 0 13z" fill="currentColor" /></svg>
               </button>
+              <MenuUsuario T={T} onCambiarClave={() => setCambiandoClave(true)} />
             </div>
           </div>
           <nav aria-label="Secciones" style={{ marginTop: 8 }}>
@@ -2356,11 +2367,12 @@ function Aplicacion() {
         {tab === "unidades" && <Unidades T={T} />}
         {tab === "hidrologia" && <Hidrologia T={T} />}
         {tab === "confiabilidad" && <Confiabilidad T={T} />}
+        {tab === "usuarios" && <Usuarios T={T} />}
         {tab === "datos" && (
           <>
             <PanelConexion T={T} />
             <div style={{ fontSize: 13, color: T.inkMuted, lineHeight: 1.6, maxWidth: 820 }}>
-              <p><b style={{ color: T.ink }}>De dónde salen los datos.</b> Un relay en un equipo de la red corporativa lee los archivos de LoggerNet de la estación del vertedero y los sube cada hora a un repositorio privado (un CSV por día). Un proceso automático en ese repositorio arma el histórico (regla operativa, vertedero, descargado, índices por unidad) y archiva HydroForecast. La app lee esos archivos con el token; nada se envía a otro lado.</p>
+              <p><b style={{ color: T.ink }}>De dónde salen los datos.</b> Un relay en un equipo de la red corporativa lee los archivos de LoggerNet de la estación del vertedero y los sube cada hora a un repositorio privado (un CSV por día). Un proceso automático en ese repositorio arma el histórico (regla operativa, vertedero, descargado, índices por unidad) y archiva HydroForecast. La app lee esos archivos con la sesión del usuario (o un token técnico); nada se envía a otro lado.</p>
               {vivo && vivo.estadoProceso && <p>Histórico: {vivo.estadoProceso.dias} días desde {vivo.estadoProceso.primerDia}; último proceso {String(vivo.estadoProceso.generado).slice(0, 16).replace("T", " ")} UTC.</p>}
               {vivo && vivo.columnas && <p>Columnas del archivo de hoy: {vivo.columnas.length}. {vivo.columnas.some((c) => /^Open_Gate/i.test(c)) ? "Incluye compuertas (relay versión 2)." : "Sin columnas de compuertas: falta instalar la versión 2 del relay."}</p>}
             </div>

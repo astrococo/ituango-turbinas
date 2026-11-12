@@ -12,6 +12,7 @@
    ============================================================ */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ahoraColombia, hoyColombia, sumarDias } from "./tiempo.js";
+import { useSesion } from "./sesion.jsx";
 
 const REPO_DATOS_DEFECTO = "astrococo/ituango-turbinas-datos";
 const CLAVE_TOKEN = "ituango-turbinas-token";
@@ -53,6 +54,23 @@ async function pedirGitHub(repo, token, ruta, { raw = true } = {}) {
   if (etag) cache.set(url, { etag, cuerpo });
   return cuerpo;
 }
+/* Modo sesión: los archivos llegan por la función «datos» del servidor
+   (Supabase), que valida la sesión y la aprobación del usuario. */
+async function pedirServidor(llamar, ruta, { listar = false } = {}) {
+  const clave = `sb:${listar ? "L" : "T"}:${ruta}`;
+  const previo = cache.get(clave);
+  const r = await llamar("datos", { query: `?ruta=${encodeURIComponent(ruta)}${listar ? "&listar=1" : ""}`, cabeceras: previo && previo.etag ? { "If-None-Match": previo.etag } : {} });
+  if (r.status === 304 && previo) return previo.cuerpo;
+  if (!r.ok) {
+    const e = await r.json().catch(() => null);
+    const msg = (e && e.error) || `El servidor respondió ${r.status}.`;
+    throw new ErrorDatos(r.status === 404 ? `No existe ${ruta}.` : msg, r.status);
+  }
+  const cuerpo = listar ? await r.json() : await r.text();
+  const etag = r.headers.get("etag");
+  if (etag) cache.set(clave, { etag, cuerpo });
+  return cuerpo;
+}
 async function pedirHF(ruta, ms = 15000) {
   const c = new AbortController(); const to = setTimeout(() => c.abort(), ms);
   try {
@@ -66,6 +84,9 @@ const Contexto = createContext(null);
 
 /* Proveedor: guarda el token y el repositorio y expone funciones de lectura. */
 function ProveedorDatos({ children }) {
+  const sesion = useSesion();
+  const modoSesion = !!(sesion.activo && sesion.aprobado);
+  const llamar = sesion.llamar;
   const [repo, setRepo] = useState(() => leerLocal(CLAVE_REPO) || REPO_DATOS_DEFECTO);
   // El token queda guardado en el navegador por defecto: se pide una sola vez por equipo.
   const [token, setTokenEstado] = useState(() => tokenDeEnlace() || leerLocal(CLAVE_TOKEN) || "");
@@ -77,11 +98,12 @@ function ProveedorDatos({ children }) {
   const setToken = useCallback((t) => { setTokenEstado(t.trim()); setVerificado(null); }, []);
 
   const leerTexto = useCallback((ruta) => {
+    if (modoSesion) return pedirServidor(llamar, ruta);
     if (!token) return Promise.reject(new ErrorDatos("Falta el token de lectura del repositorio de datos.", "token"));
     return pedirGitHub(repo, token, ruta, { raw: true });
-  }, [repo, token]);
+  }, [repo, token, modoSesion, llamar]);
   const leerJSON = useCallback(async (ruta) => JSON.parse(await leerTexto(ruta)), [leerTexto]);
-  const listar = useCallback((ruta) => pedirGitHub(repo, token, ruta, { raw: false }), [repo, token]);
+  const listar = useCallback((ruta) => (modoSesion ? pedirServidor(llamar, ruta, { listar: true }) : pedirGitHub(repo, token, ruta, { raw: false })), [repo, token, modoSesion, llamar]);
   // Envía un evento repository_dispatch al repositorio de datos (requiere token con Contents: Read and write)
   const despachar = useCallback(async (evento, carga) => {
     if (!token) throw new ErrorDatos("Falta el token del repositorio de datos.", "token");
@@ -120,16 +142,16 @@ function ProveedorDatos({ children }) {
   const leerHF = useCallback(async (rutaApi, archivo) => {
     try { return { datos: await pedirHF(rutaApi), origen: "HydroForecast (en vivo)" }; }
     catch (e) {
-      if (token && archivo) {
-        try { return { datos: await (async () => JSON.parse(await pedirGitHub(repo, token, `hf/${archivo}`)))(), origen: "Archivo del repositorio (HydroForecast)" }; }
+      if ((token || modoSesion) && archivo) {
+        try { return { datos: JSON.parse(await leerTexto(`hf/${archivo}`)), origen: "Archivo del repositorio (HydroForecast)" }; }
         catch { /* sigue */ }
       }
       throw new ErrorDatos(`HydroForecast no respondió (${e.name === "AbortError" ? "tiempo agotado" : e.message}).`, "hf");
     }
-  }, [repo, token]);
+  }, [token, modoSesion, leerTexto]);
 
-  const valor = useMemo(() => ({ repo, setRepo, token, setToken, recordar, setRecordar, conectado: !!token, verificado, verificar, leerTexto, leerJSON, listar, leerHF, despachar, leerRama, enlaceConfiguracion }),
-    [repo, token, recordar, verificado, verificar, leerTexto, leerJSON, listar, leerHF, despachar, leerRama, setToken, enlaceConfiguracion]);
+  const valor = useMemo(() => ({ repo, setRepo, token, setToken, recordar, setRecordar, conectado: modoSesion || !!token, modo: modoSesion ? "sesion" : token ? "token" : null, verificado, verificar, leerTexto, leerJSON, listar, leerHF, despachar, leerRama, enlaceConfiguracion }),
+    [repo, token, recordar, verificado, verificar, leerTexto, leerJSON, listar, leerHF, despachar, leerRama, setToken, enlaceConfiguracion, modoSesion]);
   return <Contexto.Provider value={valor}>{children}</Contexto.Provider>;
 }
 const useDatos = () => useContext(Contexto);

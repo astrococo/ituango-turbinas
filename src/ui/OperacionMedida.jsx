@@ -65,8 +65,9 @@ const fmt = (v, d = 1) => (v == null || !Number.isFinite(v) ? "—" : v.toLocale
 export default function OperacionMedida({ T, condDescarga }) {
   const [fuente, setFuente] = useState("github");
   // Usa la conexión de la app (se configura una sola vez por equipo, arriba a la derecha)
-  const { repo, token, leerJSON } = useDatos();
-  const leerExclusiones = () => (token ? leerJSON("calidad/exclusiones.json").then((x) => (Array.isArray(x) ? x : []), () => []) : Promise.resolve([]));
+  const { repo, conectado, modo, leerJSON, leerTexto, listar: listarDatos } = useDatos();
+  const token = conectado; // hay acceso a los datos (sesión o token)
+  const leerExclusiones = () => (conectado ? leerJSON("calidad/exclusiones.json").then((x) => (Array.isArray(x) ? x : []), () => []) : Promise.resolve([]));
   // Rango de fechas a cargar (por defecto, los últimos 3 días). Se baja también el día anterior al primero: es la base de su banda.
   const hoyTxt = new Date(Date.now() - 5 * 3600e3).toISOString().slice(0, 10);
   const [rango, setRango] = useState(() => rangoUltimos(hoyTxt, "3"));
@@ -85,7 +86,7 @@ export default function OperacionMedida({ T, condDescarga }) {
   async function cargarGitHub() {
     const tk = token, rp = repo;
     if (!tk) { setEstado({ tipo: "error", txt: "Falta conectar el repositorio de datos: use «Conexión de datos» (indicador de arriba a la derecha), una sola vez por equipo." }); return; }
-    setEstado({ tipo: "info", txt: "Consultando GitHub…" }); setLectura(null); setCalculo(null);
+    setEstado({ tipo: "info", txt: "Consultando el repositorio de datos…" }); setLectura(null); setCalculo(null);
     try {
       const hoy = new Date(Date.now() - 5 * 3600e3);
       const base = sumarDiasTxt(rango.desde, -1);
@@ -94,13 +95,15 @@ export default function OperacionMedida({ T, condDescarga }) {
       void hoy;
       // GitHub responde 404 tanto si falta la carpeta como si el token no ve el repositorio:
       // primero se comprueba el repositorio, para dar el error correcto.
-      try { await gh(`https://api.github.com/repos/${rp}`, tk); }
-      catch (e) { throw new Error(/404/.test(e.message) ? `El token no tiene acceso a ${rp}, o el repositorio no existe (404). Revise el nombre y que el token sea de ese repositorio.` : e.message); }
+      if (modo === "token") {
+        try { await gh(`https://api.github.com/repos/${rp}`, tk); }
+        catch (e) { throw new Error(/404/.test(e.message) ? `El token no tiene acceso a ${rp}, o el repositorio no existe (404). Revise el nombre y que el token sea de ese repositorio.` : e.message); }
+      }
       const listar = async (carpeta) => {
         let out = [];
         for (const a of anios) {
-          try { out = out.concat((await gh(`https://api.github.com/repos/${rp}/contents/${carpeta}/${a}`, tk)).filter((x) => /\d{4}-\d{2}-\d{2}\.csv$/.test(x.name))); }
-          catch (e) { if (!/404/.test(e.message)) throw e; }
+          try { out = out.concat((await listarDatos(`${carpeta}/${a}`)).filter((x) => /\d{4}-\d{2}-\d{2}\.csv$/.test(x.name))); }
+          catch (e) { if (!(e.codigo === 404 || /404|No existe/.test(e.message))) throw e; }
         }
         return out.sort((a, b) => (a.name < b.name ? -1 : 1));
       };
@@ -115,7 +118,7 @@ export default function OperacionMedida({ T, condDescarga }) {
       const lecturas = [];
       for (const [k, f] of todos.entries()) {
         setEstado({ tipo: "info", txt: `Descargando ${f.path} (${k + 1} de ${todos.length})…` });
-        lecturas.push(leerLoggerNet(await gh(`https://api.github.com/repos/${rp}/contents/${f.path}`, tk, true)));
+        lecturas.push(leerLoggerNet(await leerTexto(f.path)));
       }
       const r = combinarLecturas(lecturas, await leerExclusiones());
       setLectura({ ...r, origen: `${rp} · ${gen[0].name.slice(0, 10)} a ${gen[gen.length - 1].name.slice(0, 10)}` });
@@ -258,7 +261,7 @@ export default function OperacionMedida({ T, condDescarga }) {
       {fuente === "github" ? (
         <div className="itu-grid-form" style={{ marginBottom: 12 }}>
           <div style={{ gridColumn: "1 / -1", fontSize: 12.5, color: T.inkMuted, fontFamily: FONT_BODY }}>
-            {token ? <>Usa la conexión de la app al repositorio de datos (<code>{repo}</code>).</> : <>Conecte el repositorio de datos en <a href="#datos" style={{ color: T.teal }}>Conexión de datos</a> (indicador de arriba a la derecha): se hace una sola vez en este equipo.</>}
+            {token ? (modo === "sesion" ? <>Usa su sesión de usuario.</> : <>Usa la conexión de la app al repositorio de datos (<code>{repo}</code>).</>) : <>Conecte el repositorio de datos en <a href="#datos" style={{ color: T.teal }}>Conexión de datos</a> (indicador de arriba a la derecha): se hace una sola vez en este equipo.</>}
           </div>
           <div style={{ gridColumn: "1 / -1" }}>
             <Etiqueta T={T} tip="Días a descargar (dato de cada minuto). Se baja también el día anterior al primero, que es la base de la banda de la regla.">Fechas</Etiqueta>

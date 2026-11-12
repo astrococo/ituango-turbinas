@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { FONT_BODY, InfoTip } from "./base.jsx";
 import { useDatos } from "../datos/fuentes.jsx";
+import { useSesion } from "../datos/sesion.jsx";
 import { Estado, fmtNum } from "./graficos.jsx";
 
 const leerLocal = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -108,9 +109,19 @@ function Kpi({ T, rotulo, valor, unidad, decimales = 1, nota, estado, tip, grand
 /* Panel para conectar el repositorio de datos (token de solo lectura). */
 function PanelConexion({ T, compacto = false }) {
   const d = useDatos();
+  const sesion = useSesion();
   const [texto, setTexto] = useState(d.token);
   const [mostrar, setMostrar] = useState(false);
   const input = { width: "100%", padding: "8px 10px", fontSize: 13, background: T.panelSoft, border: `1px solid ${T.line}`, borderRadius: 7, color: T.ink, fontFamily: FONT_BODY };
+  if (d.modo === "sesion") {
+    return (
+      <div style={{ ...estiloTarjeta(T) }}>
+        <h3 style={{ margin: "0 0 4px", fontSize: 15.5, color: T.ink }}>Conexión a los datos de operación</h3>
+        <Estado T={T} tipo="bien" compacto>Conectado con su sesión ({sesion.email})</Estado>
+        {!compacto && <p style={{ margin: "10px 0 0", fontSize: 12.5, color: T.inkMuted, lineHeight: 1.5 }}>Los datos llegan por el servidor de la app, que verifica su sesión y que la cuenta esté aprobada. No necesita token.</p>}
+      </div>
+    );
+  }
   return (
     <div style={{ ...estiloTarjeta(T), borderColor: d.conectado ? T.line : T.amber }}>
       <h3 style={{ margin: "0 0 4px", fontSize: 15.5, color: T.ink }}>Conexión a los datos de operación</h3>
