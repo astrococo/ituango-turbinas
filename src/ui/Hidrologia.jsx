@@ -56,10 +56,14 @@ export default function Hidrologia({ T }) {
   const tend = useMemo(() => {
     const em = extra.datos?.tendencia?.emisiones;
     if (!em || !em.length) return null;
-    const ult = em.slice(-4);
+    // Una emisión por día (la última de cada día), las 4 más recientes: así se ve
+    // cómo cambió el pronóstico de un día a otro, no entre emisiones de la misma tarde.
+    const porDia = new Map();
+    for (const e of em) porDia.set(String(e.emision).slice(0, 10), e);
+    const ult = [...porDia.values()].slice(-4);
     const fechas = [...new Set(ult.flatMap((e) => e.fecha))].sort();
     const mapaObs = new Map((obs?.data || []).map((r) => [dia(r.timestamp), r.QSitioPresa_obs]));
-    const s = ult.map((e, i) => ({ nombre: `Emitido ${fechaCorta(String(e.emision).slice(0, 16).replace("T", " "))}`, indice: i, ancho: i === ult.length - 1 ? 2.4 : 1.4, puntos: true, datos: fechas.map((f) => { const k = e.fecha.indexOf(f); return k >= 0 ? e.sp[k] : null; }) }));
+    const s = ult.map((e, i) => ({ nombre: `Emisión del ${fechaCorta(String(e.emision).slice(0, 10))} (${String(e.emision).slice(11, 16)})`, indice: i, ancho: i === ult.length - 1 ? 2.4 : 1.4, puntos: true, datos: fechas.map((f) => { const k = e.fecha.indexOf(f); return k >= 0 ? e.sp[k] : null; }) }));
     s.push({ nombre: "Observado", datos: fechas.map((f) => mapaObs.get(f) ?? null), color: T.ink, ancho: 2.4, puntos: true });
     // Acierto por anticipación (todas las emisiones archivadas)
     // solo días cerrados: el observado del día en curso es parcial
@@ -106,7 +110,7 @@ export default function Hidrologia({ T }) {
         </Tarjeta>
       )}
       {tend && (
-        <Tarjeta T={T} titulo="Cómo ha cambiado el pronóstico de Sitio Presa" subtitulo={`Últimas 4 emisiones frente a lo observado. Archivo desde ${fechaCorta(String(tend.primera).slice(0, 10))} (${tend.nEmisiones} emisiones); se guarda cada emisión nueva.`}>
+        <Tarjeta T={T} titulo="Cómo ha cambiado el pronóstico de Sitio Presa" subtitulo={`La última emisión de cada uno de los 4 días más recientes frente a lo observado. Archivo desde ${fechaCorta(String(tend.primera).slice(0, 10))} (${tend.nEmisiones} emisiones); se guarda cada emisión nueva.`}>
           <GraficoSeries T={T} x={tend.fechas} series={tend.s} unidad="m³/s" ejeY="m³/s" decimales={0} nombreArchivo="tendencia_pronostico" />
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
             {tend.errores.map((e) => (

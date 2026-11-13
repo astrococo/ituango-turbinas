@@ -96,13 +96,26 @@ export default function Tablero({ T, condDescarga }) {
     ...series.p.map((d, u) => ({ nombre: `U${u + 1}`, datos: d, indice: u, ancho: 1.6 })),
     { nombre: "Total", datos: series.pTot, color: T.ink, ancho: 2.2 },
   ], [series, T]);
-  const sQ = useMemo(() => series && [
+  // Vista de la gráfica de caudales: dos paneles (regla arriba, vertedero abajo) o un panel con dos ejes
+  const [vistaQ, setVistaQ] = useState(() => { try { return localStorage.getItem("ituango-vista-caudales") || "paneles"; } catch { return "paneles"; } });
+  const elegirVistaQ = (v) => { setVistaQ(v); try { localStorage.setItem("ituango-vista-caudales", v); } catch { /* sin almacenamiento */ } };
+  const sQRegla = useMemo(() => series && [
     { nombre: "Q regulado (P / F.C.)", datos: series.qReg, indice: 0, ancho: 1.4 },
     { nombre: "Promedio acumulado del día", datos: series.acum, indice: 6, ancho: 2.4 },
+    { nombre: "Banda mín.", datos: series.bMin, color: T.inkFaint, dash: true, ancho: 1.2, escalones: true },
+    { nombre: "Banda máx.", datos: series.bMax, color: T.inkFaint, dash: true, ancho: 1.2, escalones: true },
+  ], [series, T]);
+  const sQVert = useMemo(() => series && [
     { nombre: "Vertedero", datos: series.qVert, indice: 1, ancho: 1.6 },
+    { nombre: "Total descargado", datos: series.qDesc, indice: 2, ancho: 1.6 },
+  ], [series]);
+  const sQDosEjes = useMemo(() => series && [
+    { nombre: "Q regulado (P / F.C.)", datos: series.qReg, indice: 0, ancho: 1.4 },
+    { nombre: "Promedio acumulado del día", datos: series.acum, indice: 6, ancho: 2.4 },
     { nombre: "Total descargado", datos: series.qDesc, indice: 2, ancho: 1.6, oculta: true },
     { nombre: "Banda mín.", datos: series.bMin, color: T.inkFaint, dash: true, ancho: 1.2, escalones: true },
     { nombre: "Banda máx.", datos: series.bMax, color: T.inkFaint, dash: true, ancho: 1.2, escalones: true },
+    { nombre: "Vertedero (eje derecho)", datos: series.qVert, indice: 1, ancho: 1.6, eje: "derecho" },
   ], [series, T]);
 
   // Apertura del distribuidor estimada por unidad en el rango de los gráficos:
@@ -294,8 +307,20 @@ export default function Tablero({ T, condDescarga }) {
       )}
       {series && (
         <>
-          <Tarjeta T={T} titulo={`Caudales (${fechaCorta(rango.desde)} – ${fechaCorta(rango.hasta)})`} subtitulo={`La regla se juzga con el promedio acumulado del día (línea gruesa), no con el valor de cada minuto. La banda (líneas punteadas) es la de cada día; la franja de abajo marca cuándo el promedio estuvo dentro o fuera.${cumplimiento && cumplimiento.pctInst != null ? ` El caudal instantáneo estuvo dentro de la banda el ${fmtNum(cumplimiento.pctInst, 0)} % del tiempo (seguimiento).` : ""}`}>
-            <GraficoSeries T={T} x={series.t} series={sQ} unidad="m³/s" ejeY="m³/s" grupo="vivo" tramos={cumplimiento ? cumplimiento.tramos : null} leyendaTramos={cumplimiento ? cumplimiento.leyenda : null} nombreArchivo={`caudales_${rango.desde}_${rango.hasta}`} bandas={[{ desde: 4, hasta: 5, relleno: "rgba(12,163,12,0.08)" }]} />
+          <Tarjeta T={T} titulo={`Caudales (${fechaCorta(rango.desde)} – ${fechaCorta(rango.hasta)})`} accion={
+            <div role="group" aria-label="Vista de la gráfica" style={{ display: "inline-flex", border: `1px solid ${T.line}`, borderRadius: 7, overflow: "hidden" }}>
+              {[["paneles", "Dos paneles"], ["ejes", "Un panel, dos ejes"]].map(([k, n]) => (
+                <button key={k} onClick={() => elegirVistaQ(k)} aria-pressed={vistaQ === k} style={{ padding: "4px 10px", fontSize: 12, border: "none", cursor: "pointer", background: vistaQ === k ? T.panelSoft : "transparent", color: vistaQ === k ? T.teal : T.inkMuted, fontWeight: vistaQ === k ? 700 : 500 }}>{n}</button>
+              ))}
+            </div>} subtitulo={`La regla se juzga con el promedio acumulado del día (línea gruesa), no con el valor de cada minuto. La banda (líneas punteadas) es la de cada día; la franja de abajo marca cuándo el promedio estuvo dentro o fuera.${cumplimiento && cumplimiento.pctInst != null ? ` El caudal instantáneo estuvo dentro de la banda el ${fmtNum(cumplimiento.pctInst, 0)} % del tiempo (seguimiento).` : ""}`}>
+            {vistaQ === "paneles" ? (
+              <>
+                <GraficoSeries T={T} x={series.t} series={sQRegla} unidad="m³/s" ejeY="Q regulado (m³/s)" grupo="vivo" tramos={cumplimiento ? cumplimiento.tramos : null} leyendaTramos={cumplimiento ? cumplimiento.leyenda : null} nombreArchivo={`caudal_regulado_${rango.desde}_${rango.hasta}`} bandas={[{ desde: 2, hasta: 3, relleno: "rgba(12,163,12,0.08)" }]} />
+                <GraficoSeries T={T} x={series.t} series={sQVert} unidad="m³/s" ejeY="m³/s" grupo="vivo" alto={170} incluirCero nombreArchivo={`vertedero_descargado_${rango.desde}_${rango.hasta}`} />
+              </>
+            ) : (
+              <GraficoSeries T={T} x={series.t} series={sQDosEjes} unidad="m³/s" ejeY="Q regulado (m³/s)" ejeY2="vertedero (m³/s)" unidad2="m³/s" incluirCero2 grupo="vivo" tramos={cumplimiento ? cumplimiento.tramos : null} leyendaTramos={cumplimiento ? cumplimiento.leyenda : null} nombreArchivo={`caudales_${rango.desde}_${rango.hasta}`} bandas={[{ desde: 3, hasta: 4, relleno: "rgba(12,163,12,0.08)" }]} />
+            )}
           </Tarjeta>
           <div className="itu-2col">
             <Tarjeta T={T} titulo="Nivel del embalse"><GraficoSeries T={T} x={series.t} series={sNivel} unidad="msnm" ejeY="msnm" decimales={3} grupo="vivo" alto={220} nombreArchivo={`nivel_${rango.desde}_${rango.hasta}`} referencias={[{ y: NAMO, rotulo: `NAMO ${NAMO}` }]} /></Tarjeta>

@@ -140,7 +140,7 @@ export default function Confiabilidad({ T }) {
             </div>
           )}
           <Tarjeta T={T} titulo="Error del nivel proyectado a 24 h, día a día" subtitulo="Positivo = la app proyectó más alto que lo medido. La entrada al embalse es lo que más pesa: 10 m³/s sostenidos 24 h son unos 2,5 cm.">
-            <GraficoSeries T={T} x={s.t} series={s.nivel} unidad="cm" ejeY="cm" grupo="conf" nombreArchivo="validacion_nivel" referencias={[{ y: 0, rotulo: "0", dash: false, incluir: true }, { y: 10, rotulo: "+10 cm" }, { y: -10, rotulo: "−10 cm" }]} />
+            <GraficoSeries T={T} x={s.t} series={s.nivel} unidad="cm" ejeY="cm" grupo="conf" nombreArchivo="validacion_nivel" mensajeVacio="Sin días evaluables en este periodo: solo se evalúan días completos sin vertimiento." referencias={[{ y: 0, rotulo: "0", dash: false, incluir: true }, { y: 10, rotulo: "+10 cm" }, { y: -10, rotulo: "−10 cm" }]} />
           </Tarjeta>
           <div className="itu-2col">
             <Tarjeta T={T} titulo="Modelo frente a Hidrometría" subtitulo="El salto del 29–30 de octubre es el cambio de fórmula del F.C. (de 1,62 a 0,0119·N − 3,178).">

@@ -10,16 +10,15 @@
    ./operacion.js y los controles comunes en ./ui/.
    ============================================================ */
 import { useState, useMemo, useRef, useEffect } from "react";
-import { ResponsiveContainer, LineChart, CartesianGrid, XAxis, YAxis, Tooltip as RTooltip, ReferenceLine, Line, Legend } from "recharts";
 import OperacionMedida from "./ui/OperacionMedida.jsx";
 import { useVivo, ProveedorVivo } from "./datos/vivo.jsx";
-import { tramosCumplimiento } from "./analitica.js";
+import { tramosCumplimiento, aperturaIntervalos } from "./analitica.js";
 import { ProveedorDatos, useDatos } from "./datos/fuentes.jsx";
 import { ProveedorSesion, useSesion } from "./datos/sesion.jsx";
 import { pantallaDeAcceso, PantallaNuevaClave, MenuUsuario } from "./ui/Ingreso.jsx";
 import Usuarios from "./ui/Usuarios.jsx";
 import { Proposito, PanelConexion, Nota, Kpi } from "./ui/comunes.jsx";
-import { GraficoSeries } from "./ui/graficos.jsx";
+import { GraficoSeries, unirCurvas } from "./ui/graficos.jsx";
 import { EQUIV_APERTURA, referenciasApertura, NOTA_APERTURA, motivoSinApertura } from "./ui/Apertura.jsx";
 import Tablero from "./ui/Tablero.jsx";
 import Asistente from "./ui/Asistente.jsx";
@@ -94,20 +93,16 @@ import {
   ETIQUETA_ESTADO_REGLA,
 } from "./modelo.js";
 import {
-  BotonCSV,
+  descargarCSV,
   BotonGrupo,
   ChartHeader,
-  CustomTooltip,
   Etiqueta,
   FONT_BODY,
   GlobalStyles,
   Slider,
   THEMES,
   aplicarAltoContraste,
-  axisLabel,
   fmtTick,
-  tickStyleFor,
-  zoomBrush,
   fx,
   InfoTip,
 } from "./ui/base.jsx";
@@ -133,7 +128,14 @@ const COLORES_GAMMA = ["#9773D0", "#5F85DD", "#0095D1", "#00A1AA", "#00A374", "#
 const NIVELES_MODELO = [70, 75, 80, 83, 85, 87, 88, 89, 90, 91, 92, 93, 93.5, 94];
 const NIVELES_PROTO = [70, 75, 80, 83, 85, 87, 88, 89, 90, 91, 92, 93, 93.5, 94, 94.5, 95, 95.4, 95.8, 96, 96.2];
 
-function ChartFamilia({ ejeX, ejeY, xLabel, yLabel, xDomain, yDomain, waeCampoX, waeCampoY, waeEscala, bepXY, grid, niveles, puntoActualXY, lineasPorGamma, gammaCercana, T, puntosExtra, unidadY }) {
+/* Colina (familia de curvas por apertura + isolíneas de eficiencia). Es un SVG propio
+   porque las isolíneas son curvas cerradas, pero tiene las mismas herramientas que
+   el resto de gráficos de la app: leyenda que muestra u oculta capas, zoom con
+   arrastre (doble clic o «Ver todo» para volver), tooltip, Tabla, CSV y PNG. */
+function ChartFamilia({ ejeX, ejeY, xLabel, yLabel, xDomain, yDomain, waeCampoX, waeCampoY, waeEscala, bepXY, grid, niveles, puntoActualXY, lineasPorGamma, gammaCercana, T, puntosExtra, unidadY, csv = null, nombreArchivo = "colina" }) {
+  const [capas, setCapas] = useState({ sel: true, otras: true, iso: true, wae: true, bep: true, punto: true, esc: true });
+  const [verTabla, setVerTabla] = useState(false);
+  const alternarCapa = (k) => setCapas((c) => ({ ...c, [k]: !c[k] }));
   const width = 860, height = 380, mL = 66, mR = 20, mT = 14, mB = 46;
   const plotW = width - mL - mR, plotH = height - mT - mB;
   // Zoom por selección: arrastra un rectángulo sobre el gráfico para
@@ -201,32 +203,74 @@ function ChartFamilia({ ejeX, ejeY, xLabel, yLabel, xDomain, yDomain, waeCampoX,
   // En pantallas angostas la gráfica conserva 620 px de ancho y se desplaza
   // de lado: así los números de los ejes siguen siendo legibles.
   return (
-    <div style={{ position: "relative", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-      {zoomDom && (
-        <button onClick={() => setZoomDom(null)} style={{
-          position: "absolute", top: 0, right: 0, zIndex: 6, padding: "4px 10px", fontSize: 11, fontFamily: FONT_BODY, fontWeight: 600,
-          border: `1px solid ${T.teal}`, borderRadius: 5, cursor: "pointer", background: T.panel, color: T.teal,
-        }}>↺ Reiniciar zoom</button>
-      )}
-      <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", minWidth: 620, height: "auto", display: "block", cursor: "crosshair", userSelect: "none" }}
+    <div className="itu-grafico" style={{ marginBottom: 6 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", alignItems: "center", marginBottom: 6, fontFamily: FONT_BODY }}>
+        {[
+          ["sel", "Apertura seleccionada", <span style={{ width: 18, height: 3, borderRadius: 2, background: T.teal }} />],
+          ["otras", "Otras aperturas ensayadas", <span style={{ width: 18, height: 2, borderRadius: 2, background: COLORES_GAMMA[3] }} />],
+          ["iso", "Isolíneas de eficiencia", <span style={{ width: 18, height: 2, borderRadius: 2, background: "#5FA85A" }} />],
+          ["wae", "WAE", <span style={{ width: 8, height: 8, borderRadius: "50%", background: T.amber }} />],
+          ["bep", "BEP", <span style={{ width: 9, height: 9, borderRadius: "50%", background: T.red }} />],
+          ["punto", "Punto seleccionado", <span style={{ width: 9, height: 9, borderRadius: "50%", border: `2px solid ${T.ink}`, boxSizing: "border-box" }} />],
+          ...(puntosExtra ? [["esc", "Escenarios 2023", <span style={{ width: 8, height: 8, background: "#8E4EC6", transform: "rotate(45deg)" }} />]] : []),
+        ].map(([k, n, icono]) => (
+          <button key={k} onClick={() => alternarCapa(k)} aria-pressed={capas[k]} title={capas[k] ? "Ocultar" : "Mostrar"}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "none", border: "none", padding: "2px 0", cursor: "pointer", fontFamily: FONT_BODY, fontSize: 12.5, color: capas[k] ? T.inkMuted : T.inkFaint, textDecoration: capas[k] ? "none" : "line-through" }}>
+            <span aria-hidden="true" style={{ display: "inline-flex", opacity: capas[k] ? 1 : 0.35 }}>{icono}</span>{n}
+          </button>
+        ))}
+        <span style={{ flex: 1 }} />
+        {(() => {
+          const boton = { border: `1px solid ${T.line}`, background: T.panel, color: T.inkMuted, borderRadius: 6, padding: "3px 9px", fontSize: 12, cursor: "pointer", fontFamily: FONT_BODY };
+          const png = () => {
+            const el = svgRef.current; if (!el) return;
+            const txt = new XMLSerializer().serializeToString(el);
+            const img = new Image();
+            img.onload = () => { const c = document.createElement("canvas"); c.width = width * 2; c.height = height * 2; const g = c.getContext("2d"); g.fillStyle = T.panel; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height); const a = document.createElement("a"); a.href = c.toDataURL("image/png"); a.download = `${nombreArchivo}.png`; a.click(); };
+            img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(txt.includes("xmlns=") ? txt : txt.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"'))}`;
+          };
+          return <>
+            {zoomDom && <button style={boton} onClick={() => setZoomDom(null)}>Ver todo</button>}
+            <button style={boton} onClick={() => setVerTabla((v) => !v)} aria-pressed={verTabla}>{verTabla ? "Gráfico" : "Tabla"}</button>
+            {csv && <button style={boton} onClick={() => descargarCSV(csv, `${nombreArchivo}.csv`)}>CSV</button>}
+            <button style={boton} onClick={png}>PNG</button>
+          </>;
+        })()}
+      </div>
+      {verTabla && (() => {
+        const sel = lineasPorGamma.find((l) => l.gamma === gammaCercana) || lineasPorGamma[0];
+        return (
+          <div className="itu-tabla" style={{ maxHeight: 320, overflowY: "auto", border: `1px solid ${T.lineSoft}`, borderRadius: 8, marginBottom: 8 }}>
+            <div style={{ padding: "6px 8px", fontSize: 12, color: T.inkFaint }}>Apertura seleccionada: {fx(pctFromDeg(sel.gamma), 1)} % (γ = {fx(sel.gamma, 2)}°). El CSV trae todas las aperturas.</div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontVariantNumeric: "tabular-nums", fontFamily: FONT_BODY }}>
+              <thead><tr style={{ position: "sticky", top: 0, background: T.panelSoft }}>{[xLabel, yLabel, "Q (m³/s)", "P (MW)", "η (%)", "H (m)"].map((h) => <th key={h} style={{ textAlign: "right", padding: "5px 8px", color: T.inkFaint }}>{h}</th>)}</tr></thead>
+              <tbody>{sel.puntos.map((p, i) => (
+                <tr key={i} style={{ borderTop: `1px solid ${T.lineSoft}` }}>{[p[campoX], p[ejeY], p.Q, p.P, p.eta, p.H].map((v, j) => <td key={j} style={{ textAlign: "right", padding: "4px 8px", color: T.ink }}>{fx(v, j === 1 && Math.abs(v) < 1 ? 4 : 2)}</td>)}</tr>
+              ))}</tbody>
+            </table>
+          </div>
+        );
+      })()}
+      <div style={{ position: "relative", overflowX: "auto", WebkitOverflowScrolling: "touch", display: verTabla ? "none" : "block" }}>
+      <svg ref={svgRef} onDoubleClick={() => setZoomDom(null)} viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", minWidth: 620, height: "auto", display: "block", cursor: "crosshair", userSelect: "none" }}
         onMouseDown={alBajarMouse} onMouseMove={alMoverMouse} onMouseUp={alSoltarMouse} onMouseLeave={() => { setHover(null); setArrastre(null); }}>
         {ticksY.map((v, i) => (
           <g key={i}>
-            <line x1={mL} y1={sy(v)} x2={width - mR} y2={sy(v)} stroke={T.lineSoft} strokeDasharray="2 4" />
-            <text x={mL - 8} y={sy(v) + 4} fontSize="11" fill={T.inkMuted} fontFamily={FONT_BODY} textAnchor="end">{fmtTick(v)}</text>
+            <line x1={mL} y1={sy(v)} x2={width - mR} y2={sy(v)} stroke={T.lineSoft} />
+            <text x={mL - 8} y={sy(v) + 4} fontSize="11" fill={T.inkFaint} fontFamily={FONT_BODY} textAnchor="end">{fmtTick(v)}</text>
           </g>
         ))}
         {ticksX.map((v, i) => (
           <g key={i}>
-            <line x1={sx(v)} y1={mT} x2={sx(v)} y2={mT + plotH} stroke={T.lineSoft} strokeDasharray="2 4" />
-            <text x={sx(v)} y={mT + plotH + 16} fontSize="11" fill={T.inkMuted} fontFamily={FONT_BODY} textAnchor="middle">{fmtTick(v)}</text>
+            <line x1={sx(v)} y1={mT} x2={sx(v)} y2={mT + plotH} stroke={T.lineSoft} />
+            <text x={sx(v)} y={mT + plotH + 16} fontSize="11" fill={T.inkFaint} fontFamily={FONT_BODY} textAnchor="middle">{fmtTick(v)}</text>
           </g>
         ))}
-        <text x={mL + plotW / 2} y={mT + plotH + 34} fontSize="12.5" fontWeight="600" fill={T.ink} fontFamily={FONT_BODY} textAnchor="middle">{xLabel}</text>
-        <text x={14} y={mT + plotH / 2} fontSize="12.5" fontWeight="600" fill={T.ink} fontFamily={FONT_BODY} textAnchor="middle" transform={`rotate(-90, 14, ${mT + plotH / 2})`}>{yLabel}</text>
+        <text x={mL + plotW / 2} y={mT + plotH + 34} fontSize="12" fontWeight="600" fill={T.inkFaint} fontFamily={FONT_BODY} textAnchor="middle">{xLabel}</text>
+        <text x={14} y={mT + plotH / 2} fontSize="12" fontWeight="600" fill={T.inkFaint} fontFamily={FONT_BODY} textAnchor="middle" transform={`rotate(-90, 14, ${mT + plotH / 2})`}>{yLabel}</text>
 
         {/* Isolíneas de eficiencia, por marching squares sobre la malla interpolada */}
-        {contornos.map(({ nivel, segs }) => (
+        {capas.iso && contornos.map(({ nivel, segs }) => (
           <g key={nivel}>
             {segs.map((s, i) => (
               <line key={i} x1={sx(s[0][0])} y1={sy(s[0][1])} x2={sx(s[1][0])} y2={sy(s[1][1])} stroke="#5FA85A" strokeWidth={Number.isInteger(nivel) ? 1.1 : 0.7} opacity={0.75} />
@@ -240,20 +284,21 @@ function ChartFamilia({ ejeX, ejeY, xLabel, yLabel, xDomain, yDomain, waeCampoX,
           if (pts.length < 2) return null;
           const d = pts.map((p, k) => `${k === 0 ? "M" : "L"} ${sx(p[campoX])} ${sy(p[ejeY])}`).join(" ");
           const activo = g === gammaCercana;
+          if (activo ? !capas.sel : !capas.otras) return null;
           return <path key={g} d={d} fill="none" stroke={activo ? T.teal : COLORES_GAMMA[i]} strokeWidth={activo ? 3 : 1.3} opacity={activo ? 1 : 0.6} />;
         })}
 
         {/* WAE, BEP, punto actual */}
-        {WAE_PUNTOS.map((p, i) => <circle key={i} cx={sx(p[waeCampoX])} cy={sy(p[waeCampoY] * (waeEscala || 1))} r={4} fill={T.amber} stroke={T.bg} strokeWidth={1} />)}
-        <circle cx={sx(bepXY[0])} cy={sy(bepXY[1])} r={7} fill={T.red} stroke={T.bg} strokeWidth={1.5} />
-        {puntoActualXY && <circle cx={sx(puntoActualXY[0])} cy={sy(puntoActualXY[1])} r={6} fill="none" stroke={T.ink} strokeWidth={2.2} />}
+        {capas.wae && WAE_PUNTOS.map((p, i) => <circle key={i} cx={sx(p[waeCampoX])} cy={sy(p[waeCampoY] * (waeEscala || 1))} r={4} fill={T.amber} stroke={T.bg} strokeWidth={1} />)}
+        {capas.bep && <circle cx={sx(bepXY[0])} cy={sy(bepXY[1])} r={7} fill={T.red} stroke={T.bg} strokeWidth={1.5} />}
+        {capas.punto && puntoActualXY && <circle cx={sx(puntoActualXY[0])} cy={sy(puntoActualXY[1])} r={6} fill="none" stroke={T.ink} strokeWidth={2.2} />}
         {/* Escenarios 2023: los 6 puntos quedan casi encima; una sola etiqueta y el detalle al pasar el puntero */}
-        {puntosExtra && puntosExtra.map((p, i) => (
+        {capas.esc && puntosExtra && puntosExtra.map((p, i) => (
           <rect key={i} x={sx(p.x) - 5} y={sy(p.y) - 5} width={10} height={10} fill="#8E4EC6" stroke={T.bg} strokeWidth={1.2} transform={`rotate(45, ${sx(p.x)}, ${sy(p.y)})`}>
             <title>{`${p.label}: H ${fx(p.x, 2)} m · ${fx(p.y, 2)}`}</title>
           </rect>
         ))}
-        {puntosExtra && puntosExtra.length > 0 && (() => {
+        {capas.esc && puntosExtra && puntosExtra.length > 0 && (() => {
           const x = Math.max(...puntosExtra.map((p) => sx(p.x))), y = Math.min(...puntosExtra.map((p) => sy(p.y)));
           return <text x={x + 10} y={y - 8} fontSize="10.5" fill={T.ink} fontFamily={FONT_BODY} fontWeight="700">Escenarios 2023 ({puntosExtra.length})</text>;
         })()}
@@ -264,17 +309,6 @@ function ChartFamilia({ ejeX, ejeY, xLabel, yLabel, xDomain, yDomain, waeCampoX,
             fill={T.teal} fillOpacity={0.15} stroke={T.teal} strokeWidth={1} strokeDasharray="3 2" />
         )}
       </svg>
-      {/* Leyenda como HTML normal (no SVG) para que pueda envolver en varias líneas en pantallas angostas, sin encimarse. */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px", padding: "8px 4px 2px", fontFamily: FONT_BODY, fontSize: 11.5, color: T.inkMuted, alignItems: "center" }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="16" height="8"><line x1="0" y1="4" x2="16" y2="4" stroke={T.teal} strokeWidth="3" /></svg>Apertura seleccionada</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="16" height="8"><line x1="0" y1="4" x2="16" y2="4" stroke={COLORES_GAMMA[3]} strokeWidth="1.3" /></svg>Otras aperturas ensayadas</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="16" height="8"><line x1="0" y1="4" x2="16" y2="4" stroke="#5FA85A" strokeWidth="1.3" /></svg>Isolíneas de eficiencia</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill={T.amber} /></svg>WAE</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill={T.red} /></svg>BEP</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="none" stroke={T.ink} strokeWidth="2" /></svg>Punto seleccionado</span>
-        {puntosExtra && <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="10" height="10"><rect x="1" y="1" width="8" height="8" fill="#8E4EC6" transform="rotate(45,5,5)" /></svg>Escenarios 2023</span>}
-        <span style={{ marginLeft: "auto", fontSize: 10.5, color: T.inkFaint }}>Arrastra sobre el gráfico para hacer zoom</span>
-      </div>
       {hover && (
         <div style={{
           position: "absolute", left: `${(hover.xPix / width) * 100}%`, top: `${(hover.yPix / height) * 100}%`,
@@ -286,6 +320,8 @@ function ChartFamilia({ ejeX, ejeY, xLabel, yLabel, xDomain, yDomain, waeCampoX,
           <div>η = {fx(hover.punto.eta, 2)}% · H = {fx(hover.punto.H, 1)} m</div>
         </div>
       )}
+      </div>
+      {!verTabla && <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 2, fontFamily: FONT_BODY }}>Arrastre sobre el gráfico para acercar; doble clic para volver.</div>}
     </div>
   );
 }
@@ -410,18 +446,21 @@ function PanelCondicionDescarga({ cond, setCond, T, nivelEmbalse, nUnidades, gam
 /* Número es-CO con los decimales que traiga el dato (máximo 3). */
 const fxa = (v) => (v == null || !Number.isFinite(Number(v)) ? "—" : Number(v).toLocaleString("es-CO", { maximumFractionDigits: 3 }));
 
+/* Campos numéricos con coma decimal (es-CO); aceptan coma o punto al escribir. */
+const leerDecimal = (t) => { const n = parseFloat(String(t).trim().replace(/\s/g, "").replace(",", ".")); return Number.isFinite(n) ? n : null; };
+const conComa = (v) => String(v).replace(".", ",");
 function InputNumeroLibre({ value, onChange, className, style, min, max, step, disabled }) {
   const dec = step && step < 1 ? Math.min(4, (String(step).split(".")[1] || "").length) : 0;
-  const fmtPaso = (v) => (Number.isFinite(v) ? String(Number(v.toFixed(Math.max(dec, 2)))) : String(v));
+  const fmtPaso = (v) => (Number.isFinite(v) ? conComa(String(Number(v.toFixed(Math.max(dec, 2))))) : String(v));
   const [texto, setTexto] = useState(fmtPaso(value));
   const [editando, setEditando] = useState(false);
   useEffect(() => { if (!editando) setTexto(fmtPaso(value)); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <input
-      type="number" value={texto} min={min} max={max} step={step} className={className} style={style} disabled={disabled}
-      onChange={(e) => { setTexto(e.target.value); const n = parseFloat(e.target.value); if (Number.isFinite(n)) onChange(n); }}
+      type="text" inputMode="decimal" value={texto} className={className} style={style} disabled={disabled} aria-valuemin={min} aria-valuemax={max}
+      onChange={(e) => { setTexto(e.target.value); const n = leerDecimal(e.target.value); if (n != null) onChange(n); }}
       onFocus={() => setEditando(true)}
-      onBlur={() => { setEditando(false); setTexto(fmtPaso(Number.isFinite(parseFloat(texto)) ? parseFloat(texto) : value)); }}
+      onBlur={() => { setEditando(false); const n = leerDecimal(texto); setTexto(fmtPaso(n != null ? n : value)); }}
     />
   );
 }
@@ -444,31 +483,22 @@ const HORAS_DIA = Array.from({ length: 24 }, (_, i) => i);
 const filaDespachoVacia = (h) => ({ hora: h, despacho: null, rt: null, unidades: null, qEntrada: null, nivelMedido: null });
 
 function InputOpcional({ value, onChange, placeholder, step, style }) {
-  const [texto, setTexto] = useState(value == null ? "" : String(value));
-  useEffect(() => { setTexto(value == null ? "" : String(value)); }, [value]);
+  const [texto, setTexto] = useState(value == null ? "" : conComa(value));
+  useEffect(() => { setTexto((t) => (leerDecimal(t) === value ? t : value == null ? "" : conComa(value))); }, [value]);
   return (
     <input
-      type="number" value={texto} step={step} placeholder={placeholder} className="itu-num-input" style={style}
+      type="text" inputMode="decimal" value={texto} placeholder={placeholder} className="itu-num-input" style={style}
       onChange={(e) => {
         setTexto(e.target.value);
         const t = e.target.value.trim();
         if (t === "") { onChange(null); return; }
-        const n = parseFloat(t);
-        if (Number.isFinite(n)) onChange(n);
+        const n = leerDecimal(t);
+        if (n != null) onChange(n);
       }}
     />
   );
 }
 
-function TooltipNivel({ active, payload, label, T }) {
-  if (!active || !payload || !payload.length) return null;
-  return (
-    <div style={{ background: T.panel, border: `1px solid ${T.line}`, borderRadius: 6, padding: "8px 12px", fontFamily: FONT_BODY, fontSize: 11, color: T.ink, boxShadow: T.cardShadow }}>
-      <div style={{ color: T.inkFaint, marginBottom: 4 }}>Hora {label}:00</div>
-      {payload.map((p, i) => p.value != null && <div key={i} style={{ color: p.color }}>{p.name}: {fx(Number(p.value), 3)} msnm</div>)}
-    </div>
-  );
-}
 
 function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) {
   const [fecha, setFecha] = useState(() => textoHoraColombia(new Date()).slice(0, 10));
@@ -484,6 +514,10 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
   const [verPegar, setVerPegar] = useState(false);
   const [msgCarga, setMsgCarga] = useState(null);
   const editar = (h, campo, v) => setFilas((prev) => prev.map((f) => (f.hora === h ? { ...f, [campo]: v } : f)));
+  // En pantallas angostas (celular) los parámetros y la tabla de 24 horas empiezan plegados
+  const estrecho = typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(max-width: 700px)").matches : false;
+  const [verParametros, setVerParametros] = useState(!estrecho);
+  const [verTablaHoras, setVerTablaHoras] = useState(!estrecho);
 
   /* Datos en vivo: nivel de las 00:00, Q regulado de ayer, caudal de entrada
      y, en las horas ya pasadas, la potencia real (Promedio RT), las unidades
@@ -610,6 +644,40 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
     return { modo, prog, progs, principal, inf, sup, qMenos, qMas, comparar, grafica, errMedido, regla, energia: resumenEnergiaDespacho(hayXM ? filas : filas.map((f) => ({ ...f, despacho: null }))), estados: filas.map((f) => estadoHoraDespacho(hayXM ? f.despacho : null, f.rt, bandaPct)), hayXM };
   }, [filas, nivelInicial, qEntrada, sensQ, bandaPct, unidadesDisp, condDescarga, gammaMax, programa, qAyer, fcInicio, fecha]);
 
+  /* Base común de las gráficas del despacho: rejilla de 5 min de 00:00 a 24:00,
+     lo medido del día (si la fecha es hoy y hay datos en vivo) y el corte en el
+     último dato. Todas las gráficas usan esta rejilla: medido hasta el corte y,
+     desde ahí, el programa. */
+  const PASO_DESP = 5;
+  const filasDia = useMemo(() => (vivo && vivo.hoy === fecha && vivo.filas ? vivo.filas.filter((r) => r.t.startsWith(fecha)) : []), [vivo, fecha]);
+  const medidoDia = useMemo(() => {
+    const porMin = new Map();
+    for (const r of filasDia) porMin.set(+r.t.slice(11, 13) * 60 + +r.t.slice(14, 16), r);
+    const conP = [...porMin.entries()].filter(([, r]) => !r.p.every((v) => v == null)).map(([m]) => m);
+    const ultimoMin = conP.length ? Math.max(...conP) : -1;
+    const x = Array.from({ length: 1440 / PASO_DESP + 1 }, (_, k) => (k * PASO_DESP) / 60);
+    // corte: el último dato medido; sin datos en vivo, el fin de la última hora con Promedio RT
+    const kRT = filas.map((f) => f.rt != null).lastIndexOf(true);
+    const corte = ultimoMin >= 0 ? (ultimoMin + 1) / 60 : kRT >= 0 ? kRT + 1 : 0;
+    // valor medido en cada punto de la rejilla: promedio de los minutos del intervalo
+    const enRejilla = (f) => x.map((h, k) => {
+      if (k === x.length - 1) return null;
+      let sum = 0, n = 0;
+      for (let m = k * PASO_DESP; m < (k + 1) * PASO_DESP; m++) { const r = porMin.get(m); const v = r ? f(r) : null; if (v != null && Number.isFinite(v)) { sum += v; n++; } }
+      return n ? sum / n : null;
+    });
+    return { filasDia, porMin, ultimoMin, corte, x, enRejilla, hayMedido: ultimoMin >= 0 };
+  }, [filasDia, filas]);
+  // Serie horaria (24 valores, uno por hora) llevada a la rejilla de 5 min (escalones)
+  const horaARejilla = (arr) => medidoDia.x.map((h) => arr[Math.min(23, Math.floor(h + 1e-9))] ?? null);
+  // Serie de nivel en los bordes de hora (25 valores) interpolada en la rejilla
+  const bordesARejilla = (arr) => medidoDia.x.map((h) => {
+    const i = Math.min(23, Math.floor(h + 1e-9)), f = h - i, a = arr[i], b = arr[i + 1];
+    return a == null || b == null ? null : a + (b - a) * f;
+  });
+  const hhCorte = `${String(Math.floor(medidoDia.corte)).padStart(2, "0")}:${String(Math.round((medidoDia.corte % 1) * 60)).padStart(2, "0")}`;
+  const verticalCorte = medidoDia.corte > 0 && medidoDia.corte < 24 ? [{ x: medidoDia.corte, rotulo: "último dato" }] : [];
+
   /* Banda operacional del día (Res. 1891): caudal regulado medido (minuto a
      minuto, si la fecha es hoy y hay datos en vivo), total descargado, promedio
      acumulado medido y su proyección con el programa en las horas que faltan,
@@ -682,65 +750,141 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
     return { x, series, tramos: partidos, leyenda, cierre: acumProy[acumProy.length - 1], minutosMedidos: qMin.size, dentroInst, banda, corte };
   }, [calc, vivo, fecha, T]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* Potencia por hora: despacho de XM, generación real y programa simulado. */
+  /* Potencia del día, con la misma lectura que la banda operacional: potencia
+     medida cada 5 min hasta el último dato, Promedio RT de cada hora cerrada, el
+     programa simulado en todo el día, la banda operativa (despacho de XM ± banda)
+     sombreada y una franja con cada hora dentro o fuera (medido) o proyectada. */
   const seriesPotencia = useMemo(() => {
-    const x = [...HORAS_DIA, 24];
-    const ext = (arr) => [...arr, arr[arr.length - 1]];
-    const s = [];
-    const bandas = [];
-    if (calc.hayXM) {
-      const k = bandaPct / 100;
-      s.push({ nombre: `XM −${bandaPct} %`, datos: ext(filas.map((f) => (f.despacho != null ? f.despacho * (1 - k) : null))), indice: 1, dash: true, ancho: 1, escalones: true });
-      s.push({ nombre: `XM +${bandaPct} %`, datos: ext(filas.map((f) => (f.despacho != null ? f.despacho * (1 + k) : null))), indice: 1, dash: true, ancho: 1, escalones: true });
-      bandas.push({ desde: 0, hasta: 1, relleno: "rgba(235,104,52,0.10)" });
-      s.push({ nombre: "Despacho XM", datos: ext(filas.map((f) => (f.despacho != null ? f.despacho : null))), indice: 1, ancho: 1.8, escalones: true });
+    const { x, corte } = medidoDia;
+    const k = bandaPct / 100;
+    const pMed = medidoDia.enRejilla((r) => (r.p.every((v) => v == null) ? null : r.p.reduce((a2, v) => a2 + (v != null && v > 0 ? v : 0), 0)));
+    const xm = horaARejilla(filas.map((f) => (calc.hayXM && f.despacho > 0 ? f.despacho : null)));
+    const lo = xm.map((d) => (d != null ? d * (1 - k) : null)), hi = xm.map((d) => (d != null ? d * (1 + k) : null));
+    const cerrada = (h) => h + 1 <= corte + 1e-9;
+    const rt = horaARejilla(filas.map((f, h) => (f.rt != null && cerrada(h) ? f.rt : null)));
+    const prog = horaARejilla(calc.prog.potencias);
+    // franja: Promedio RT en las horas cerradas; el programa en las que faltan
+    const valor = horaARejilla(filas.map((f, h) => (cerrada(h) ? f.rt : calc.prog.potencias[h])));
+    const { tramos } = tramosCumplimiento(x, valor, lo, hi);
+    const c = Math.floor(corte + 1e-9);
+    const partidos = [];
+    for (const t of tramos) {
+      if (t.x1 <= c) partidos.push(t); else if (t.x0 >= c) partidos.push({ ...t, proyectado: true });
+      else { partidos.push({ ...t, x1: c }); partidos.push({ ...t, x0: c, proyectado: true }); }
     }
-    if (filas.some((f) => f.rt != null)) s.push({ nombre: "Generación real (RT)", datos: ext(filas.map((f) => f.rt)), indice: 0, ancho: 2.2, escalones: true });
-    s.push({ nombre: `Programa simulado (${nombrePrograma(calc.modo, calc.progs)})`, datos: ext(calc.prog.potencias), indice: 6, ancho: 1.6, dash: true, escalones: true });
+    const horas = (tipo) => partidos.filter((t) => t.tipo === tipo && !t.proyectado).reduce((a2, t) => a2 + (t.x1 - t.x0), 0);
+    const leyenda = calc.hayXM ? [
+      { tipo: "dentro", rotulo: "Promedio RT dentro de la banda XM", duracion: `${Math.round(horas("dentro"))} h` },
+      { tipo: "encima", rotulo: "Por encima", duracion: `${Math.round(horas("encima"))} h` },
+      { tipo: "debajo", rotulo: "Por debajo", duracion: `${Math.round(horas("debajo"))} h` },
+      ...(c < 24 ? [{ tipo: "proyectado", proyectado: true, rotulo: `Proyección con el programa (${nombrePrograma(calc.modo, calc.progs)}) desde las ${String(c).padStart(2, "0")}:00` }] : []),
+    ] : null;
+    const s = [];
+    if (calc.hayXM) {
+      s.push({ nombre: `XM −${bandaPct} %`, datos: lo, color: T.inkFaint, dash: true, ancho: 1.2 });
+      s.push({ nombre: `XM +${bandaPct} %`, datos: hi, color: T.inkFaint, dash: true, ancho: 1.2 });
+      s.push({ nombre: "Despacho XM", datos: xm, indice: 1, ancho: 1.8 });
+    }
+    if (medidoDia.hayMedido) s.push({ nombre: "Potencia medida (LoggerNet)", datos: pMed, indice: 0, ancho: 1.2 });
+    if (filas.some((f) => f.rt != null)) s.push({ nombre: "Promedio RT (hora cerrada)", datos: rt, indice: 6, ancho: 2.6 });
+    s.push({ nombre: `Programa simulado (${nombrePrograma(calc.modo, calc.progs)})`, datos: prog, indice: 3, ancho: 1.6, dash: true });
     if (calc.regla.banda) {
       s.push({ nombre: "Banda 1891 mín. (MW, F.C. de las 00:00)", datos: x.map(() => calc.regla.banda.min * fcInicio), color: T.inkFaint, dash: true, ancho: 1 });
       s.push({ nombre: "Banda 1891 máx. (MW)", datos: x.map(() => calc.regla.banda.max * fcInicio), color: T.inkFaint, dash: true, ancho: 1 });
     }
-    return { x, s, bandas };
-  }, [calc, filas, fcInicio, T, bandaPct]);
+    const cerradas = filas.filter((f, h) => cerrada(h) && f.rt != null && calc.hayXM && f.despacho > 0);
+    const dentro = cerradas.filter((f) => f.rt >= f.despacho * (1 - k) && f.rt <= f.despacho * (1 + k)).length;
+    return { x, s, bandas: calc.hayXM ? [{ desde: 0, hasta: 1, relleno: "rgba(12,163,12,0.10)" }] : [], tramos: calc.hayXM ? partidos : null, leyenda, cerradas: cerradas.length, dentro };
+  }, [calc, filas, medidoDia, fcInicio, T, bandaPct]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* Proyección del nivel desde el último nivel medido: desde el dato de la hora
+     en curso hasta las 24:00 con el mismo programa, unidades y caudal de entrada.
+     El resto de la hora en curso se toma como la fracción que falta de esa hora. */
+  const proyeccion = useMemo(() => {
+    const { porMin, ultimoMin, corte } = medidoDia;
+    if (ultimoMin < 0 || corte >= 24) return null;
+    let mNivel = -1;
+    for (let m = ultimoMin; m >= Math.max(0, ultimoMin - 60); m--) { const r = porMin.get(m); if (r && r.nivel != null) { mNivel = m; break; } }
+    if (mNivel < 0) return null;
+    const nivel0 = porMin.get(mNivel).nivel;
+    const h0 = Math.floor(mNivel / 60), frac = 1 - (mNivel + 1 - h0 * 60) / 60;
+    const tCorte = (mNivel + 1) / 60;
+    // Proyección con unas potencias (24 valores) y un caudal de entrada; la hora en curso solo por lo que le falta
+    const proyectar = (pot, qin) => {
+      const hora = (i) => { const f = filas[i], P = pot[i]; return { potenciaMW: P, unidades: f.unidades != null ? f.unidades : unidadesMinimasParaPotencia(P, unidadesDisp), qEntrada: f.qEntrada == null ? undefined : f.qEntrada + (qin - qEntrada) }; };
+      const sim = (H, horas) => simularDespachoHorario({ nivelInicial: H, qEntrada: qin, cond: condDescarga, gammaMax, horas });
+      const una = sim(nivel0, [hora(h0)]);
+      const Hsig = nivel0 + (una.Hfinal - nivel0) * frac;
+      const resto = h0 + 1 <= 23 ? sim(Hsig, HORAS_DIA.slice(h0 + 1).map(hora)) : { serie: [{ nivel: Hsig }], Hfinal: Hsig };
+      const bordes = Array(25).fill(null);
+      resto.serie.forEach((p2, j) => { bordes[h0 + 1 + j] = p2.nivel; });
+      const datos = medidoDia.x.map((h) => {
+        if (h < tCorte - 1e-9) return null;
+        if (h <= h0 + 1) return nivel0 + (Hsig - nivel0) * ((h - tCorte) / Math.max(1e-9, h0 + 1 - tCorte));
+        const i = Math.floor(h + 1e-9), f = h - i;
+        return i >= 24 ? bordes[24] : bordes[i] + (bordes[i + 1] - bordes[i]) * f;
+      });
+      return { datos, Hfinal: resto.Hfinal };
+    };
+    const b = bandaPct / 100;
+    const principal = proyectar(calc.prog.potencias, qEntrada);
+    const qMenos = proyectar(calc.prog.potencias, qEntrada - sensQ);
+    const qMas = proyectar(calc.prog.potencias, qEntrada + sensQ);
+    // Banda XM: en las horas que faltan, el despacho de XM ± banda (las cerradas ya están en el nivel medido)
+    const xmBase = calc.hayXM ? programaDespacho(filas, "xm").potencias : null;
+    const inf = xmBase ? proyectar(xmBase.map((p2) => p2 * (1 - b)), qEntrada) : null;
+    const sup = xmBase ? proyectar(xmBase.map((p2) => p2 * (1 + b)), qEntrada) : null;
+    return { ...principal, qMenos, qMas, inf, sup, nivel0, horasRestantes: 24 - tCorte, hora0: `${String(Math.floor(mNivel / 60)).padStart(2, "0")}:${String(mNivel % 60).padStart(2, "0")}` };
+  }, [medidoDia, calc, filas, unidadesDisp, qEntrada, sensQ, bandaPct, condDescarga, gammaMax]);
 
   const seriesNivel = useMemo(() => {
     const g = calc.grafica;
+    const borde = (k) => bordesARejilla(g.map((x2) => x2[k]));
+    // Abanicos: con dato medido arrancan en el último nivel medido (solo las horas que faltan son inciertas);
+    // sin datos del día, desde las 00:00
+    const P = proyeccion;
     const s = [
-      { nombre: `Entrada −${sensQ} m³/s`, datos: g.map((x) => x.qMenos), color: T.inkFaint, dash: true, ancho: 1.2 },
-      { nombre: `Entrada +${sensQ} m³/s`, datos: g.map((x) => x.qMas), color: T.inkFaint, dash: true, ancho: 1.2 },
+      { nombre: `Entrada −${sensQ} m³/s`, datos: P ? P.qMenos.datos : borde("qMenos"), color: T.inkFaint, dash: true, ancho: 1.2 },
+      { nombre: `Entrada +${sensQ} m³/s`, datos: P ? P.qMas.datos : borde("qMas"), color: T.inkFaint, dash: true, ancho: 1.2 },
       ...(calc.hayXM ? [
-        { nombre: `Despacho XM −${bandaPct} %`, datos: g.map((x) => x.bandaInf), indice: 1, dash: true, ancho: 1.2 },
-        { nombre: `Despacho XM +${bandaPct} %`, datos: g.map((x) => x.bandaSup), indice: 1, dash: true, ancho: 1.2 },
+        { nombre: `Despacho XM −${bandaPct} %`, datos: P && P.inf ? P.inf.datos : borde("bandaInf"), indice: 1, dash: true, ancho: 1.2 },
+        { nombre: `Despacho XM +${bandaPct} %`, datos: P && P.sup ? P.sup.datos : borde("bandaSup"), indice: 1, dash: true, ancho: 1.2 },
       ] : []),
-      { nombre: nombrePrograma(calc.modo, calc.progs), datos: g.map((x) => x.principal), indice: 0, ancho: 2.6 },
+      { nombre: `${nombrePrograma(calc.modo, calc.progs)} (simulado desde las 00:00)`, datos: borde("principal"), indice: 0, ancho: 2.2 },
     ];
-    if (calc.comparar.xm) s.push({ nombre: "Despacho XM", datos: g.map((x) => x.xm), indice: 1, ancho: 1.6 });
-    if (calc.comparar.rt) s.push({ nombre: "Promedio RT", datos: g.map((x) => x.rt), indice: 3, ancho: 1.8 });
-    if (calc.comparar.plano) s.push({ nombre: "Plano por regla", datos: g.map((x) => x.plano), indice: 6, ancho: 1.6 });
-    s.push({ nombre: "Nivel medido", datos: g.map((x) => x.medido), color: T.ink, soloPuntos: true, puntos: true });
-    return { x: g.map((x) => x.hora), s };
-  }, [calc, T, sensQ, bandaPct]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (calc.comparar.xm) s.push({ nombre: "Despacho XM", datos: borde("xm"), indice: 1, ancho: 1.6 });
+    if (calc.comparar.rt) s.push({ nombre: "Promedio RT", datos: borde("rt"), indice: 3, ancho: 1.8 });
+    if (calc.comparar.plano) s.push({ nombre: "Plano por regla", datos: borde("plano"), indice: 6, ancho: 1.6 });
+    if (medidoDia.hayMedido) s.push({ nombre: "Nivel medido (radar)", datos: medidoDia.enRejilla((r) => r.nivel), color: T.ink, ancho: 1.6 });
+    if (proyeccion) s.push({ nombre: `Proyección desde el último nivel medido (${proyeccion.hora0})`, datos: proyeccion.datos, color: T.ink, dash: true, ancho: 2 });
+    s.push({ nombre: "Nivel medido (hh:00, tabla)", datos: medidoDia.x.map((h) => (Math.abs(h - Math.round(h)) < 1e-9 && h < 24 ? filas[Math.round(h)].nivelMedido : null)), color: T.ink, soloPuntos: true, puntos: true, oculta: medidoDia.hayMedido });
+    return { x: medidoDia.x, s };
+  }, [calc, T, sensQ, bandaPct, medidoDia, proyeccion, filas]); // eslint-disable-line react-hooks/exhaustive-deps
   const det = calc.principal.detalle;
-  // Apertura por hora: la del programa simulado (igual para cada unidad en
-  // línea) y, si la fecha es hoy, la estimada de cada unidad con lo medido.
-  const seriesApertura = (() => {
-    const x = [...HORAS_DIA, 24];
-    const ext = (arr) => [...arr, arr[arr.length - 1]];
+  // Apertura del distribuidor: la estimada de cada unidad con lo medido cada 5 min
+  // (mismo cálculo que el Tablero) hasta el último dato y la del programa simulado
+  // en todo el día (igual para cada unidad en línea).
+  // Lo medido se calcula una vez (es lo más pesado); el programa cambia con la tabla
+  const aperturaMedida = useMemo(() => {
+    if (!filasDia.length) return null;
+    const nU = filasDia[0].p.length;
+    const iv = aperturaIntervalos(filasDia, nU, { minutos: PASO_DESP, cond: condDescarga });
+    return { nU, porK: new Map(iv.map((it) => [Math.round((+it.t.slice(11, 13) * 60 + +it.t.slice(14, 16)) / PASO_DESP), it])) };
+  }, [filasDia, condDescarga]); // eslint-disable-line react-hooks/exhaustive-deps
+  const seriesApertura = useMemo(() => {
     const pct = (g) => (g != null && g > 0 ? +pctFromDeg(g).toFixed(2) : null);
     const s = [];
-    const hReal = vivo && vivo.hoy === fecha && vivo.resHoy ? vivo.resHoy.horas : null;
-    if (hReal) {
-      const nU = hReal.reduce((k, h) => Math.max(k, h && h.gamma ? h.gamma.length : 0), 0);
+    if (aperturaMedida) {
+      const { nU, porK } = aperturaMedida;
       for (let u = 0; u < nU; u++) {
-        const datos = HORAS_DIA.map((h) => pct(hReal[h] && hReal[h].gamma ? hReal[h].gamma[u] : null));
-        const nulos = HORAS_DIA.map((h) => (hReal[h] ? motivoSinApertura(hReal[h].linea ? hReal[h].linea[u] : null) : "hora sin dato"));
-        if (datos.some((v) => v != null)) s.push({ nombre: `U${u + 1} real (estimada)`, datos: ext(datos), nulos: ext(nulos), indice: u, ancho: 1.8, escalones: true });
+        const datos = medidoDia.x.map((h, k) => { const it = porK.get(k); return it && it.gamma ? pct(it.gamma[u]) : null; });
+        const nulos = medidoDia.x.map((h, k) => { const it = porK.get(k); return it ? motivoSinApertura(it.linea ? it.linea[u] : null) : h < medidoDia.corte ? "sin dato" : ""; });
+        if (datos.some((v) => v != null)) s.push({ nombre: `U${u + 1} (estimada con lo medido)`, datos, nulos, indice: u, ancho: 1.3 });
       }
     }
-    s.push({ nombre: `Programa simulado (cada unidad en línea)`, datos: ext(det.map((d) => (d.qTurbinado > 0 ? pct(d.gamma) : null))), color: T.ink, dash: true, ancho: 2.2, escalones: true });
-    return { x, s, conReal: !!hReal };
-  })();
+    s.push({ nombre: "Programa simulado (cada unidad en línea)", datos: horaARejilla(det.map((d) => (d.qTurbinado > 0 ? pct(d.gamma) : null))), color: T.ink, dash: true, ancho: 2.2 });
+    return { x: medidoDia.x, s, conReal: !!aperturaMedida };
+  }, [aperturaMedida, medidoDia, det, T]); // eslint-disable-line react-hooks/exhaustive-deps
   const noAlcanzables = det.filter((d) => d.potenciaMW > 0 && !d.alcanzable && !d.enMinimoEnsayado);
   const bajoMinimo = det.filter((d) => d.enMinimoEnsayado);
   const reducidas = det.filter((d) => d.unidadesReducidas && !d.enMinimoEnsayado);
@@ -782,6 +926,10 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
           <button onClick={() => llenarConVivo(vivo, fuenteEntrada)} style={{ padding: "4px 12px", borderRadius: 6, fontSize: 12, cursor: "pointer", border: `1px solid ${T.teal}`, background: "transparent", color: T.teal, fontWeight: 600 }}>Volver a llenar con datos en vivo</button>
         </div>
       )}
+      <button onClick={() => setVerParametros((v) => !v)} aria-expanded={verParametros} className="itu-plegar" style={{ display: estrecho || !verParametros ? "inline-flex" : "none", marginBottom: 10, padding: "6px 12px", borderRadius: 6, border: `1px solid ${T.line}`, background: "transparent", color: T.inkMuted, fontSize: 12.5, cursor: "pointer", fontFamily: FONT_BODY }}>
+        {verParametros ? "Ocultar parámetros" : `Parámetros: ${fecha} · nivel ${fx(nivelInicial, 2)} msnm · entrada ${fx(qEntrada, 0)} m³/s · ${unidadesDisp} unidades ›`}
+      </button>
+      {verParametros && (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 14, marginBottom: 12 }}>
         <div>
           <Etiqueta T={T} tip="Día del despacho. Define qué factor de conversión de Hidrometría aplica en la columna Q Hidrometría (1,62 hasta el 29-oct-2026 14:35; desde entonces depende del nivel). Se toma del texto pegado si lo trae.">Fecha del despacho</Etiqueta>
@@ -835,6 +983,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
           </div>
         </div>
       </div>
+      )}
 
       <div style={{ marginBottom: 12 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -863,15 +1012,35 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
         const chip = (k) => { const e = est(k); return e ? <span style={{ fontSize: 12, fontWeight: 700, color: colorRegla[e] }}>{ETIQUETA_ESTADO_REGLA[e]}</span> : null; };
         return (
           <div className="itu-kpis" style={{ marginBottom: 10 }}>
-            <Kpi T={T} rotulo={`Nivel a las 24 h · ${nombrePrograma(calc.modo, calc.progs)}`} valor={calc.principal.Hfinal} decimales={3} unidad="msnm"
-              nota={`${calc.principal.deltaH >= 0 ? "+" : ""}${fx(calc.principal.deltaH * 100, 1)} cm en el día`} />
-            <Kpi T={T} rotulo={calc.inf ? `Nivel a las 24 h con XM ±${bandaPct} %` : `Nivel a las 24 h con entrada ±${sensQ} m³/s`}
-              valor={calc.inf ? `${fx(calc.sup.Hfinal, 2)} – ${fx(calc.inf.Hfinal, 2)}` : `${fx(calc.qMenos.Hfinal, 2)} – ${fx(calc.qMas.Hfinal, 2)}`} unidad="msnm"
-              nota={calc.inf ? `Entrada ±${sensQ} m³/s: ${fx(calc.qMenos.Hfinal, 2)} – ${fx(calc.qMas.Hfinal, 2)} msnm` : `Con el despacho de XM pegado se muestra también el rango por la banda ±${bandaPct} %`} />
+            {proyeccion ? (
+              <Kpi T={T} rotulo={`Nivel a las 24 h · desde el nivel medido de las ${proyeccion.hora0}`} valor={proyeccion.Hfinal} decimales={3} unidad="msnm"
+                nota={`Con ${nombrePrograma(calc.modo, calc.progs)}. Simulado desde las 00:00: ${fx(calc.principal.Hfinal, 3)} msnm (${proyeccion.Hfinal - calc.principal.Hfinal >= 0 ? "+" : ""}${fx((proyeccion.Hfinal - calc.principal.Hfinal) * 100, 1)} cm de diferencia)`} />
+            ) : (
+              <Kpi T={T} rotulo={`Nivel a las 24 h · ${nombrePrograma(calc.modo, calc.progs)}`} valor={calc.principal.Hfinal} decimales={3} unidad="msnm"
+                nota={`${calc.principal.deltaH >= 0 ? "+" : ""}${fx(calc.principal.deltaH * 100, 1)} cm en el día (simulado desde las 00:00)`} />
+            )}
+            {(() => {
+              // Rango a las 24 h: desde el último nivel medido si lo hay (como la proyección); si no, desde las 00:00
+              const P = proyeccion;
+              const inf = P ? P.inf : calc.inf, sup = P ? P.sup : calc.sup, qm = P ? P.qMenos : calc.qMenos, qM = P ? P.qMas : calc.qMas;
+              const desde = P ? ` desde las ${P.hora0} (${fx(P.horasRestantes, 1)} h por delante)` : " desde las 00:00";
+              return <Kpi T={T} rotulo={inf ? `Nivel a las 24 h con XM ±${bandaPct} %` : `Nivel a las 24 h con entrada ±${sensQ} m³/s`}
+                valor={inf ? `${fx(sup.Hfinal, 2)} – ${fx(inf.Hfinal, 2)}` : `${fx(qm.Hfinal, 2)} – ${fx(qM.Hfinal, 2)}`} unidad="msnm"
+                nota={inf ? `Entrada ±${sensQ} m³/s: ${fx(qm.Hfinal, 2)} – ${fx(qM.Hfinal, 2)} msnm.${desde.replace(/^ d/, " D")}.` : `${desde.replace(/^ d/, "D")}. Con el despacho de XM pegado se muestra también el rango por la banda ±${bandaPct} %.`} />;
+            })()}
             <Kpi T={T} rotulo="Regla 1891 · programa" valor={calc.regla.principal ? calc.regla.principal.q : null} unidad="m³/s"
               estado={chip("principal")} nota={calc.regla.banda ? `Banda ${fx(calc.regla.banda.min, 1)} – ${fx(calc.regla.banda.max, 1)} m³/s` : "Falta el Q regulado de ayer"} />
-            <Kpi T={T} rotulo="Promedio RT hasta ahora" valor={calc.regla.rt ? calc.regla.rt.q : null} unidad="m³/s"
-              estado={chip("rt")} nota={calc.regla.rt ? `${calc.regla.rt.horas} h con dato` : "Sin horas con Promedio RT"} />
+            <Kpi T={T} rotulo="Q regulado con el Promedio RT" valor={calc.regla.rt ? calc.regla.rt.q : null} unidad="m³/s"
+              estado={chip("rt")} nota={calc.regla.rt ? `${calc.regla.rt.horas} h cerradas (promedio de horas; el Tablero usa cada minuto)` : "Sin horas con Promedio RT"} />
+            {(() => {
+              const conRT = filas.filter((f) => f.rt != null);
+              const pRT = conRT.length ? conRT.reduce((a2, f) => a2 + f.rt, 0) / conRT.length : null;
+              const conAmbos = conRT.filter((f) => calc.hayXM && f.despacho > 0);
+              const pXM = conAmbos.length ? conAmbos.reduce((a2, f) => a2 + f.despacho, 0) / conAmbos.length : null;
+              const pRTc = conAmbos.length ? conAmbos.reduce((a2, f) => a2 + f.rt, 0) / conAmbos.length : null;
+              return <Kpi T={T} rotulo="Generación RT promedio" valor={pRT} decimales={1} unidad="MW"
+                nota={pRT == null ? "Sin horas con Promedio RT" : pXM != null ? `${conRT.length} h cerradas · frente a XM ${fx(pXM, 1)} MW (${pRTc >= pXM ? "+" : ""}${fx((pRTc / pXM - 1) * 100, 1)} %)` : `${conRT.length} h cerradas · ${fx(pRT * conRT.length, 0)} MWh`} />;
+            })()}
           </div>
         );
       })()}
@@ -917,7 +1086,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
         <>
           <ChartHeader titulo="Banda operacional del día (Res. 1891)" T={T}
             subtitulo={`Caudal regulado y total descargado frente a la banda (promedio de ayer ${fx(qAyer, 1)} m³/s ± 4,70 %). La regla se cumple si el promedio acumulado al final del día queda dentro; la franja de abajo muestra cuándo estuvo dentro o fuera${bandaDia.corte < 24 ? " y, tenue, la proyección con el programa" : ""}.`} />
-          <GraficoSeries T={T} tipoX="numero" ejeX="Hora" x={bandaDia.x} series={bandaDia.series} unidad="m³/s" ejeY="m³/s" decimales={1} alto={290} grupo="desp" nombreArchivo={`banda_1891_${fecha}`}
+          <GraficoSeries T={T} tipoX="hora" ejeX="Hora" x={bandaDia.x} series={bandaDia.series} unidad="m³/s" ejeY="m³/s" decimales={1} alto={290} grupo="desp" nombreArchivo={`banda_1891_${fecha}`}
             bandas={[{ desde: 0, hasta: 1, relleno: "rgba(12,163,12,0.10)" }]} tramos={bandaDia.tramos} leyendaTramos={bandaDia.leyenda}
             verticales={bandaDia.corte > 0 && bandaDia.corte < 24 ? [{ x: bandaDia.corte, rotulo: "último dato" }] : []} />
           <div className="itu-kpis" style={{ margin: "4px 0 18px" }}>
@@ -927,17 +1096,26 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
         </>
       )}
 
-      <ChartHeader titulo="Potencia por hora: despacho, generación real y programa" T={T} subtitulo={`MW en bornes. Franja = banda operativa de la generación: despacho de XM ±${bandaPct} % (solo en las horas con dato de XM); el Promedio RT de cada hora debe quedar dentro. Las líneas punteadas grises son la banda de la regla 1891 expresada en MW con el F.C. de las 00:00.`} />
-      <GraficoSeries T={T} tipoX="numero" ejeX="Hora" x={seriesPotencia.x} series={seriesPotencia.s} bandas={seriesPotencia.bandas} unidad="MW" ejeY="MW" decimales={0} alto={240} grupo="desp" nombreArchivo={`potencia_horaria_${fecha}`} />
+      <ChartHeader titulo="Potencia del día: despacho, generación medida y programa" T={T} subtitulo={`MW en bornes, cada 5 min. La banda operativa es el despacho de XM ±${bandaPct} %: el Promedio RT de cada hora debe quedar dentro${calc.hayXM ? "; la franja de abajo muestra cada hora dentro o fuera y, tenue, la proyección con el programa" : " (pegue el despacho de XM para verla)"}. Las líneas punteadas grises son la banda de la regla 1891 expresada en MW con el F.C. de las 00:00.`} />
+      <GraficoSeries T={T} tipoX="hora" ejeX="Hora" x={seriesPotencia.x} series={seriesPotencia.s} bandas={seriesPotencia.bandas} unidad="MW" ejeY="MW" decimales={0} alto={290} grupo="desp" nombreArchivo={`potencia_${fecha}`}
+        tramos={seriesPotencia.tramos} leyendaTramos={seriesPotencia.leyenda} verticales={verticalCorte} />
+      {calc.hayXM && seriesPotencia.cerradas > 0 && (
+        <div className="itu-kpis" style={{ margin: "4px 0 18px" }}>
+          <div style={{ ...resumen, padding: "8px 12px" }}><b style={{ color: T.ink }}>Horas cerradas dentro de la banda XM:</b> {seriesPotencia.dentro} de {seriesPotencia.cerradas}</div>
+        </div>
+      )}
 
-      <ChartHeader titulo="Apertura del distribuidor por hora" T={T} subtitulo={seriesApertura.conReal ? "Programa simulado (todas las unidades en línea con la misma apertura) frente a la apertura estimada de cada unidad con su potencia medida en las horas ya transcurridas. En % y su equivalente en grados (eje derecho y tooltip)." : "Apertura de cada unidad en línea con el programa simulado (todas con la misma apertura). En % y su equivalente en grados (eje derecho y tooltip). Para la fecha de hoy se agrega la estimada de cada unidad con lo medido."} />
-      <GraficoSeries T={T} tipoX="numero" ejeX="Hora" x={seriesApertura.x} series={seriesApertura.s} unidad="%" ejeY="apertura (%)" decimales={1} alto={240} grupo="desp" nombreArchivo={`apertura_horaria_${fecha}`} referencias={referenciasApertura(T)} equivalente={EQUIV_APERTURA} />
+      <ChartHeader titulo="Apertura del distribuidor" T={T} subtitulo={seriesApertura.conReal ? "Apertura estimada de cada unidad con su potencia medida, cada 5 min hasta el último dato (mismo cálculo que el Tablero), frente al programa simulado (todas las unidades en línea con la misma apertura). En % y su equivalente en grados (eje derecho y tooltip)." : "Apertura de cada unidad en línea con el programa simulado (todas con la misma apertura). En % y su equivalente en grados (eje derecho y tooltip). Para la fecha de hoy se agrega la estimada de cada unidad con lo medido."} />
+      <GraficoSeries T={T} tipoX="hora" ejeX="Hora" x={seriesApertura.x} series={seriesApertura.s} unidad="%" ejeY="apertura (%)" decimales={1} alto={260} grupo="desp" nombreArchivo={`apertura_${fecha}`} referencias={referenciasApertura(T)} equivalente={EQUIV_APERTURA} verticales={verticalCorte} />
       <div style={{ margin: "-6px 0 14px" }}><Nota T={T} rotulo="Cómo se estima la apertura">{NOTA_APERTURA} El techo del programa es el elegido en "Rango de apertura" ({etiquetaTecho}).</Nota></div>
 
-      <ChartHeader titulo="Nivel del embalse — evolución intradiaria" T={T} />
-      <GraficoSeries T={T} tipoX="numero" ejeX="Hora" grupo="desp" x={seriesNivel.x} series={seriesNivel.s} unidad="msnm" ejeY="msnm" decimales={3} alto={300} nombreArchivo="despacho_nivel" bandas={[{ desde: 0, hasta: 1, relleno: "rgba(148,163,184,0.10)" }, { desde: 2, hasta: 3 }]} />
+      <ChartHeader titulo="Nivel del embalse — evolución intradiaria" T={T} subtitulo={`Nivel medido cada 5 min hasta el último dato y la proyección desde ese nivel hasta las 24:00 con el programa. El abanico (entrada ±${sensQ} m³/s${calc.hayXM ? ` y XM ±${bandaPct} %` : ""}) arranca en el último dato: solo las horas que faltan son inciertas. Las demás curvas son la simulación desde las 00:00 (hora a hora, unida por tramos rectos).`} />
+      <GraficoSeries T={T} tipoX="hora" ejeX="Hora" grupo="desp" x={seriesNivel.x} series={seriesNivel.s} unidad="msnm" ejeY="msnm" decimales={3} alto={300} nombreArchivo={`nivel_${fecha}`} bandas={[{ desde: 0, hasta: 1, relleno: "rgba(148,163,184,0.10)" }, ...(calc.hayXM ? [{ desde: 2, hasta: 3 }] : [])]} verticales={verticalCorte} />
 
-      <div style={{ marginTop: 14, overflowX: "auto" }}>
+      <button onClick={() => setVerTablaHoras((v) => !v)} aria-expanded={verTablaHoras} style={{ marginTop: 14, padding: "6px 12px", borderRadius: 6, border: `1px solid ${T.line}`, background: "transparent", color: T.inkMuted, fontSize: 12.5, cursor: "pointer", fontFamily: FONT_BODY }}>
+        {verTablaHoras ? "Ocultar la tabla hora a hora" : "Ver la tabla hora a hora (despacho, RT, programa, apertura, caudales y nivel) ›"}
+      </button>
+      {verTablaHoras &&       <div style={{ marginTop: 14, overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: FONT_BODY, color: T.ink }}>
           <thead>
             <tr style={{ color: T.inkFaint, textAlign: "left" }}>
@@ -983,7 +1161,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
         <div style={{ fontSize: 11.5, color: T.inkFaint, fontFamily: FONT_BODY, marginTop: 6, lineHeight: 1.5 }}>
           Despacho, Promedio RT, Programa y MW/unidad: potencia en bornes. Estado: comparación del Promedio RT con el despacho de XM ± banda, como en la app de Hidrometría; "Sin dato XM" no se evalúa ni se toma como cero. Programa: potencia con que se simula el nivel (* = hora sin dato propio, repite la anterior). Unidades vacías = mínimo que entrega la potencia (número en gris). Q turbinado: caudal del modelo de la colina. Q regulado: potencia / F.C. de Hidrometría con el nivel al inicio de la hora (1,62 hasta el 29-oct-2026 14:35; desde entonces 0,0119·nivel − 3,178 entre 390 y 420 msnm, y 1,80 sin nivel válido); en rojo, fuera de la banda de la regla operativa. † hora que no se puede cumplir o con más unidades que las disponibles.
         </div>
-      </div>
+      </div>}
     </div>
   );
 }
@@ -2022,15 +2200,13 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
       </div>
 
       <div style={cardStyle}>
-        <ChartHeader titulo="Caudal por apertura constante — variables reducidas" subtitulo={`Análogo a la Figura 4.1 (n₁₁-Q₁₁). Cada línea es una apertura γ realmente ensayada; la resaltada es la más cercana a tu selección (${fx(pctFromDeg(gammaCercana), 1)} % = ${fx(gammaCercana, 2)}°). Aperturas ensayadas: ${GAMMAS_HILL.map((g) => `${fx(pctFromDeg(g), 1)} %`).join(", ")} (100 % = 30,2°).`} T={T}
-          accion={<BotonCSV data={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ apertura_pct: +pctFromDeg(l.gamma).toFixed(2), gamma_grados: l.gamma, ...p })))} filename="n11_q11.csv" T={T} />} />
-        <ChartFamilia ejeX="n11" ejeY="Q11_m3s" xLabel="n₁₁ (rpm)" yLabel="Q₁₁ (m³/s)" xDomain={[n11min, n11max]} yDomain={[0, dominioY(2)[1] / 1000]} waeCampoX={0} waeCampoY={1} waeEscala={0.001} bepXY={[51.96, 0.63245]} grid={gridModeloQ} niveles={NIVELES_MODELO} puntoActualXY={puntoActual ? [puntoActual.n11, puntoActual.Q11 / 1000] : null} lineasPorGamma={lineasPorGamma} gammaCercana={gammaCercana} T={T} />
+        <ChartHeader titulo="Caudal por apertura constante — variables reducidas" subtitulo={`Análogo a la Figura 4.1 (n₁₁-Q₁₁). Cada línea es una apertura γ realmente ensayada; la resaltada es la más cercana a tu selección (${fx(pctFromDeg(gammaCercana), 1)} % = ${fx(gammaCercana, 2)}°). Aperturas ensayadas: ${GAMMAS_HILL.map((g) => `${fx(pctFromDeg(g), 1)} %`).join(", ")} (100 % = 30,2°).`} T={T} />
+        <ChartFamilia csv={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ apertura_pct: +pctFromDeg(l.gamma).toFixed(2), gamma_grados: l.gamma, ...p })))} nombreArchivo="n11_q11" ejeX="n11" ejeY="Q11_m3s" xLabel="n₁₁ (rpm)" yLabel="Q₁₁ (m³/s)" xDomain={[n11min, n11max]} yDomain={[0, dominioY(2)[1] / 1000]} waeCampoX={0} waeCampoY={1} waeEscala={0.001} bepXY={[51.96, 0.63245]} grid={gridModeloQ} niveles={NIVELES_MODELO} puntoActualXY={puntoActual ? [puntoActual.n11, puntoActual.Q11 / 1000] : null} lineasPorGamma={lineasPorGamma} gammaCercana={gammaCercana} T={T} />
       </div>
 
       <div style={cardStyle}>
-        <ChartHeader titulo="Potencia por apertura constante — variables reducidas" subtitulo="Análogo a la Figura 4.2 (n₁₁-P₁₁)." T={T}
-          accion={<BotonCSV data={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ apertura_pct: +pctFromDeg(l.gamma).toFixed(2), gamma_grados: l.gamma, ...p })))} filename="n11_p11.csv" T={T} />} />
-        <ChartFamilia ejeX="n11" ejeY="P11_MW" xLabel="n₁₁ (rpm)" yLabel="P₁₁ (MW)" xDomain={[n11min, n11max]} yDomain={[0, dominioY(3)[1] / 1000]} waeCampoX={0} waeCampoY={2} waeEscala={0.001} bepXY={[51.96, 0.00595]} grid={gridModeloP} niveles={NIVELES_MODELO} puntoActualXY={puntoActual ? [puntoActual.n11, puntoActual.P11 / 1000] : null} lineasPorGamma={lineasPorGamma} gammaCercana={gammaCercana} T={T} />
+        <ChartHeader titulo="Potencia por apertura constante — variables reducidas" subtitulo="Análogo a la Figura 4.2 (n₁₁-P₁₁)." T={T} />
+        <ChartFamilia csv={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ apertura_pct: +pctFromDeg(l.gamma).toFixed(2), gamma_grados: l.gamma, ...p })))} nombreArchivo="n11_p11" ejeX="n11" ejeY="P11_MW" xLabel="n₁₁ (rpm)" yLabel="P₁₁ (MW)" xDomain={[n11min, n11max]} yDomain={[0, dominioY(3)[1] / 1000]} waeCampoX={0} waeCampoY={2} waeEscala={0.001} bepXY={[51.96, 0.00595]} grid={gridModeloP} niveles={NIVELES_MODELO} puntoActualXY={puntoActual ? [puntoActual.n11, puntoActual.P11 / 1000] : null} lineasPorGamma={lineasPorGamma} gammaCercana={gammaCercana} T={T} />
       </div>
 
             <div style={{ margin: "30px 4px 4px", fontFamily: FONT_BODY }}>
@@ -2039,16 +2215,14 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
       </div>
 
       <div style={cardStyle}>
-        <ChartHeader titulo="Caudal por apertura constante — escala de prototipo" subtitulo="Análogo a la Figura 4.5 (H-proto vs. Q-proto)." T={T}
-          accion={<BotonCSV data={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ apertura_pct: +pctFromDeg(l.gamma).toFixed(2), gamma_grados: l.gamma, ...p })))} filename="H_Q_prototipo.csv" T={T} />} />
-        <ChartFamilia ejeX="H" ejeY="Q" xLabel="H-proto (m)" yLabel="Q-proto (m³/s)" xDomain={[Hmin, Hmax]} yDomain={dominioY(6)} waeCampoX={5} waeCampoY={6} bepXY={[198.29, 146.67]} grid={gridProtoQ} niveles={NIVELES_PROTO} puntoActualXY={puntoActual ? [Hsel, puntoActual.Q] : null} lineasPorGamma={lineasPorGamma} gammaCercana={gammaCercana} T={T}
+        <ChartHeader titulo="Caudal por apertura constante — escala de prototipo" subtitulo="Análogo a la Figura 4.5 (H-proto vs. Q-proto)." T={T} />
+        <ChartFamilia csv={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ apertura_pct: +pctFromDeg(l.gamma).toFixed(2), gamma_grados: l.gamma, ...p })))} nombreArchivo="H_Q_prototipo" ejeX="H" ejeY="Q" xLabel="H-proto (m)" yLabel="Q-proto (m³/s)" xDomain={[Hmin, Hmax]} yDomain={dominioY(6)} waeCampoX={5} waeCampoY={6} bepXY={[198.29, 146.67]} grid={gridProtoQ} niveles={NIVELES_PROTO} puntoActualXY={puntoActual ? [Hsel, puntoActual.Q] : null} lineasPorGamma={lineasPorGamma} gammaCercana={gammaCercana} T={T}
           puntosExtra={ESCENARIOS_2023_EPM_GE.map((e) => ({ x: e.saltoNeto_m, y: e.Q_m3s, label: e.id }))} />
       </div>
 
       <div style={cardStyle}>
-        <ChartHeader titulo="Potencia por apertura constante — escala de prototipo" subtitulo="Análogo a la Figura 4.6 (H-proto vs. P-proto)." T={T}
-          accion={<BotonCSV data={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ apertura_pct: +pctFromDeg(l.gamma).toFixed(2), gamma_grados: l.gamma, ...p })))} filename="H_P_prototipo.csv" T={T} />} />
-        <ChartFamilia ejeX="H" ejeY="P" xLabel="H-proto (m)" yLabel="P-proto (MW)" xDomain={[Hmin, Hmax]} yDomain={dominioY(7)} waeCampoX={5} waeCampoY={7} bepXY={[198.29, 273.41]} grid={gridProtoP} niveles={NIVELES_PROTO} puntoActualXY={puntoActual ? [Hsel, puntoActual.P] : null} lineasPorGamma={lineasPorGamma} gammaCercana={gammaCercana} T={T}
+        <ChartHeader titulo="Potencia por apertura constante — escala de prototipo" subtitulo="Análogo a la Figura 4.6 (H-proto vs. P-proto)." T={T} />
+        <ChartFamilia csv={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ apertura_pct: +pctFromDeg(l.gamma).toFixed(2), gamma_grados: l.gamma, ...p })))} nombreArchivo="H_P_prototipo" ejeX="H" ejeY="P" xLabel="H-proto (m)" yLabel="P-proto (MW)" xDomain={[Hmin, Hmax]} yDomain={dominioY(7)} waeCampoX={5} waeCampoY={7} bepXY={[198.29, 273.41]} grid={gridProtoP} niveles={NIVELES_PROTO} puntoActualXY={puntoActual ? [Hsel, puntoActual.P] : null} lineasPorGamma={lineasPorGamma} gammaCercana={gammaCercana} T={T}
           puntosExtra={ESCENARIOS_2023_EPM_GE.map((e) => ({ x: e.saltoNeto_m, y: e.P_turbina_MW, label: e.id }))} />
       </div>
       </>)}
@@ -2058,96 +2232,52 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
       <div style={cardStyle}>
         <ChartHeader titulo="Unidades requeridas según el nivel del embalse" subtitulo={`Caudal turbinable máximo total (apertura máxima del rango, sin pasar de ${P_MAXIMO_ESPERADO_MW} MW por unidad), según cuántas unidades estén activas, en el rango de operación normal (${NIVEL_MIN_TEC}-${NAMO} msnm = NAMO). Rango de apertura: ${etiquetaRango(rangoOptimo)}.`} T={T}
           tip="Cada línea es la capacidad máxima con N unidades activas (a la apertura máxima del rango elegido), calculada con el mismo modelo de colina ya validado. Para un caudal objetivo, mira en qué línea (de abajo hacia arriba) se alcanza o supera ese valor a tu nivel de embalse — esa es la cantidad mínima de unidades necesaria."
-          accion={<BotonCSV data={diagramaTurbinasVsNivel} filename="unidades_requeridas_vs_nivel.csv" T={T} />} />
-        <ResponsiveContainer width="100%" height={320}>
-          <LineChart data={diagramaTurbinasVsNivel} margin={{ top: 10, right: 20, left: 64, bottom: 10 }}>
-            <CartesianGrid stroke={T.lineSoft} strokeDasharray="2 4" />
-            <XAxis dataKey="H" type="number" domain={[NIVEL_MIN_TEC, NAMO]} tick={tickStyleFor(T)} tickFormatter={fmtTick} />
-            <YAxis type="number" tick={tickStyleFor(T)} tickFormatter={fmtTick} label={{ value: "Caudal turbinable total (m³/s)", angle: -90, position: "left", offset: -2, style: { fontSize: 12.5, fontWeight: 600, fill: T.ink, fontFamily: FONT_BODY, textAnchor: "middle" } }} />
-            <RTooltip content={<CustomTooltip unidad="m³/s" T={T} labelPrefix="Nivel = " labelSuffix=" msnm" />} />
-            <Legend verticalAlign="bottom" wrapperStyle={{ fontSize: 11.5, fontFamily: FONT_BODY, paddingTop: 20 }} />
-            {Array.from({ length: N_TURBINAS_MAX }, (_, i) => i + 1).map((n) => (
-              <Line key={n} type="monotone" dataKey={`n${n}`} name={`${n} ${n === 1 ? "unidad" : "unidades"}`} stroke={COLORES_GAMMA[(n - 1) % COLORES_GAMMA.length]} strokeWidth={n === nTurbActivasExploracion ? 3 : 1.4} dot={false} isAnimationActive={false} connectNulls />
-            ))}
-            <ReferenceLine x={nivelEmbalseExploracion <= NAMO ? nivelEmbalseExploracion : null} stroke={T.ink} strokeDasharray="4 3" label={{ value: "Nivel actual", fontSize: 10, fill: T.ink }} />
-            {zoomBrush(T, "H")}
-          </LineChart>
-        </ResponsiveContainer>
-        <div style={{ textAlign: "center", fontSize: 12.5, fontWeight: 600, color: T.ink, fontFamily: FONT_BODY, marginTop: 4 }}>Nivel del embalse (msnm)</div>
+ />
+        <GraficoSeries T={T} tipoX="numero" ejeX="Nivel del embalse (msnm)" x={diagramaTurbinasVsNivel.map((r) => r.H)} unidad="m³/s" ejeY="Caudal turbinable total (m³/s)" decimales={1} alto={320} nombreArchivo="unidades_requeridas_vs_nivel"
+          series={Array.from({ length: N_TURBINAS_MAX }, (_, i) => i + 1).map((n) => ({ nombre: `${n} ${n === 1 ? "unidad" : "unidades"}`, datos: diagramaTurbinasVsNivel.map((r) => r[`n${n}`]), indice: n - 1, ancho: n === nTurbActivasExploracion ? 3 : 1.4, unirHuecos: true }))}
+          verticales={nivelEmbalseExploracion <= NAMO ? [{ x: nivelEmbalseExploracion, rotulo: "Nivel actual" }] : []} />
       </div>
 
       <div style={cardStyle}>
-        <ChartHeader titulo="F.C. — Factor Potencia/Caudal vs. nivel del embalse" subtitulo={`F.C. = potencia en bornes / caudal turbinado (MW por m³/s), por unidad. Modelo a la apertura máxima del rango elegido (${etiquetaRango(rangoOptimo)}) con ${nTurbActivasExploracion} unidad(es) y la condición de descarga elegida; Hidrometría: 1,62 fijo hasta el 29-oct-2026 14:35 y desde entonces 0,0119·nivel − 3,178 (390-420 msnm; fuera de ese rango, 1,80).`} T={T}
+        <ChartHeader titulo="F.C. — Factor Potencia/Caudal vs. nivel del embalse" subtitulo={`F.C. = potencia en bornes / caudal turbinado (MW por m³/s), por unidad. Modelo a la apertura máxima del rango elegido (${etiquetaRango(rangoOptimo)}) con ${nTurbActivasExploracion} ${nTurbActivasExploracion === 1 ? "unidad" : "unidades"} y la condición de descarga elegida; Hidrometría: 1,62 fijo hasta el 29-oct-2026 14:35 y desde entonces 0,0119·nivel − 3,178 (390-420 msnm; fuera de ese rango, 1,80).`} T={T}
           tip="A mayor nivel del embalse, mayor salto neto: con el mismo caudal se obtiene más potencia (F.C. más alto), o sea que para la misma potencia se necesita menos caudal. El F.C. del modelo depende también de la carga y del nivel de la almenara (caudal del río y unidades en servicio); el de Hidrometría solo del nivel. Con 2-3 unidades entre 200 y 290 MW por unidad y el río bajo, los dos coinciden dentro de ±2 % entre 400 y 420 msnm (±1 % cerca de 408-412 msnm). Con 4 unidades y el río alto, la almenara sube y la fórmula da un F.C. 2-4 % mayor que el modelo, es decir, reporta 2-4 % menos caudal."
-          accion={<BotonCSV data={diagramaFC} filename="fc_vs_nivel_embalse.csv" T={T} />} />
-        <ResponsiveContainer width="100%" height={260}>
-          <LineChart data={diagramaFC} margin={{ top: 10, right: 20, left: 76, bottom: 10 }}>
-            <CartesianGrid stroke={T.lineSoft} strokeDasharray="2 4" />
-            <XAxis dataKey="H" type="number" domain={[NIVEL_MIN_TEC, NAMO]} tick={tickStyleFor(T)} tickFormatter={fmtTick} />
-            <YAxis width={52} type="number" tick={tickStyleFor(T)} domain={["auto", "auto"]} tickFormatter={(v) => fx(v, 2)} label={axisLabel("F.C. (MW / (m³/s))", -90)} />
-            <RTooltip content={<CustomTooltip unidad="MW/(m³/s)" T={T} labelPrefix="Nivel = " labelSuffix=" msnm" decimales={3} decimalesEtiqueta={2} />} />
-            <Legend wrapperStyle={{ fontSize: 11.5, fontFamily: FONT_BODY, paddingTop: 14 }} />
-            <Line type="monotone" dataKey="FC" name="Modelo (apertura máxima)" stroke={T.teal} strokeWidth={2.2} dot={false} isAnimationActive={false} connectNulls />
-            <Line type="linear" dataKey="FC_hidrometria" name="Hidrometría desde 29-oct-2026" stroke={T.ink} strokeDasharray="6 3" strokeWidth={1.6} dot={false} isAnimationActive={false} />
-            <Line type="linear" dataKey="FC_anterior" name="Hidrometría antes (1,62)" stroke={T.inkFaint} strokeDasharray="2 3" strokeWidth={1.4} dot={false} isAnimationActive={false} />
-            {zoomBrush(T, "H")}
-          </LineChart>
-        </ResponsiveContainer>
-        <div style={{ textAlign: "center", fontSize: 12.5, fontWeight: 600, color: T.ink, fontFamily: FONT_BODY, marginTop: 4 }}>Nivel del embalse (msnm)</div>
+ />
+        <GraficoSeries T={T} tipoX="numero" ejeX="Nivel del embalse (msnm)" x={diagramaFC.map((r) => r.H)} unidad="MW/(m³/s)" ejeY="F.C. (MW / (m³/s))" decimales={3} alto={260} nombreArchivo="fc_vs_nivel_embalse"
+          series={[
+            { nombre: "Modelo (apertura máxima)", datos: diagramaFC.map((r) => r.FC), indice: 0, ancho: 2.2, unirHuecos: true },
+            { nombre: "Hidrometría desde 29-oct-2026", datos: diagramaFC.map((r) => r.FC_hidrometria), color: T.ink, dash: true, ancho: 1.6 },
+            { nombre: "Hidrometría antes (1,62)", datos: diagramaFC.map((r) => r.FC_anterior), color: T.inkFaint, dash: true, ancho: 1.4 },
+          ]} verticales={nivelEmbalseExploracion <= NAMO ? [{ x: nivelEmbalseExploracion, rotulo: "Nivel actual" }] : []} />
       </div>
 
       <div style={cardStyle}>
         <ChartHeader titulo="F.C. — Factor Potencia/Caudal vs. volumen útil" subtitulo="Mismo F.C., contra el volumen útil del embalse (0% = nivel mínimo técnico 390 msnm; 100% = NAMO 420 msnm)." T={T}
           tip="El volumen útil (%) es una forma habitual de expresar cuánta reserva operativa tiene el embalse, independiente de la geometría exacta cota-volumen."
-          accion={<BotonCSV data={diagramaFC} filename="fc_vs_volumen_util.csv" T={T} />} />
-        <ResponsiveContainer width="100%" height={260}>
-          <LineChart data={diagramaFC} margin={{ top: 10, right: 20, left: 76, bottom: 10 }}>
-            <CartesianGrid stroke={T.lineSoft} strokeDasharray="2 4" />
-            <XAxis dataKey="volUtilPct" type="number" domain={[0, 100]} tick={tickStyleFor(T)} tickFormatter={fmtTick} />
-            <YAxis width={52} type="number" tick={tickStyleFor(T)} domain={["auto", "auto"]} tickFormatter={(v) => fx(v, 2)} label={axisLabel("F.C. (MW / (m³/s))", -90)} />
-            <RTooltip content={<CustomTooltip unidad="MW/(m³/s)" T={T} labelPrefix="Vol. útil = " labelSuffix=" %" decimales={3} />} />
-            <Legend wrapperStyle={{ fontSize: 11.5, fontFamily: FONT_BODY, paddingTop: 14 }} />
-            <Line type="monotone" dataKey="FC" name="Modelo (apertura máxima)" stroke={T.amber} strokeWidth={2.2} dot={false} isAnimationActive={false} connectNulls />
-            <Line type="linear" dataKey="FC_hidrometria" name="Hidrometría desde 29-oct-2026" stroke={T.ink} strokeDasharray="6 3" strokeWidth={1.6} dot={false} isAnimationActive={false} />
-            <Line type="linear" dataKey="FC_anterior" name="Hidrometría antes (1,62)" stroke={T.inkFaint} strokeDasharray="2 3" strokeWidth={1.4} dot={false} isAnimationActive={false} />
-            {zoomBrush(T, "volUtilPct")}
-          </LineChart>
-        </ResponsiveContainer>
-        <div style={{ textAlign: "center", fontSize: 12.5, fontWeight: 600, color: T.ink, fontFamily: FONT_BODY, marginTop: 4 }}>Volumen útil (%)</div>
+ />
+        <GraficoSeries T={T} tipoX="numero" ejeX="Volumen útil (%)" x={diagramaFC.map((r) => r.volUtilPct)} unidad="MW/(m³/s)" ejeY="F.C. (MW / (m³/s))" decimales={3} alto={260} nombreArchivo="fc_vs_volumen_util"
+          series={[
+            { nombre: "Modelo (apertura máxima)", datos: diagramaFC.map((r) => r.FC), indice: 3, ancho: 2.2, unirHuecos: true },
+            { nombre: "Hidrometría desde 29-oct-2026", datos: diagramaFC.map((r) => r.FC_hidrometria), color: T.ink, dash: true, ancho: 1.6 },
+            { nombre: "Hidrometría antes (1,62)", datos: diagramaFC.map((r) => r.FC_anterior), color: T.inkFaint, dash: true, ancho: 1.4 },
+          ]} />
       </div>
 
       <div style={cardStyle}>
         <ChartHeader titulo="Eficiencia vs. caudal a salto fijo" subtitulo="Análogo a las Figuras 4.3/4.7, para los tres saltos de referencia del informe (Hmin-Hnom-Hmax)." T={T}
-          accion={<BotonCSV data={curvasEficiencia.flatMap((c) => c.puntos.filter((p) => p.eta >= 0).map((p) => ({ salto: c.label, ...p })))} filename="eficiencia_vs_caudal.csv" T={T} />} />
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart margin={{ top: 10, right: 24, left: 64, bottom: 36 }}>
-            <CartesianGrid stroke={T.lineSoft} strokeDasharray="2 4" />
-            <XAxis dataKey="Q" type="number" tick={tickStyleFor(T)} tickFormatter={fmtTick} label={axisLabel("Caudal (m³/s)")} />
-            <YAxis dataKey="eta" type="number" domain={[0, 100]} tick={tickStyleFor(T)} tickFormatter={fmtTick} label={axisLabel("Eficiencia (%)", -90)} />
-            <RTooltip content={<CustomTooltip unidad="%" T={T} labelPrefix="Q = " labelSuffix=" m³/s" />} />
-            <Legend wrapperStyle={{ fontSize: 10.5, fontFamily: FONT_BODY , paddingTop: 14 }} />
-            {curvasEficiencia.map((c) => (
-              <Line key={c.H} data={c.puntos.filter((p) => p.eta >= 0)} dataKey="eta" name={c.label} stroke={c.color} strokeWidth={2} dot={false} isAnimationActive={false} />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
+ />
+        {(() => { const u = unirCurvas(curvasEficiencia.map((c) => ({ puntos: c.puntos.filter((p) => p.eta >= 0) })), "Q", "eta"); return (
+          <GraficoSeries T={T} tipoX="numero" ejeX="Caudal (m³/s)" x={u.x} unidad="%" ejeY="Eficiencia (%)" decimales={2} alto={300} yMin={0} yMax={100} nombreArchivo="eficiencia_vs_caudal"
+            series={curvasEficiencia.map((c, i) => ({ nombre: c.label, datos: u.datos[i], color: c.color, ancho: 2, unirHuecos: true }))} />
+        ); })()}
       </div>
 
       <div style={cardStyle}>
         <ChartHeader titulo="Eficiencia vs. potencia a salto fijo" subtitulo="Análogo a las Figuras 4.4/4.8, para los tres saltos de referencia del informe." T={T}
-          accion={<BotonCSV data={curvasEficiencia.flatMap((c) => c.puntos.filter((p) => p.eta >= 0).map((p) => ({ salto: c.label, ...p })))} filename="eficiencia_vs_potencia.csv" T={T} />} />
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart margin={{ top: 10, right: 24, left: 64, bottom: 36 }}>
-            <CartesianGrid stroke={T.lineSoft} strokeDasharray="2 4" />
-            <XAxis dataKey="P" type="number" tick={tickStyleFor(T)} tickFormatter={fmtTick} label={axisLabel("Potencia (MW)")} />
-            <YAxis dataKey="eta" type="number" domain={[0, 100]} tick={tickStyleFor(T)} tickFormatter={fmtTick} label={axisLabel("Eficiencia (%)", -90)} />
-            <RTooltip content={<CustomTooltip unidad="%" T={T} labelPrefix="P = " labelSuffix=" MW" />} />
-            <Legend wrapperStyle={{ fontSize: 10.5, fontFamily: FONT_BODY , paddingTop: 14 }} />
-            {curvasEficiencia.map((c) => (
-              <Line key={c.H} data={c.puntos.filter((p) => p.eta >= 0)} dataKey="eta" name={c.label} stroke={c.color} strokeWidth={2} dot={false} isAnimationActive={false} />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
+ />
+        {(() => { const u = unirCurvas(curvasEficiencia.map((c) => ({ puntos: c.puntos.filter((p) => p.eta >= 0) })), "P", "eta"); return (
+          <GraficoSeries T={T} tipoX="numero" ejeX="Potencia (MW)" x={u.x} unidad="%" ejeY="Eficiencia (%)" decimales={2} alto={300} yMin={0} yMax={100} nombreArchivo="eficiencia_vs_potencia"
+            series={curvasEficiencia.map((c, i) => ({ nombre: c.label, datos: u.datos[i], color: c.color, ancho: 2, unirHuecos: true }))} />
+        ); })()}
       </div>
       </>)}
 

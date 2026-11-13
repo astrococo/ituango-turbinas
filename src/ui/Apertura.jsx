@@ -13,11 +13,13 @@ const PCT_ORIGINAL = pctFromDeg(GAMMA_ORIGINAL_MAX); // 87,7 %
 
 const NOTA_APERTURA = "Apertura estimada con el modelo de la colina (ensayo 2013, transpuesto al prototipo): LoggerNet no mide la posición del distribuidor. Para cada unidad en línea se busca la apertura que entrega su potencia media con el nivel del embalse y el caudal descargado (río colmatado, ASE). 100 % = 30,2°; 97 % = 29,29° (techo de operación normal); 87,7 % = 26,5° (límite original).";
 
-function referenciasApertura(T) {
+/* Líneas de referencia de la apertura. Los rótulos van en la fila de la leyenda
+   (no dentro del gráfico) para no tapar las curvas, que suelen operar cerca del 87,7 %. */
+function referenciasApertura(T, { rotuloPos = "inicio", enLeyenda = true } = {}) {
   return [
-    { y: PCT_ORIGINAL, rotulo: `${fmtNum(PCT_ORIGINAL, 1)} % = 26,5° (límite original)`, color: T.inkFaint },
-    { y: PCT_NORMAL, rotulo: `${fmtNum(PCT_NORMAL, 0)} % = ${fmtNum(GAMMA_NORMAL_MAX, 2)}° (techo normal)`, color: ESTADO.aviso },
-    { y: 100, rotulo: `100 % = ${fmtNum(GAMMA_AMPLIADO_MAX, 1)}° (límite ampliado)`, color: ESTADO.critico },
+    { y: PCT_ORIGINAL, rotulo: `${fmtNum(PCT_ORIGINAL, 1)} % = 26,5° (límite original)`, color: T.inkFaint, rotuloPos, enLeyenda },
+    { y: PCT_NORMAL, rotulo: `${fmtNum(PCT_NORMAL, 0)} % = ${fmtNum(GAMMA_NORMAL_MAX, 2)}° (techo normal)`, color: ESTADO.aviso, rotuloPos, enLeyenda },
+    { y: 100, rotulo: `100 % = ${fmtNum(GAMMA_AMPLIADO_MAX, 1)}° (límite ampliado)`, color: ESTADO.critico, rotuloPos, enLeyenda },
   ];
 }
 

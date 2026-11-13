@@ -359,7 +359,7 @@ export default function OperacionMedida({ T, condDescarga }) {
                 </div>
               )}
 
-              <ChartHeader titulo="Potencia en bornes" T={T} accion={<BotonCSV data={csv} filename="operacion_medida_15min.csv" T={T} />} />
+              <ChartHeader titulo="Potencia en bornes" T={T} accion={<BotonCSV data={csv} filename="operacion_medida_15min.csv" T={T} rotulo="CSV con todas las variables" titulo="Todas las variables cada 15 min (potencia, caudales, nivel, F.C., apertura)" />} />
               <GraficoSeries T={T} x={sOp.x} series={sOp.p} unidad="MW" ejeY="MW" grupo="om" alto={240} nombreArchivo="potencia_15min" incluirCero />
 
               <ChartHeader titulo="Caudal turbinado total" subtitulo="Hidrometría (potencia / F.C. con el nivel del radar, como su app) frente al modelo de la colina con la misma potencia y al Winter-Kennedy (sin calibrar, relativo); también el vertedero." T={T} />

@@ -61,7 +61,8 @@ export default function Unidades({ T }) {
       relWK: por((un, x) => (un.fcWK && x.fc ? x.fc / un.fcWK : null)),
       relMod: por((un) => un.relModFC),
       eta: [...por((un) => un.etaWK), { nombre: "η modelo (mediana de las unidades)", datos: dias.map((x) => mediana(x.unidades.map((un) => un.etaMod))), color: T.inkFaint, dash: true, ancho: 1.6 }],
-      horas: por((un) => un.horas),
+      // horas en línea: 0 h es un dato (unidad detenida); los días incompletos no se grafican (no son paradas)
+      horas: Array.from({ length: nU }, (_, u) => ({ nombre: `U${u + 1}`, indice: u, datos: dias.map((x) => (x.parcial || !x.unidades[u] ? null : x.unidades[u].horas)), nulos: dias.map((x) => (x.parcial ? "día incompleto en los datos" : "")), puntos: dias.length <= 60 })),
     };
   }, [dias, nU, T]);
 

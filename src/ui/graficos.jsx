@@ -5,8 +5,9 @@
    tooltip con todos los valores, bandas sombreadas, líneas de
    referencia, tabla de datos y descarga CSV / PNG.
 
-   Un solo eje Y por gráfico: magnitudes distintas van en gráficos
-   apilados y sincronizados, nunca en doble eje.
+   Un eje Y por defecto; una serie con eje: "derecho" usa un segundo eje
+   (ejeY2) para magnitudes de escala muy distinta (p. ej. caudal regulado
+   frente al vertedero). tipoX "hora": horas del día 0–24 como "HH:MM".
    Las horas son de Colombia y se tratan como UTC para no moverlas
    con la zona del navegador.
    ============================================================ */
@@ -47,6 +48,9 @@ function etiquetasTiempo(u, splits, a, e, incr) {
     return incr >= 28 * 86400 ? `${MESES[d.getUTCMonth()]}${conAnio || d.getUTCMonth() === 0 ? `\n${anio}` : ""}` : `${fecha}${conAnio ? `\n${anio}` : ""}`;
   });
 }
+
+/* Horas del día (número 0–24) → "HH:MM" */
+const hhmm = (h) => { const m = Math.round(h * 60); return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`; };
 
 /* Plugin: tooltip flotante con todos los valores de la posición del cursor. */
 function pluginTooltip(T, decimales, unidad, fmtX, equivalente = null) {
@@ -128,9 +132,16 @@ function pluginReferencias(T, refs) {
             if (y < u.bbox.top || y > u.bbox.top + u.bbox.height) continue;
             ctx.save(); ctx.strokeStyle = r.color || T.inkFaint; ctx.lineWidth = 1.5 * dpr; ctx.setLineDash(r.dash === false ? [] : [6 * dpr, 4 * dpr]);
             ctx.beginPath(); ctx.moveTo(u.bbox.left, y); ctx.lineTo(u.bbox.left + u.bbox.width, y); ctx.stroke();
-            if (r.rotulo) {
-              ctx.setLineDash([]); ctx.font = `${11 * dpr}px ${FONT_BODY}`; ctx.fillStyle = T.inkMuted; ctx.textAlign = "right";
-              ctx.fillText(r.rotulo, u.bbox.left + u.bbox.width - 4 * dpr, y - 4 * dpr);
+            if (r.rotulo && !r.enLeyenda) {
+              // Rótulo sobre una pastilla del color del panel para que no lo tapen las series;
+              // r.rotuloPos "inicio" lo pone a la izquierda (por defecto, a la derecha)
+              ctx.setLineDash([]); ctx.font = `${11 * dpr}px ${FONT_BODY}`;
+              const w = ctx.measureText(r.rotulo).width, pad = 4 * dpr, alto = 15 * dpr;
+              const x0 = r.rotuloPos === "inicio" ? u.bbox.left + 6 * dpr : u.bbox.left + u.bbox.width - w - 2 * pad - 4 * dpr;
+              const yTxt = y - alto - 2 * dpr < u.bbox.top ? y + 2 * dpr : y - alto - 2 * dpr;
+              ctx.globalAlpha = 0.88; ctx.fillStyle = T.panel; ctx.fillRect(x0, yTxt, w + 2 * pad, alto);
+              ctx.globalAlpha = 1; ctx.fillStyle = T.inkMuted; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+              ctx.fillText(r.rotulo, x0 + pad, yTxt + alto / 2);
             }
             ctx.restore();
           }
@@ -187,7 +198,8 @@ function pluginFranjas(tramos) {
 
 /* Gráfico de series.
    x: arreglo de "AAAA-MM-DD HH:MM" (tipo "tiempo") o números (tipo "numero").
-   series: [{ nombre, datos:[...], color?, indice?, dash?, ancho?, unidad?, decimales?, area?, oculta?, puntos?,
+   series: [{ nombre, datos:[...], color?, indice?, dash?, ancho?, unidad?, decimales?, area?, oculta?, puntos?, eje?: "derecho",
+              unirHuecos?: une los puntos a través de valores vacíos (curvas con x propias en una x común),
               nulos?: [...] texto que explica un valor vacío (p. ej. "detenida"), en tooltip, tabla y CSV }]
    bandas: [{ desde: i, hasta: j, relleno }] (índices de series: rellena entre ambas)
    referencias: [{ y, rotulo, color, dash } | { y1, y2, relleno }]
@@ -196,16 +208,22 @@ function pluginFranjas(tramos) {
      (p. ej. apertura en % → grados): eje derecho, tooltip, tabla y CSV.
      Debe ser un objeto estable (constante de módulo). Una serie con
      sinEquiv: true no la muestra. */
-function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales = 1, alto = 260, ejeY, ejeX, bandas = [], referencias = [], verticales = [], grupo, nombreArchivo = "serie", yMin, yMax, incluirCero = false, escalones = false, barras = false, tramos = null, leyendaTramos = null, equivalente = null }) {
+function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales = 1, alto = 260, ejeY, ejeX, bandas = [], referencias = [], verticales = [], grupo, nombreArchivo = "serie", yMin, yMax, incluirCero = false, escalones = false, barras = false, tramos = null, leyendaTramos = null, equivalente = null, ejeY2 = null, unidad2 = null, incluirCero2 = false, mensajeVacio = null }) {
+  const esHora = tipoX === "hora";
+  const conY2 = series.some((s) => s.eje === "derecho");
   const caja = useRef(null);
   const plot = useRef(null);
   const [ocultas, setOcultas] = useState(() => new Set(series.map((s, i) => (s.oculta ? i : null)).filter((i) => i != null)));
   const [verTabla, setVerTabla] = useState(false);
   const [zoom, setZoom] = useState(false);
   const xs = useMemo(() => (tipoX === "tiempo" ? x.map(aSeg) : x.slice()), [x, tipoX]);
+  // Serie diaria (un punto por día, a las 12:00): marcas por fecha, nunca por hora
+  const esDiario = tipoX === "tiempo" && x.length > 0 && x.every((t) => typeof t === "string" && t.endsWith(" 12:00"));
+  const sinDatos = series.every((s) => !s.datos.some((v) => v != null && Number.isFinite(v)));
   const fmtX = useMemo(() => (tipoX === "tiempo"
-    ? (s) => { const d = new Date(s * 1000); return `${d.getUTCDate()} ${MESES[d.getUTCMonth()]} ${d.getUTCFullYear()} · ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`; }
-    : (v) => `${ejeX || ""} ${fmtNum(v, Number.isInteger(v) ? 0 : 2)}`), [tipoX, ejeX]);
+    ? (s) => { const d = new Date(s * 1000); return esDiario ? `${d.getUTCDate()} ${MESES[d.getUTCMonth()]} ${d.getUTCFullYear()}` : `${d.getUTCDate()} ${MESES[d.getUTCMonth()]} ${d.getUTCFullYear()} · ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`; }
+    : esHora ? (v) => `${ejeX ? ejeX + " " : ""}${hhmm(v)}`
+    : (v) => `${ejeX || ""} ${fmtNum(v, Number.isInteger(v) ? 0 : 2)}`), [tipoX, ejeX, esHora, esDiario]);
   const colores = series.map((s, i) => s.color || colorSerie(T, s.indice ?? i));
 
   useEffect(() => {
@@ -217,7 +235,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
       width: ancho, height: alto,
       tzDate: (ts) => uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"),
       scales: {
-        x: { time: tipoX === "tiempo" },
+        x: { time: tipoX === "tiempo", ...(esDiario ? { range: (u, mn, mx) => [mn - 43200, mx + 43200] } : {}) },
         y: { range: (u, mn, mx) => {
           let a = yMin ?? mn, b = yMax ?? mx;
           if (incluirCero) a = Math.min(0, a);
@@ -227,21 +245,34 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
           const pad = (b - a) * 0.06;
           return [yMin ?? a - (incluirCero && a === 0 ? 0 : pad), yMax ?? b + pad];
         } },
+        ...(esHora ? { x: { time: false, range: (u, mn, mx) => [Math.min(0, mn), Math.max(24, mx)] } } : {}),
+        ...(conY2 ? { y2: { range: (u, mn, mx) => {
+          let a = mn, b = mx;
+          if (a == null || b == null) return [0, 1];
+          if (incluirCero2) a = Math.min(0, a);
+          if (a === b) { a -= 1; b += 1; }
+          const pad = (b - a) * 0.06;
+          return [incluirCero2 && a === 0 ? 0 : a - pad, b + pad];
+        } } } : {}),
       },
       axes: [
-        { ...ejeComun, label: tipoX === "tiempo" ? undefined : ejeX, values: tipoX === "tiempo" ? etiquetasTiempo : (u, v, a, e, incr) => v.map((n) => fmtNum(n, decimalesPaso(incr))) },
+        { ...ejeComun, label: tipoX === "tiempo" ? undefined : ejeX, ...(esDiario ? { incrs: [86400, 2 * 86400, 3 * 86400, 7 * 86400, 14 * 86400, 28 * 86400, 2 * 28 * 86400, 3 * 28 * 86400, 6 * 28 * 86400, 365 * 86400] } : {}), ...(esHora ? { incrs: [1, 2, 3, 4, 6], splits: (u, ax, mn, mx, incr) => { const out = []; for (let h = Math.ceil(mn / incr) * incr; h <= mx + 1e-9; h += incr) out.push(h); return out; } } : {}), values: tipoX === "tiempo" ? etiquetasTiempo : esHora ? (u, v) => v.map((n) => hhmm(n)) : (u, v, a, e, incr) => v.map((n) => fmtNum(n, decimalesPaso(incr))) },
         { ...ejeComun, label: ejeY, size: 62, values: (u, v, a, e, incr) => v.map((n) => fmtNum(n, decimalesPaso(incr))) },
-        ...(equivalente ? [{ ...ejeComun, scale: "y", side: 1, grid: { show: false }, label: equivalente.rotulo, size: 58, values: (u, v) => v.map((n) => fmtNum(equivalente.f(n), equivalente.decimalesEje ?? 1)) }] : []),
+        ...(conY2 ? [{ ...ejeComun, scale: "y2", side: 1, grid: { show: false }, label: ejeY2, size: 62, values: (u, v, a, e, incr) => v.map((n) => fmtNum(n, decimalesPaso(incr))) }] : []),
+        ...(equivalente && !conY2 ? [{ ...ejeComun, scale: "y", side: 1, grid: { show: false }, label: equivalente.rotulo, size: 58, values: (u, v) => v.map((n) => fmtNum(equivalente.f(n), equivalente.decimalesEje ?? 1)) }] : []),
       ],
       series: [
         {},
-        ...series.map((s, i) => ({
-          label: s.nombre, show: !ocultas.has(i), stroke: colores[i], width: s.ancho ?? 2, dash: s.dash ? [6, 4] : undefined,
-          fill: s.area ? colores[i] + "22" : undefined, spanGaps: false,
-          points: { show: s.puntos ?? false, size: s.soloPuntos ? 8 : 6, fill: colores[i], stroke: s.soloPuntos ? T.panel : colores[i] },
+        ...series.map((s, i) => {
+          // puntos aislados (sin vecinos con dato) se dibujan como punto: si no, no se verían
+          const d = s.datos, aislado = !s.soloPuntos && d.some((v, k) => v != null && (k === 0 || d[k - 1] == null) && (k === d.length - 1 || d[k + 1] == null));
+          return ({
+          label: s.nombre, show: !ocultas.has(i), stroke: colores[i], scale: s.eje === "derecho" ? "y2" : "y", width: s.ancho ?? 2, dash: s.dash ? [6, 4] : undefined,
+          fill: s.area ? colores[i] + "22" : barras || s.barras ? colores[i] + "cc" : undefined, spanGaps: !!s.unirHuecos,
+          points: { show: s.puntos ?? (aislado && !s.unirHuecos && !(barras || s.barras)), size: s.soloPuntos ? 8 : 6, fill: colores[i], stroke: s.soloPuntos ? T.panel : colores[i] },
           paths: s.soloPuntos ? () => null : barras || s.barras ? uPlot.paths.bars({ size: [0.7, 40] }) : escalones || s.escalones ? uPlot.paths.stepped({ align: 1 }) : undefined,
-          _color: colores[i], _dash: s.dash, _unidad: s.unidad, _dec: s.decimales, _sinEquiv: s.sinEquiv, _nulos: s.nulos,
-        })),
+          _color: colores[i], _dash: s.dash, _unidad: s.unidad ?? (s.eje === "derecho" ? unidad2 : undefined), _dec: s.decimales, _sinEquiv: s.sinEquiv, _nulos: s.nulos,
+        }); }),
       ],
       // uPlot: [serie superior, serie inferior]
       bands: bandas.map((b) => ({ series: [b.hasta + 1, b.desde + 1], fill: b.relleno || T.accentSoft })),
@@ -257,7 +288,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
     ro.observe(caja.current);
     return () => { ro.disconnect(); u.destroy(); plot.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [xs, series, T, alto, tipoX, ejeY, ejeX, unidad, decimales, grupo, JSON.stringify(referencias), JSON.stringify(bandas), JSON.stringify(verticales), JSON.stringify(tramos), yMin, yMax, incluirCero, escalones, barras, equivalente]);
+  }, [xs, series, T, alto, tipoX, ejeY, ejeX, unidad, decimales, grupo, JSON.stringify(referencias), JSON.stringify(bandas), JSON.stringify(verticales), JSON.stringify(tramos), yMin, yMax, incluirCero, escalones, barras, equivalente, ejeY2, unidad2, incluirCero2]);
 
   function alternar(i) {
     setOcultas((prev) => {
@@ -275,8 +306,9 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
     const a = document.createElement("a"); a.href = c.toDataURL("image/png"); a.download = `${nombreArchivo}.png`; a.click();
   }
   const valEq = (v) => (equivalente && v != null && Number.isFinite(v) ? +equivalente.f(v).toFixed(equivalente.decimales ?? 2) : null);
-  const filasCSV = () => x.map((t, k) => Object.fromEntries([[tipoX === "tiempo" ? "fecha_hora" : (ejeX || "x"), t], ...series.flatMap((s) => {
-    const col = [`${s.nombre}${s.unidad ?? unidad ? ` (${s.unidad ?? unidad})` : ""}`, s.datos[k]];
+  const unidadDe = (s) => s.unidad ?? (s.eje === "derecho" ? unidad2 : null) ?? unidad;
+  const filasCSV = () => x.map((t, k) => Object.fromEntries([[tipoX === "tiempo" ? "fecha_hora" : esHora ? "hora" : (ejeX || "x"), esHora ? hhmm(t) : t], ...series.flatMap((s) => {
+    const col = [`${s.nombre}${unidadDe(s) ? ` (${unidadDe(s)})` : ""}`, s.datos[k]];
     const cols = equivalente && !s.sinEquiv ? [col, [`${s.nombre} (${equivalente.unidad})`, valEq(s.datos[k])]] : [col];
     if (s.nulos) cols.push([`${s.nombre} (estado)`, s.datos[k] == null ? s.nulos[k] || "" : ""]);
     return cols;
@@ -292,14 +324,20 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
             <span aria-hidden="true" style={{ width: 18, height: s.soloPuntos ? 8 : 3, borderRadius: s.soloPuntos ? "50%" : 2, flexShrink: 0, ...(s.soloPuntos ? { width: 8 } : {}), background: s.dash ? `repeating-linear-gradient(90deg, ${colores[i]} 0 5px, transparent 5px 8px)` : colores[i], opacity: ocultas.has(i) ? 0.35 : 1 }} />{s.nombre}
           </button>
         ))}
+        {referencias.filter((r) => r.enLeyenda && r.rotulo && r.y != null).map((r, i) => (
+          <span key={`ref${i}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, color: T.inkFaint }}>
+            <span aria-hidden="true" style={{ width: 18, height: 2, flexShrink: 0, background: `repeating-linear-gradient(90deg, ${r.color || T.inkFaint} 0 5px, transparent 5px 8px)` }} />{r.rotulo}
+          </span>
+        ))}
         <span style={{ flex: 1 }} />
         {zoom && <button style={boton} onClick={() => plot.current && plot.current.setScale("x", { min: xs[0], max: xs[xs.length - 1] })}>Ver todo</button>}
         <button style={boton} onClick={() => setVerTabla((v) => !v)} aria-pressed={verTabla}>{verTabla ? "Gráfico" : "Tabla"}</button>
         <button style={boton} onClick={() => descargarCSV(filasCSV(), `${nombreArchivo}.csv`)}>CSV</button>
         <button style={boton} onClick={descargarPNG}>PNG</button>
       </div>
-      <div ref={caja} style={{ width: "100%", display: verTabla ? "none" : "block", touchAction: "pan-y" }} />
-      {verTabla && <TablaSeries T={T} x={x} series={series} unidad={unidad} decimales={decimales} tipoX={tipoX} ejeX={ejeX} fmtX={fmtX} xs={xs} equivalente={equivalente} />}
+      {sinDatos && !verTabla && <div style={{ padding: "26px 12px", textAlign: "center", fontSize: 12.5, color: T.inkFaint, border: `1px dashed ${T.line}`, borderRadius: 8 }}>{mensajeVacio || "Sin datos para graficar en este periodo."}</div>}
+      <div ref={caja} style={{ width: "100%", display: verTabla || sinDatos ? "none" : "block", touchAction: "pan-y" }} />
+      {verTabla && <TablaSeries T={T} x={x} series={series} unidad={unidad} unidad2={unidad2} decimales={decimales} tipoX={tipoX} ejeX={ejeX} fmtX={fmtX} xs={xs} equivalente={equivalente} />}
       {!verTabla && leyendaTramos && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", marginTop: 6, fontSize: 12, color: T.inkMuted }}>
           {leyendaTramos.map((l) => (
@@ -310,23 +348,24 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
           ))}
         </div>
       )}
-      {!verTabla && tipoX === "tiempo" && <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 2 }}>Arrastre sobre el gráfico para acercar; doble clic para volver.</div>}
+      {!verTabla && (tipoX === "tiempo" || esHora) && <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 2 }}>Arrastre sobre el gráfico para acercar; doble clic para volver.</div>}
     </div>
   );
 }
 
-function TablaSeries({ T, x, series, unidad, decimales, tipoX, ejeX, fmtX, xs, equivalente }) {
+function TablaSeries({ T, x, series, unidad, unidad2, decimales, tipoX, ejeX, fmtX, xs, equivalente }) {
+  const unidadDe = (s) => s.unidad ?? (s.eje === "derecho" ? unidad2 : null) ?? unidad;
   const filas = x.map((_, k) => k).reverse().slice(0, 500);
   return (
     <div className="itu-tabla" style={{ maxHeight: 320, overflowY: "auto", border: `1px solid ${T.lineSoft}`, borderRadius: 8 }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontVariantNumeric: "tabular-nums" }}>
         <thead><tr style={{ position: "sticky", top: 0, background: T.panelSoft }}>
-          <th style={{ textAlign: "left", padding: "5px 8px", color: T.inkFaint }}>{tipoX === "tiempo" ? "Fecha y hora" : ejeX}</th>
-          {series.map((s, i) => <th key={i} style={{ textAlign: "right", padding: "5px 8px", color: T.inkFaint }}>{s.nombre}{s.unidad ?? unidad ? ` (${s.unidad ?? unidad})` : ""}</th>)}
+          <th style={{ textAlign: "left", padding: "5px 8px", color: T.inkFaint }}>{tipoX === "tiempo" ? "Fecha y hora" : tipoX === "hora" ? "Hora" : ejeX}</th>
+          {series.map((s, i) => <th key={i} style={{ textAlign: "right", padding: "5px 8px", color: T.inkFaint }}>{s.nombre}{unidadDe(s) ? ` (${unidadDe(s)})` : ""}</th>)}
         </tr></thead>
         <tbody>{filas.map((k) => (
           <tr key={k} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
-            <td style={{ padding: "4px 8px", color: T.inkMuted }}>{fmtX(xs[k])}</td>
+            <td style={{ padding: "4px 8px", color: T.inkMuted }}>{tipoX === "hora" ? hhmm(xs[k]) : fmtX(xs[k])}</td>
             {series.map((s, i) => <td key={i} style={{ textAlign: "right", padding: "4px 8px", color: T.ink }}>{s.datos[k] == null && s.nulos && s.nulos[k] ? <span style={{ color: T.inkFaint }}>{s.nulos[k]}</span> : fmtNum(s.datos[k], s.decimales ?? decimales)}{equivalente && !s.sinEquiv && s.datos[k] != null && Number.isFinite(s.datos[k]) ? <span style={{ color: T.inkFaint }}> ({fmtNum(equivalente.f(s.datos[k]), equivalente.decimales ?? 2)}{equivalente.unidad})</span> : null}</td>)}
           </tr>
         ))}</tbody>
@@ -334,6 +373,14 @@ function TablaSeries({ T, x, series, unidad, decimales, tipoX, ejeX, fmtX, xs, e
       {x.length > 500 && <div style={{ padding: 6, fontSize: 11, color: T.inkFaint }}>Últimos 500 de {x.length.toLocaleString("es-CO")} registros; el CSV trae todos.</div>}
     </div>
   );
+}
+
+/* Curvas con x propias (p. ej. eficiencia a tres saltos) → una x común ordenada y
+   series con null donde una curva no tiene punto (usar unirHuecos en la serie). */
+function unirCurvas(curvas, campoX, campoY) {
+  const xs = [...new Set(curvas.flatMap((c) => c.puntos.map((p) => p[campoX])).filter((v) => Number.isFinite(v)))].sort((a, b) => a - b);
+  const idx = new Map(xs.map((v, i) => [v, i]));
+  return { x: xs, datos: curvas.map((c) => { const d = Array(xs.length).fill(null); c.puntos.forEach((p) => { const i = idx.get(p[campoX]); if (i != null && Number.isFinite(p[campoY])) d[i] = p[campoY]; }); return d; }) };
 }
 
 /* Indicador de estado: siempre ícono + texto, nunca solo color. */
@@ -370,4 +417,4 @@ function BarraBanda({ T, valor, min, max, rango, marcas = [], unidad = "m³/s", 
   );
 }
 
-export { COLOR_TRAMO, GraficoSeries, Estado, BarraBanda, colorSerie, ESTADO, SERIE, aSeg, deSeg, fmtNum, MESES };
+export { unirCurvas, hhmm, COLOR_TRAMO, GraficoSeries, Estado, BarraBanda, colorSerie, ESTADO, SERIE, aSeg, deSeg, fmtNum, MESES };

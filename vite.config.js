@@ -7,6 +7,6 @@ export default defineConfig({
   plugins: [react()],
   build: {
     chunkSizeWarningLimit: 1200,
-    rollupOptions: { output: { manualChunks: { recharts: ["recharts"] } } },
+    rollupOptions: { output: { manualChunks: { uplot: ["uplot"] } } },
   },
 });

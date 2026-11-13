@@ -4,7 +4,6 @@
    Separado de ItuangoSimulador.jsx en oct-2026 sin cambios.
    ============================================================ */
 import { useState, useEffect, useRef } from "react";
-import { Brush } from "recharts";
 
 /* ============================================================
    TEMAS — claro / oscuro
@@ -57,7 +56,6 @@ function GlobalStyles({ T, theme, altoContraste }) {
       *, *::before, *::after { box-sizing:border-box; }
       :focus-visible { outline:2px solid ${T.teal}; outline-offset:2px; }
       button { font-family:${FONT_BODY}; }
-      .recharts-legend-item-text { color:${T.inkMuted} !important; }
       .itu-grid { display:grid; grid-template-columns: 320px 1fr; gap:20px; }
       .itu-grid-form { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:14px; }
       .itu-kpis { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:10px; }
@@ -88,7 +86,6 @@ function GlobalStyles({ T, theme, altoContraste }) {
       .itu-pill:hover { color:${T.ink}; border-color:${T.teal}; }
       @media (max-width: 640px) { .itu-pill .lbl { display:none; } .itu-h1 { font-size:16px !important; } .itu-sub { display:none; } }
       @media (max-width: 880px) { .itu-grid { grid-template-columns: 1fr; } }
-      .recharts-surface { overflow: visible; }
       .itu-diagrama-card { display:grid; grid-template-columns: 400px 1fr; gap:20px; align-items:center; }
       ${altoContraste ? `
       button { min-height: 42px; }
@@ -249,31 +246,19 @@ function descargarCSV(filas, nombreArchivo) {
 }
 
 /* Botón compacto "⬇ CSV" para colocar en accion={} de ChartHeader. */
-function BotonCSV({ data, filename, T }) {
+/* Mismo aspecto que los botones Tabla / CSV / PNG de los gráficos. */
+function BotonCSV({ data, filename, T, rotulo = "CSV", titulo = "Descargar estos datos en CSV" }) {
   return (
     <button
       onClick={() => descargarCSV(data, filename)}
-      title="Descargar los datos de esta gráfica en CSV"
-      style={{
-        display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", fontSize: 11, fontFamily: FONT_BODY, fontWeight: 600,
-        border: `1px solid ${T.line}`, borderRadius: 5, cursor: "pointer", background: T.panelSoft, color: T.inkMuted, whiteSpace: "nowrap",
-      }}
+      title={titulo}
+      style={{ border: `1px solid ${T.line}`, background: T.panel, color: T.inkMuted, borderRadius: 6, padding: "3px 9px", fontSize: 12, cursor: "pointer", fontFamily: FONT_BODY, whiteSpace: "nowrap" }}
     >
-      ⬇ CSV
+      {rotulo}
     </button>
   );
 }
 
-/* Brush de Recharts preconfigurado: arrastra los tiradores para hacer
-   zoom sobre un rango de tiempo/eje X; volver a arrastrar a los extremos
-   restaura la vista completa. Es el mecanismo de zoom nativo de Recharts,
-   funciona igual en todos los gráficos de línea/área de la app. */
-function zoomBrush(T, dataKey = "t") {
-  return (
-    <Brush dataKey={dataKey} height={22} stroke={T.teal} fill={T.panelSoft} travellerWidth={8}
-      tickFormatter={fmtTick} />
-  );
-}
 
 function Slider({ label, value, min, max, step, onChange, unit, format, T, tip, disabled, showInput = true }) {
   const disp = format ? format(value) : value;
@@ -359,20 +344,6 @@ function ThemeSwitch({ theme, setTheme, T }) {
   );
 }
 
-function CustomTooltip({ active, payload, label, unidad, T, labelPrefix = "t = ", labelSuffix = " h", decimales = 1, decimalesEtiqueta = 1 }) {
-  if (!active || !payload || !payload.length) return null;
-  return (
-    <div style={{
-      background: T.panel, border: `1px solid ${T.line}`, borderRadius: 6,
-      padding: "8px 12px", fontFamily: FONT_BODY, fontSize: 11, color: T.ink, boxShadow: T.cardShadow,
-    }}>
-      <div style={{ color: T.inkFaint, marginBottom: 4 }}>{labelPrefix}{fx(Number(label), decimalesEtiqueta)}{labelSuffix}</div>
-      {payload.map((p, i) => (
-        p.value != null && <div key={i} style={{ color: p.color }}>{p.name}: {fx(Number(p.value), decimales)} {unidad}</div>
-      ))}
-    </div>
-  );
-}
 
 const axisLabel = (text, angle = 0, side = "left") => ({
   value: text, angle,
@@ -403,11 +374,9 @@ export {
   ChartHeader,
   descargarCSV,
   BotonCSV,
-  zoomBrush,
   Slider,
   BotonGrupo,
   ThemeSwitch,
-  CustomTooltip,
   axisLabel,
   fmtTick,
   tickStyleFor,

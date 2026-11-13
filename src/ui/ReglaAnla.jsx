@@ -77,7 +77,8 @@ export default function ReglaAnla({ T }) {
         { nombre: "Margen hasta el mínimo (m³/s)", datos: dias.map((x) => (x.regla.estado === "excepcion" ? null : x.regla.margenInf)), indice: 0, ancho: 1.8, puntos: dias.length <= 120 },
       ],
       energia: [
-        { nombre: "Energía del día (GWh)", datos: dias.map((x) => (x.energia != null ? x.energia / 1000 : null)), indice: 0, barras: true },
+        { nombre: "Día completo", datos: dias.map((x) => (x.energia != null && !x.parcial ? x.energia / 1000 : null)), indice: 0, barras: true, unidad: "GWh" },
+        { nombre: "Día incompleto (en curso o con datos faltantes)", datos: dias.map((x) => (x.energia != null && x.parcial ? x.energia / 1000 : null)), color: T.inkFaint, barras: true, unidad: "GWh" },
       ],
       unidades: [{ nombre: "Unidades en línea (media del día)", datos: dias.map((x) => x.unidadesMedia), indice: 2, escalones: true, ancho: 1.8 }],
       nivel: [{ nombre: "Nivel al inicio del día", datos: dias.map((x) => x.nivel.ini), indice: 0, decimales: 3 }, { nombre: "Mínimo", datos: dias.map((x) => x.nivel.min), indice: 2, ancho: 1, decimales: 3, oculta: true }, { nombre: "Máximo", datos: dias.map((x) => x.nivel.max), indice: 1, ancho: 1, decimales: 3, oculta: true }],
@@ -131,7 +132,7 @@ export default function ReglaAnla({ T }) {
             <GraficoSeries T={T} x={s.t} series={s.regla} unidad="m³/s" ejeY="m³/s" grupo="regla" nombreArchivo="regla_1891" bandas={[{ desde: 1, hasta: 2, relleno: "rgba(12,163,12,0.10)" }]} tramos={franja?.tramos} leyendaTramos={franja?.leyenda} />
           </Tarjeta>
           <Tarjeta T={T} titulo="Margen frente a la banda" subtitulo="Cuántos m³/s faltaron para tocar el máximo y el mínimo de la banda cada día. Un valor negativo es un incumplimiento por ese lado; un margen pequeño es un día que estuvo cerca del borde.">
-            <GraficoSeries T={T} x={s.t} series={s.margen} unidad="m³/s" ejeY="m³/s" grupo="regla" alto={220} nombreArchivo="margen_banda" referencias={[{ y: 0, rotulo: "borde de la banda", dash: false, incluir: true }]} />
+            <GraficoSeries T={T} x={s.t} series={s.margen} unidad="m³/s" ejeY="m³/s" grupo="regla" alto={220} nombreArchivo="margen_banda" mensajeVacio="Sin días con margen en este periodo: en los días con vertimiento la regla queda en excepción y no hay margen que medir." referencias={[{ y: 0, rotulo: "borde de la banda", dash: false, incluir: true }]} />
           </Tarjeta>
           <div className="itu-2col">
             <Tarjeta T={T} titulo="Energía generada por día"><GraficoSeries T={T} x={s.t} series={s.energia} unidad="GWh" ejeY="GWh" decimales={2} grupo="regla" alto={200} nombreArchivo="energia_diaria" incluirCero /></Tarjeta>
