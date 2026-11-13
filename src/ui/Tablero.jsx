@@ -156,7 +156,7 @@ export default function Tablero({ T, condDescarga }) {
   const modelo = useMemo(() => {
     if (!v || !v.actual || v.actual.nivel == null) return null;
     const pb = Array.from({ length: 8 }, (_, i) => (v.actual.p[i] != null && v.actual.p[i] > P_LINEA ? v.actual.p[i] : 0));
-    // Condición de la app (por defecto, la calibrada con Hidrometría y WK); con la ASE, el río = descargado actual
+    // Condición de la app (por defecto, la calibrada con Hidrometría); con la ASE, el río = descargado actual
     const base = condDescarga || v.condicion;
     const cond = base.modo === "ase" ? { ...base, qRio: v.actual.qDesc } : base;
     const fact = v.indiceUnidades ? Array.from({ length: 8 }, (_, i) => v.indiceUnidades[i]?.factor ?? null) : null;
@@ -284,7 +284,7 @@ export default function Tablero({ T, condDescarga }) {
       )}
 
       {a && modelo && (
-        <Tarjeta T={T} titulo="Unidades ahora" subtitulo={`Promedio de los últimos 15 min. El caudal de Hidrometría por unidad es la columna de LoggerNet (P / F.C., el mismo factor para todas); el Winter-Kennedy (WK) es la medición de cada máquina, aún sin calibrar: sirve para comparar unidades, no como caudal absoluto. Modelo: colina común con la condición de descarga ${etiquetaCondicionDescarga(modelo.cond)}${modelo.cond.calibrada ? ` (últimos 7 días: sesgo ${fmtSesgo(modelo.cond.calibrada.hidrometria)} frente a Hidrometría y ${fmtSesgo(modelo.cond.calibrada.wk)} frente a WK)` : ""}.`}>
+        <Tarjeta T={T} titulo="Unidades ahora" subtitulo={`Promedio de los últimos 15 min. El caudal de Hidrometría por unidad es la columna de LoggerNet (P / F.C., el mismo factor para todas); el Winter-Kennedy (WK) es la medición de cada máquina, aún sin calibrar: sirve para comparar unidades, no como caudal absoluto. Modelo: colina común con la condición de descarga ${etiquetaCondicionDescarga(modelo.cond)}${modelo.cond.calibrada ? ` (últimos 7 días: diferencia media ${fmtSesgo(modelo.cond.calibrada.hidrometria)} frente a Hidrometría; ${fmtSesgo(modelo.cond.calibrada.wk)} frente a WK, solo como comparación)` : ""}.`}>
           <div className="itu-tabla">
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, fontVariantNumeric: "tabular-nums" }}>
               <thead><tr style={{ color: T.inkFaint, textAlign: "right" }}>

@@ -378,12 +378,16 @@ const GAMMA_AMPLIADO_MAX = 30.2; // apertura extendida estudiada en 2023 (grados
    - Hasta el 29-oct-2026 14:35 (hora de Colombia): 1,62 fijo (los "185
      m³/s máximos" que se citaban salen de 300 MW / 1,62).
    - Desde entonces: F.C. = 0,0119·N − 3,178, con N = nivel del embalse
-     (radar), válido entre 390 y 420 msnm; sin nivel válido: 1,80.
+     (radar), desde 390 msnm (también sobre 420, como LoggerNet); sin nivel
+     válido o bajo 390: 1,80.
      Ej.: 1,582 a 400 msnm, 1,725 a 412 msnm, 1,820 a 420 msnm.
    La columna QTurbinadoUx_FC de LoggerNet aplicó la fórmula desde el
    30-oct-2026 11:34 (antes seguía en 1,62); ver src/operacion.js. */
 const FACTOR_HIDROMETRIA_MW_POR_M3S = 1.62;
-const FC_HIDROMETRIA_POR_NIVEL = Object.freeze({ a: 0.0119, b: -3.178, desde: "2026-10-29 14:35", nivelMin: 390, nivelMax: 420, sinNivel: 1.8 });
+/* Sobre el NAMO (420) la columna QTurbinadoUx_FC de LoggerNet (Hidrometría)
+   sigue con la misma fórmula: verificado minuto a minuto el 9 y 10-nov-2026
+   (1.430 minutos sobre 420 msnm). Por eso no hay tope superior. */
+const FC_HIDROMETRIA_POR_NIVEL = Object.freeze({ a: 0.0119, b: -3.178, desde: "2026-10-29 14:35", nivelMin: 390, nivelMax: Infinity, sinNivel: 1.8 });
 /* Fecha y hora de Colombia (UTC−5, sin horario de verano) como texto
    "AAAA-MM-DD HH:MM". Acepta Date, milisegundos o texto "AAAA-MM-DD[ T]HH:MM[:SS]"
    (el texto se toma tal cual, ya en hora de Colombia). */
@@ -727,7 +731,7 @@ function etiquetaCondicionDescarga(cond) {
   const c = cond || CONDICION_DESCARGA_DISENO;
   if (c.modo === "manual" && c.calibrada) {
     const n = c.almManual && Number(c.almManual.norte);
-    return `calibrada con Hidrometría y Winter-Kennedy: almenara equivalente ${Number.isFinite(n) ? n.toFixed(2).replace(".", ",") : "—"} msnm`;
+    return `calibrada con Hidrometría: almenara equivalente ${Number.isFinite(n) ? n.toFixed(2).replace(".", ",") : "—"} msnm`;
   }
   if (c.modo === "manual") {
     const m = c.almManual || {};

@@ -10,7 +10,7 @@
 
    Entradas: filas de minuto de leerLoggerNet ya unidas al nivel
    (unirNivel): { t, p[], q[], q2[], qVert, nivel, qComp?, aComp?,
-   qDesc?, qTurbLog?, nivel2? }.
+   qDesc?, qTurbLog? }.
 
    Definiciones (las mismas de la app de Hidrometría):
    - Caudal regulado (Q_reg) = Σ potencia en bornes / F.C. vigente.
@@ -36,7 +36,7 @@ import {
 } from "./modelo.js";
 import { P_EN_LINEA_MW, caudalRegulado, verificarColumnaLoggerNet } from "./operacion.js";
 
-const VERSION_ANALITICA = 6; // 2: estabilidad del WK continua entre horas; 3: calidad y validación por día; 4: apertura estimada por unidad en el horario; 5: calidad de la fuente (exclusiones y valores congelados); 6: curva del embalse oficial (Ec.2 CGI) sobre 420 msnm
+const VERSION_ANALITICA = 7; // 2: estabilidad del WK continua entre horas; 3: calidad y validación por día; 4: apertura estimada por unidad en el horario; 5: calidad de la fuente (exclusiones y valores congelados); 6: curva del embalse oficial (Ec.2 CGI) sobre 420 msnm; 7: F.C. de Hidrometría también sobre 420 msnm, sin el 2.º sensor de nivel
 const UMBRAL_VERTIMIENTO_M3S = 1; // > 1 m³/s en el vertedero = hay vertimiento (igual que la regla diaria)
 const GAMMA_MAX_MODELO = 31.98;
 const MIN_ESTABLE = 10; // minutos seguidos en línea antes de usar el Winter-Kennedy de una unidad
@@ -64,7 +64,7 @@ function resumirMinutos(filas, nU, estado = nuevoEstado(nU)) {
   const P = Array.from({ length: nU }, acum), Qfc = Array.from({ length: nU }, acum), Qwk = Array.from({ length: nU }, acum);
   const minLinea = Array(nU).fill(0), arranques = Array(nU).fill(0), energia = Array(nU).fill(0);
   const sumPwk = Array(nU).fill(0), sumQwk = Array(nU).fill(0);
-  const nivel = acum(), nivel2 = acum(), qReg = acum(), qVert = acum(), qDescHid = acum(), qDescLog = acum(), fc = acum();
+  const nivel = acum(), qReg = acum(), qVert = acum(), qDescHid = acum(), qDescLog = acum(), fc = acum();
   const qComp = [acum(), acum(), acum(), acum()], aComp = [acum(), acum(), acum(), acum()];
   let minVert = 0, nUnidMin = acum(), primero = null, ultimo = null, nivelIni = null, nivelFin = null, minutos = 0;
   let previo = estado.previo;
@@ -88,7 +88,7 @@ function resumirMinutos(filas, nU, estado = nuevoEstado(nU)) {
       } else seguidos[u] = 0;
     }
     sumar(nUnidMin, n);
-    sumar(nivel, r.nivel); sumar(nivel2, r.nivel2);
+    sumar(nivel, r.nivel);
     const qr = caudalRegulado(r);
     sumar(qReg, qr);
     if (qr != null) sumar(fc, factorConversionHidrometria(r.nivel, r.t));
@@ -101,7 +101,7 @@ function resumirMinutos(filas, nU, estado = nuevoEstado(nU)) {
     previo = r;
   }
   estado.previo = previo;
-  return { P, Qfc, Qwk, minLinea, arranques, energia, sumPwk, sumQwk, nivel, nivel2, qReg, qVert, qDescHid, qDescLog, fc, qComp, aComp, minVert, nUnidMin, primero, ultimo, nivelIni, nivelFin, minutos };
+  return { P, Qfc, Qwk, minLinea, arranques, energia, sumPwk, sumQwk, nivel, qReg, qVert, qDescHid, qDescLog, fc, qComp, aComp, minVert, nUnidMin, primero, ultimo, nivelIni, nivelFin, minutos };
 }
 
 /* Caudal del modelo y salto neto por unidad para una hora (potencia media
@@ -133,7 +133,7 @@ function resumenHora(t, filas, nU, { cond = null, conModelo = true, estado } = {
   }) : Array(nU).fill(null);
   return {
     t, min: m.minutos,
-    nivel: r3(mediaDe(m.nivel)), nivel2: r3(mediaDe(m.nivel2)),
+    nivel: r3(mediaDe(m.nivel)),
     p: pU, linea: frac.map(r2), e: m.energia.map(r1),
     qFC: m.Qfc.map((a) => r2(mediaDe(a))), qWK: m.Qwk.map((a) => r2(mediaDe(a))), fcWK,
     qMod: mod ? mod.map((x) => (x ? r2(x.q) : null)) : null,
@@ -221,7 +221,7 @@ function resumenDia(dia, horasFilas, { qRegAnterior = null, nivelSiguiente = nul
       estado: estadoReglaOperativa(qReg, banda, conVert),
       margenSup: banda && qReg != null ? r2(banda.max - qReg) : null, margenInf: banda && qReg != null ? r2(qReg - banda.min) : null,
     },
-    nivel: { ini: m.nivelIni ? r3(m.nivelIni.v) : null, fin: fin ? r3(fin.v) : null, min: m.nivel.c ? r3(m.nivel.min) : null, max: m.nivel.c ? r3(m.nivel.max) : null, media: r3(mediaDe(m.nivel)), deltaH: r3(deltaH), difSensores: m.nivel2.c && m.nivel.c ? r3(mediaDe(m.nivel2) - mediaDe(m.nivel)) : null },
+    nivel: { ini: m.nivelIni ? r3(m.nivelIni.v) : null, fin: fin ? r3(fin.v) : null, min: m.nivel.c ? r3(m.nivel.min) : null, max: m.nivel.c ? r3(m.nivel.max) : null, media: r3(mediaDe(m.nivel)), deltaH: r3(deltaH) },
     energia: r1(m.energia.reduce((a, b) => a + b, 0)), pMedia: r2(m.energia.reduce((a, b) => a + b, 0) / Math.max(1, m.minutos / 60)),
     unidadesMedia: r2(mediaDe(m.nUnidMin)), fc: r3(mediaDe(m.fc)),
     vertedero: { qMedia: r2(mediaDe(m.qVert)), qMax: m.qVert.c ? r2(m.qVert.max) : null, minutos: m.minVert, volHm3: r3(((mediaDe(m.qVert) || 0) * m.minutos * 60) / 1e6), conVertimiento: conVert, aMax: m.aComp.some((a) => a.c) ? m.aComp.map((a) => (a.c ? r3(a.max) : null)) : null },
@@ -253,7 +253,7 @@ function resumirDias(filas, { cond = null, conModelo = true, anterior = null } =
 
 /* Calidad de los datos de un día y verificaciones que no dependen del modelo:
    - completitud (minutos de generación y con nivel), hueco más largo;
-   - nivel del radar "congelado" (mismo valor seguido) y diferencia con el 2.º sensor;
+   - nivel del radar "congelado" (mismo valor seguido);
    - columna QTurbinadoUx_FC de LoggerNet frente a la regla del F.C.;
    - vertedero: caudal medido frente a la Tabla 10.6 con las aperturas medidas (m). */
 function calidadDia(filas, dia) {
@@ -433,7 +433,22 @@ function errorPronosticoHF(emisiones, obs, hoy, leads = [1, 3, 7]) {
   });
 }
 
+/* Vertedero: caudal de la Tabla 10.6 con las aperturas medidas frente al de
+   LoggerNet, en todos los días cerrados con vertimiento (sin el día en curso).
+   Una sola cuenta para la pestaña Vertedero y para Validación. */
+function validacionVertedero(dias, hoy) {
+  const v = (dias || []).filter((x) => x.calidad && x.calidad.vertedero && x.calidad.vertedero.minutos > 0 && (!hoy || x.dia < hoy));
+  if (!v.length) return null;
+  const minutos = v.reduce((a, x) => a + x.calidad.vertedero.minutos, 0);
+  return {
+    dias: v.length, minutos, primero: v[0].dia, ultimo: v[v.length - 1].dia,
+    errMedio: v.reduce((a, x) => a + x.calidad.vertedero.errMedianaPct * x.calidad.vertedero.minutos, 0) / minutos,
+    errMax: Math.max(...v.map((x) => x.calidad.vertedero.errMaxAbsPct)),
+  };
+}
+
 export {
+  validacionVertedero,
   errorPronosticoHF,
   VERSION_ANALITICA, UMBRAL_VERTIMIENTO_M3S, GAMMA_MAX_MODELO,
   resumirMinutos, resumenHora, resumenDia, resumirDias, agruparPorDia, numeroUnidades,

@@ -35,7 +35,7 @@ function calcularVivo(c) {
   if (!c) return null;
   const { hoy, ayer, filas = [], diario = [] } = c;
   const v = { ...c };
-  // Condición de descarga del modelo: la calibrada con Hidrometría y WK (o la de la ASE si no hay)
+  // Condición de descarga del modelo: la calibrada con Hidrometría (o la de la ASE si no hay)
   v.condicion = condicionVigente(c.estadoProceso);
   const filaAyer = diario.find((d) => d.dia === ayer) || null;
   v.filaAyer = filaAyer;

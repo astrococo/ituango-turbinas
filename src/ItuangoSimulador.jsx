@@ -366,19 +366,19 @@ function PanelCondicionDescarga({ cond, setCond, T, nivelEmbalse, nUnidades, gam
         Operación conjunta: las unidades 1-4 descargan en la <b>almenara N°1 (norte)</b>, hoy en operación; las unidades 5-8 descargan en la <b>almenara N°2 (sur)</b>, que operará a partir de inicios de 2028. Con n unidades activas se despachan en orden 1 → 8: la N°1 recibe hasta 4 y la N°2 el resto. Cada almenara solo recibe el caudal de sus unidades; el caudal del río es uno solo.
       </div>
       <BotonGrupo T={T} label="Condición" value={cond.calibrada ? "auto" : cond.modo} onChange={(v) => (v === "auto" ? setCond("auto") : set({ modo: v }))}
-        tip="Automática (por defecto): nivel de almenara equivalente con el que el caudal del modelo coincide, en promedio de los últimos 7 días, con Hidrometría y con Winter-Kennedy. Actual: tablas HEC-RAS de la Asesoría (ASE, 2026), río colmatado. Diseño: niveles del pliego (Tabla 7.5.2), los únicos con los que GE tiene datos. Manual: niveles medidos (p. ej. Hidrometría)."
+        tip="Automática (por defecto, en uso): nivel de almenara equivalente con el que el caudal del modelo coincide, en promedio de los últimos 7 días (incluido hoy), con el caudal de Hidrometría. ASE 2026: tablas HEC-RAS de la Asesoría, río colmatado; es la que se usa si no hay horas de Hidrometría para calibrar. Diseño: niveles del pliego (Tabla 7.5.2), los únicos con los que GE tiene datos. Manual: niveles medidos (p. ej. Hidrometría)."
         options={[
-          ...(condCalibrada || cond.calibrada ? [{ value: "auto", label: "Automática (calibrada con Hidrometría y WK)" }] : []),
-          { value: "ase", label: "Actual: río colmatado (ASE 2026)" },
+          ...(condCalibrada || cond.calibrada ? [{ value: "auto", label: "Automática (calibrada con Hidrometría)" }] : []),
+          { value: "ase", label: "ASE 2026 (río colmatado)" },
           { value: "diseno", label: "Diseño GE / pliego (río dragado)" },
           { value: "manual", label: "Manual (niveles medidos)" },
         ]} />
       {cal && (
         <div style={{ fontSize: 12.5, color: T.inkMuted, fontFamily: FONT_BODY, margin: "4px 0 10px", lineHeight: 1.55, padding: "8px 10px", border: `1px solid ${T.line}`, borderRadius: 8 }}>
-          <b style={{ color: T.ink }}>Calibración automática{cond.calibrada ? " (en uso)" : ""}:</b> almenara equivalente <b style={{ color: T.ink }}>{fx((cond.calibrada ? cond : condCalibrada).almManual.norte, 2)} msnm</b> (igual en N°1 y N°2; punto medio entre {fx(cal.nivelHidrometria, 2)} msnm, que anula la diferencia con Hidrometría{Number.isFinite(cal.nivelWK) ? <>, y {fx(cal.nivelWK, 2)} msnm, que la anula con WK</> : ""}), con {cal.horas} horas estables entre {cal.desde} y {cal.hasta}.
-          Diferencia media del caudal del modelo: {pct(cal.hidrometria)} frente a Hidrometría (error horario medio {mae(cal.hidrometria)}) y {pct(cal.wk)} frente a Winter-Kennedy ({mae(cal.wk)}).
-          {cal.comparacion && cal.comparacion.hidrometria && <> Con la ASE y el río = caudal descargado, en las mismas horas: {pct(cal.comparacion.hidrometria)} y {pct(cal.comparacion.wk)}.</>}
-          <br />Es un nivel <b>equivalente</b>, no medido: además del nivel real de la almenara absorbe pequeños errores de la colina y de las pérdidas. Se recalcula a diario con los 7 días anteriores; para Hidrometría solo se usan horas con la fórmula vigente del F.C. (desde {FC_HIDROMETRIA_POR_NIVEL.desde}). El WK aún no está calibrado: se usa como segunda referencia, no como verdad.
+          <b style={{ color: T.ink }}>Calibración automática{cond.calibrada ? " (en uso)" : ""}:</b> almenara equivalente <b style={{ color: T.ink }}>{fx((cond.calibrada ? cond : condCalibrada).almManual.norte, 2)} msnm</b> (igual en N°1 y N°2): el nivel con el que el caudal del modelo iguala en promedio al de Hidrometría, sin promediar con otra referencia. Calculado con {cal.horas} horas estables entre {cal.desde} y {cal.hasta}.
+          Diferencia media del caudal del modelo frente a Hidrometría: {pct(cal.hidrometria)} (error horario medio {mae(cal.hidrometria)}). Como comparación, frente a Winter-Kennedy: {pct(cal.wk)} ({mae(cal.wk)}).
+          {cal.comparacion && cal.comparacion.hidrometria && <> Con la ASE 2026 y el río = caudal descargado, en las mismas horas: {pct(cal.comparacion.hidrometria)} frente a Hidrometría.</>}
+          <br />Es un nivel <b>equivalente</b>, no medido: además del nivel real de la almenara absorbe pequeños errores de la colina y de las pérdidas. Se recalcula con los últimos 7 días, incluido hoy (cada día del histórico, con sus 7 días anteriores); solo se usan horas con la fórmula vigente del F.C. de Hidrometría (desde {FC_HIDROMETRIA_POR_NIVEL.desde}). El WK no está calibrado: no entra en el ajuste.
         </div>
       )}
       {cond.modo === "ase" && (
@@ -859,8 +859,8 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
     // sin datos del día, desde las 00:00
     const P = proyeccion;
     const s = [
-      { nombre: `Entrada −${sensQ} m³/s`, datos: P ? P.qMenos.datos : borde("qMenos"), color: T.inkFaint, dash: true, ancho: 1.2 },
-      { nombre: `Entrada +${sensQ} m³/s`, datos: P ? P.qMas.datos : borde("qMas"), color: T.inkFaint, dash: true, ancho: 1.2 },
+      { nombre: `Entrada −${sensQ} m³/s (menos caudal de entrada)`, datos: P ? P.qMenos.datos : borde("qMenos"), color: T.inkFaint, dash: true, ancho: 1.2 },
+      { nombre: `Entrada +${sensQ} m³/s (más caudal de entrada)`, datos: P ? P.qMas.datos : borde("qMas"), color: T.inkFaint, dash: true, ancho: 1.2 },
       ...(calc.hayXM ? [
         { nombre: `Despacho XM −${bandaPct} %`, datos: P && P.inf ? P.inf.datos : borde("bandaInf"), indice: 1, dash: true, ancho: 1.2 },
         { nombre: `Despacho XM +${bandaPct} %`, datos: P && P.sup ? P.sup.datos : borde("bandaSup"), indice: 1, dash: true, ancho: 1.2 },
@@ -1174,7 +1174,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
           </tbody>
         </table>
         <div style={{ fontSize: 11.5, color: T.inkFaint, fontFamily: FONT_BODY, marginTop: 6, lineHeight: 1.5 }}>
-          Despacho, Promedio RT, Programa y MW/unidad: potencia en bornes. Estado: comparación del Promedio RT con el despacho de XM ± banda, como en la app de Hidrometría; "Sin dato XM" no se evalúa ni se toma como cero. Programa: potencia con que se simula el nivel (* = hora sin dato propio, repite la anterior). Unidades vacías = mínimo que entrega la potencia (número en gris). Q turbinado: caudal del modelo de la colina. Q regulado: potencia / F.C. de Hidrometría con el nivel al inicio de la hora (1,62 hasta el 29-oct-2026 14:35; desde entonces 0,0119·nivel − 3,178 entre 390 y 420 msnm, y 1,80 sin nivel válido); en rojo, fuera de la banda de la regla operativa. † hora que no se puede cumplir o con más unidades que las disponibles.
+          Despacho, Promedio RT, Programa y MW/unidad: potencia en bornes. Estado: comparación del Promedio RT con el despacho de XM ± banda, como en la app de Hidrometría; "Sin dato XM" no se evalúa ni se toma como cero. Programa: potencia con que se simula el nivel (* = hora sin dato propio, repite la anterior). Unidades vacías = mínimo que entrega la potencia (número en gris). Q turbinado: caudal del modelo de la colina. Q regulado: potencia / F.C. de Hidrometría con el nivel al inicio de la hora (1,62 hasta el 29-oct-2026 14:35; desde entonces 0,0119·nivel − 3,178 desde 390 msnm, también sobre 420, y 1,80 sin nivel válido); en rojo, fuera de la banda de la regla operativa. † hora que no se puede cumplir o con más unidades que las disponibles.
         </div>
       </div>}
     </div>
@@ -1196,8 +1196,9 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga, condCalibrada }) 
   const [avisoNivelExploracion, setAvisoNivelExploracion] = useState(null);
   /* Condición de descarga (nivel de la almenara) — compartida por TODO el
      módulo: exploración, Buscador, despacho intradiario y diagramas. Por
-     defecto, la condición ACTUAL del río colmatado (ASE 2026) con
-     Q río = 400 m³/s (caudales bajos de 2026); cada almenara toma su nivel de su propia tabla. */
+     defecto, la calibrada con el caudal de Hidrometría (ver la cabecera:
+     condAuto); sin calibración, la ASE 2026 (río colmatado) con el caudal
+     del río = descargado actual; cada almenara toma su nivel de su propia tabla. */
   // condDescarga / setCondDescarga vienen del componente principal (se muestran en la cabecera)
 
   useEffect(() => {
@@ -1766,7 +1767,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga, condCalibrada }) 
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto" }}>
       {tab === "descarga" && (<>
-      <Proposito T={T} id="descarga" titulo="Condición de descarga (almenaras)" fuente="Estudio ASE 2026 (río colmatado), diseño GE / pliego, o niveles medidos" para="Fijar la condición aguas abajo, es decir, el nivel de las almenaras, que usan todos los cálculos de la app." logras="Que el salto neto refleje el estado real del río: con el río colmatado la almenara sube y se pierde salto. A medida que avancen los dragados, la condición se acercará a la de diseño." resultados="Nivel de cada almenara (N°1: U1–U4; N°2: U5–U8 desde 2028) según el caudal del río y el turbinado, con avisos cuando se extrapola." />
+      <Proposito T={T} id="descarga" titulo="Condición de descarga (almenaras)" fuente="Calibración automática con el caudal de Hidrometría (por defecto), estudio ASE 2026 (río colmatado), diseño GE / pliego o niveles medidos" para="Fijar la condición aguas abajo, es decir, el nivel de las almenaras, que usan todos los cálculos de la app." logras="Que el salto neto refleje el estado real del río: con el río colmatado la almenara sube y se pierde salto. A medida que avancen los dragados, la condición se acercará a la de diseño." resultados="Nivel de cada almenara (N°1: U1–U4; N°2: U5–U8 desde 2028) según el caudal del río y el turbinado, con avisos cuando se extrapola." />
       <div style={cardStyle}>
         <PanelCondicionDescarga cond={condDescarga} setCond={setCondDescarga} T={T} condCalibrada={condCalibrada}
           nivelEmbalse={nivelEmbalseExploracion} nUnidades={nTurbActivasExploracion} gamma={gamma} />
@@ -2254,7 +2255,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga, condCalibrada }) 
       </div>
 
       <div style={cardStyle}>
-        <ChartHeader titulo="F.C. — Factor Potencia/Caudal vs. nivel del embalse" subtitulo={`F.C. = potencia en bornes / caudal turbinado (MW por m³/s), por unidad. Modelo a la apertura máxima del rango elegido (${etiquetaRango(rangoOptimo)}) con ${nTurbActivasExploracion} ${nTurbActivasExploracion === 1 ? "unidad" : "unidades"} y la condición de descarga elegida; Hidrometría: 1,62 fijo hasta el 29-oct-2026 14:35 y desde entonces 0,0119·nivel − 3,178 (390-420 msnm; fuera de ese rango, 1,80).`} T={T}
+        <ChartHeader titulo="F.C. — Factor Potencia/Caudal vs. nivel del embalse" subtitulo={`F.C. = potencia en bornes / caudal turbinado (MW por m³/s), por unidad. Modelo a la apertura máxima del rango elegido (${etiquetaRango(rangoOptimo)}) con ${nTurbActivasExploracion} ${nTurbActivasExploracion === 1 ? "unidad" : "unidades"} y la condición de descarga elegida; Hidrometría: 1,62 fijo hasta el 29-oct-2026 14:35 y desde entonces 0,0119·nivel − 3,178 desde 390 msnm (también sobre 420; sin nivel válido o bajo 390, 1,80).`} T={T}
           tip="A mayor nivel del embalse, mayor salto neto: con el mismo caudal se obtiene más potencia (F.C. más alto), o sea que para la misma potencia se necesita menos caudal. El F.C. del modelo depende también de la carga y del nivel de la almenara (caudal del río y unidades en servicio); el de Hidrometría solo del nivel. Con 2-3 unidades entre 200 y 290 MW por unidad y el río bajo, los dos coinciden dentro de ±2 % entre 400 y 420 msnm (±1 % cerca de 408-412 msnm). Con 4 unidades y el río alto, la almenara sube y la fórmula da un F.C. 2-4 % mayor que el modelo, es decir, reporta 2-4 % menos caudal."
  />
         <GraficoSeries T={T} tipoX="numero" ejeX="Nivel del embalse (msnm)" x={diagramaFC.map((r) => r.H)} unidad="MW/(m³/s)" ejeY="F.C. (MW / (m³/s))" decimales={3} alto={260} nombreArchivo="fc_vs_nivel_embalse"
@@ -2410,7 +2411,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga, condCalibrada }) 
    - Ingeniería de la máquina: el modelo (colina, curvas, almenaras, referencia). */
 const GRUPOS = [
   { k: "vivo", nombre: "Operación en vivo", tabs: [["tablero", "Tablero"], ["despacho", "Despacho"], ["buscador", "Buscador"], ["vertedero", "Vertedero"], ["asistente", "Asistente (IA)"]] },
-  { k: "analitica", nombre: "Analítica", tabs: [["indicadores", "Indicadores de la central"], ["regla", "Regla 1891 y ANLA"], ["unidades", "Unidades"], ["hidrologia", "Hidrología y pronóstico"], ["operacion", "Operación medida"], ["confiabilidad", "Validación"]] },
+  { k: "analitica", nombre: "Analítica", tabs: [["indicadores", "Indicadores de la central"], ["regla", "Regla 1891 y ANLA"], ["unidades", "Unidades"], ["hidrologia", "Hidrología, pronóstico y embalse"], ["operacion", "Operación medida"], ["confiabilidad", "Validación"]] },
   { k: "ingenieria", nombre: "Ingeniería", tabs: [["colina", "Colina"], ["curvas", "Curvas y F.C."], ["descarga", "Descarga"], ["referencia", "Referencia"]] },
 ];
 const PESTANAS = [...GRUPOS.flatMap((g) => g.tabs), ["datos", "Conexión de datos"], ["usuarios", "Usuarios"]];
@@ -2458,7 +2459,7 @@ function Aplicacion() {
     document.title = `${nombre} · Turbinas Ituango`;
   }, [tab]);
   /* Condición automática (por defecto): la calibrada por el proceso con
-     Hidrometría y Winter-Kennedy (vivo.condicion). Si aún no hay calibración,
+     el caudal de Hidrometría (vivo.condicion). Si aún no hay calibración,
      la ASE con el caudal del río = caudal total descargado actual. Deja de ser
      automática cuando el usuario elige otra en el panel. */
   const [condAuto, setCondAuto] = useState(true);

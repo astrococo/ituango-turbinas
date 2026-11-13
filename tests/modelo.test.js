@@ -361,8 +361,8 @@ describe("12. Factor de conversión de Hidrometría (F.C.)", () => {
     expect(factorConversionHidrometria(418, "2026-11-02 14:44")).toBeCloseTo(1.7962, 4);
     expect(900 / factorConversionHidrometria(418, "2026-11-02 14:44")).toBeCloseTo(501.06, 2);
   });
-  it("nivel fuera de 390-420 msnm o sin nivel: 1,80", () => {
-    expect(factorConversionHidrometria(420.5, "2026-11-02 08:00")).toBe(1.8);
+  it("sobre 420 msnm sigue la fórmula (como la columna de LoggerNet); bajo 390 o sin nivel: 1,80", () => {
+    expect(factorConversionHidrometria(420.5, "2026-11-02 08:00")).toBeCloseTo(0.0119 * 420.5 - 3.178, 12);
     expect(factorConversionHidrometria(389.9, "2026-11-02 08:00")).toBe(1.8);
     expect(factorConversionHidrometria(null, "2026-11-02 08:00")).toBe(1.8);
     expect(factorConversionHidrometria(420, "2026-11-02 08:00")).toBeCloseTo(1.82, 12);

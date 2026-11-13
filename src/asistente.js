@@ -30,7 +30,7 @@ Reglas:
 - No inventes cifras ni fechas. Toda cifra de operación sale de una herramienta; si la herramienta no trae el dato exacto (una fecha, una hora, un valor por unidad), dilo o pide el detalle con otra herramienta (p. ej. historico_diario), nunca lo deduzcas. Cita la hora del dato (hora de Colombia).
 - Cuando calcules algo con un modelo (apertura, caudal del modelo, simulación de nivel), dilo: es una estimación.
 - Conceptos de la app:
-  * Caudal regulado (Hidrometría) = potencia en bornes / F.C. El F.C. es 1,62 hasta el 29-oct-2026 14:35; desde entonces 0,0119·nivel − 3,178 (nivel entre 390 y 420 msnm) y 1,80 fuera de ese rango.
+  * Caudal regulado (Hidrometría) = potencia en bornes / F.C. El F.C. es 1,62 hasta el 29-oct-2026 14:35; desde entonces 0,0119·nivel − 3,178 con el nivel desde 390 msnm (también sobre 420) y 1,80 sin nivel válido o bajo 390.
   * Regla operativa de la Res. ANLA 1891: el promedio diario del caudal regulado debe quedar dentro del promedio del día anterior ±4,70 %. Si en el día hay vertimiento (> 1 m³/s), la regla queda en excepción.
   * Banda operativa de la generación: el Promedio RT de cada hora debe quedar dentro del despacho de XM ±5 %.
   * Apertura del distribuidor: 100 % = 30,2° (límite ampliado), 97 % = 29,29° (techo de operación normal; el 3 % restante es reserva para frecuencia), 87,7 % = 26,5° (límite original). LoggerNet no mide la apertura: la app la estima con el modelo de la colina (ensayo 2013) a partir de la potencia medida.
@@ -83,7 +83,7 @@ function estadoActual({ vivo: v }) {
       ...(v.resHoy.regla.estado === "excepcion" ? { nota_excepcion: "Hubo vertimiento > 1 m³/s en el día: la regla queda en excepción TODO el día aunque el vertimiento pare; la banda y lo requerido son solo referencia." } : {}),
     } : null,
     nivel_estimado_24h_msnm: r(v.nivelFinDia, 3),
-    condicion_descarga_modelo: (() => { const c = condDe(v); const k = c.calibrada; return { descripcion: etiquetaCondicionDescarga(c), ...(k ? { ventana: `${k.desde} a ${k.hasta}`, sesgo_vs_hidrometria_pct: r(k.hidrometria && k.hidrometria.sesgo, 2), sesgo_vs_wk_pct: r(k.wk && k.wk.sesgo, 2), nota: "nivel de almenara equivalente (no medido) que iguala en promedio el caudal del modelo con Hidrometría y WK en los 7 días anteriores" } : {}) }; })(),
+    condicion_descarga_modelo: (() => { const c = condDe(v); const k = c.calibrada; return { descripcion: etiquetaCondicionDescarga(c), ...(k ? { ventana: `${k.desde} a ${k.hasta}`, sesgo_vs_hidrometria_pct: r(k.hidrometria && k.hidrometria.sesgo, 2), sesgo_vs_wk_pct: r(k.wk && k.wk.sesgo, 2), nota: "nivel de almenara equivalente (no medido) que iguala en promedio el caudal del modelo con el de Hidrometría en los últimos 7 días; el WK (sin calibrar) solo se compara" } : {}) }; })(),
     embalse: (() => { if (!Number.isFinite(a.nivel)) return null; const vt = volumenTotalHm3(a.nivel), v390 = volumenTotalHm3(390), vNamo = volumenTotalHm3(420); return { volumen_total_hm3: r(vt, 1), pct_volumen_total_al_namo: r((vt / vNamo) * 100, 1), volumen_util_hm3: r(Math.max(0, vt - v390), 1), pct_volumen_util: r((Math.max(0, vt - v390) / (vNamo - v390)) * 100, 1), area_km2: r(areaEmbalseKm2(a.nivel), 2), espacio_hasta_namo_hm3: r(vNamo - vt, 1), fuente: "curvas oficiales CGI I-M-2194-044-HID-VC-CVE-001 (LIDAR 2012): volumen Ec.2, área Tabla 3" }; })(),
     energia_embalsada_util: (() => { const e = energiaEmbalsada(a.nivel, v.ultima.t); return e ? { gwh: r(e.gwh, 0), pct_volumen_util: r(e.pctUtil, 1), horas_a_capacidad_nominal: r((e.gwh * 1000) / capacidadNominalMW(v.hoy), 0), nota: "volumen útil sobre 390 msnm × F.C. de Hidrometría" } : null; })(),
     hydroforecast_hoy: hfHoy ? { sitio_presa_media: r(hfHoy.QSitioPresa_pred_mean, 0), sitio_presa_min: r(hfHoy.QSitioPresa_pred_min, 0), sitio_presa_max: r(hfHoy.QSitioPresa_pred_max, 0), olaya_media: r(hfHoy.QOlaya_pred_mean, 0) } : null,
@@ -237,7 +237,7 @@ function simularNivel({ vivo: v }, { potencias_mw, caudal_entrada_m3s, nivel_ini
 }
 
 /* Condición de descarga del modelo: la de la operación en vivo (calibrada con
-   Hidrometría y WK); sin ella, la de la ASE. */
+   Hidrometría); sin ella, la de la ASE. */
 const condDe = (v) => (v && v.condicion ? v.condicion : CONDICION_DESCARGA_DEFECTO);
 
 function puntoOperacion({ vivo: v } = {}, { nivel_msnm, potencias_unidad_mw }) {

@@ -1,5 +1,5 @@
 /* ============================================================
-   Analítica — Hidrología y pronóstico: caudales observados (Olaya,
+   Analítica — Hidrología, pronóstico y embalse: caudales observados (Olaya,
    Sitio Presa, La Pintada), pronóstico vigente y cómo ha cambiado
    de una emisión a otra, aguas arriba y lluvia; y el embalse (volumen
    útil, volumen total y área ocupada; ver Embalse.jsx). Fuente:
@@ -102,7 +102,7 @@ export default function Hidrologia({ T }) {
   const pluv = extra.datos?.pluv;
   return (
     <>
-      <Proposito T={T} id="hidrologia" titulo="Hidrología, embalse y pronóstico" fuente="HydroForecast Ituango (en vivo; si no responde, el archivo diario del repositorio), radar de nivel (LoggerNet) y curvas oficiales del embalse (CGI, I-M-2194-044-HID-VC-CVE-001)"
+      <Proposito T={T} id="hidrologia" titulo="Hidrología, pronóstico y embalse" fuente="HydroForecast Ituango (en vivo; si no responde, el archivo diario del repositorio), radar de nivel (LoggerNet) y curvas oficiales del embalse (CGI, I-M-2194-044-HID-VC-CVE-001)"
         para="Ver qué agua viene y cuánta hay: caudal observado en Olaya, Sitio Presa y La Pintada, el pronóstico de 90 días y cómo cambia de una emisión a otra, el volumen y el área del embalse, las estaciones aguas arriba con su tiempo de viaje y la lluvia."
         logras="Anticipar el caudal de entrada para planear el despacho y la regla operativa de los próximos días, saber cuánto confiar en el pronóstico según su acierto reciente y seguir el almacenamiento del embalse con curvas respaldadas por el documento técnico."
         resultados="Pronóstico vigente con su rango, comparación de las últimas emisiones con lo observado, error medio a 1, 3 y 7 días, histórico desde 2015, volumen útil, volumen total y área del embalse (continuo, horario y diario desde 2018) con sus curvas de respaldo, aguas arriba y lluvia observada y pronosticada por zona." />

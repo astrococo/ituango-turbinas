@@ -87,7 +87,6 @@ function leerLoggerNet(texto) {
   const iAC = [1, 2, 3, 4].map((g) => idx(new RegExp(`^Open_Gate${g}_`, "i")));
   const iDesc = idx(/^Caudal_Total_Descargado/i);
   const iTurb = idx(/^Caudal_Total_Turbinado/i);
-  const iN2 = idx(/^Nivel_embalse_msnm/i); // segundo sensor de nivel: solo control de calidad
   // Solo el radar: Nivel_embalse_msnm_Avg es otro sensor y no se usa.
   const iN = idx(/^Nivel_Radar_msnm/i);
   const soloNivel = iN >= 0 && iP.every((k) => k < 0);
@@ -114,7 +113,6 @@ function leerLoggerNet(texto) {
       ...(iAC.some((c) => c >= 0) ? { aComp: iAC.map((c) => (c < 0 ? null : aNumero(f[c]))) } : {}),
       ...(iDesc >= 0 ? { qDesc: aNumero(f[iDesc]) } : {}),
       ...(iTurb >= 0 ? { qTurbLog: aNumero(f[iTurb]) } : {}),
-      ...(iN2 >= 0 ? { nivel2: aNumero(f[iN2]) } : {}),
     });
   }
   if (descartadas) avisos.push(`${descartadas} líneas incompletas o sin hora válida descartadas`);
@@ -126,14 +124,14 @@ const minutosDe = (t) => Date.UTC(+t.slice(0, 4), +t.slice(5, 7) - 1, +t.slice(8
 /* Asigna a cada fila de generación el último nivel registrado a esa hora o
    antes, si no tiene más de `toleranciaMin` minutos (el nivel viene cada 5). */
 function unirNivel(filas, filasNivel, toleranciaMin = 10) {
-  const niv = filasNivel.filter((r) => r.nivel != null).map((r) => [minutosDe(r.t), r.nivel, r.nivel2 ?? null]);
+  const niv = filasNivel.filter((r) => r.nivel != null).map((r) => [minutosDe(r.t), r.nivel]);
   let j = 0, sinNivel = 0;
   const out = filas.map((r) => {
     const m = minutosDe(r.t);
     while (j + 1 < niv.length && niv[j + 1][0] <= m) j++;
     const ok = niv.length && niv[j][0] <= m && m - niv[j][0] <= toleranciaMin;
     if (!ok) sinNivel++;
-    return ok ? { ...r, nivel: niv[j][1], ...(niv[j][2] != null ? { nivel2: niv[j][2] } : {}) } : { ...r, nivel: r.nivel ?? null };
+    return ok ? { ...r, nivel: niv[j][1] } : { ...r, nivel: r.nivel ?? null };
   });
   return { filas: out, sinNivel };
 }

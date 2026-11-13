@@ -38,6 +38,8 @@ export default function Unidades({ T }) {
     return [desde, hasta];
   }, [dias]);
   const horario = useHorario(rangoCurva[0], rangoCurva[1]);
+  // Primer día en que el modelo usa la condición calibrada con Hidrometría
+  const desdeCalibrada = useMemo(() => ((datos && datos.dias) || []).find((x) => x.condicion && x.condicion.calibrada)?.dia || null, [datos]);
 
   const resumen = useMemo(() => Array.from({ length: nU }, (_, u) => {
     const us = dias.map((x) => x.unidades[u]).filter(Boolean);
@@ -139,7 +141,7 @@ export default function Unidades({ T }) {
             </div>
             <Nota T={T} rotulo="Cómo leer el orden de mérito">
               Con la misma colina y el mismo salto, repartir la potencia por igual entre las unidades en línea es lo más eficiente; lo que cambia con estos factores es <i>cuáles</i> unidades conviene usar primero. El η aparente WK puede pasar de 100 % porque el WK no está calibrado: se lee como tendencia y comparación, no como eficiencia real.
-              Q modelo / Q Hidrom. &gt; 1 quiere decir que el modelo (con el río colmatado) pide más agua que la fórmula del F.C.
+              Q modelo / Q Hidrom. &gt; 1 quiere decir que el modelo pide más agua que la fórmula del F.C. de Hidrometría. Desde {desdeCalibrada ? fechaCorta(desdeCalibrada) : "que hay calibración"} el modelo usa la condición de descarga calibrada con Hidrometría (la central completa queda en ≈ 1,00; la diferencia entre unidades se mantiene); antes, la ASE 2026 (río colmatado).
             </Nota>
           </Tarjeta>
           <Tarjeta T={T} titulo="F.C. Winter-Kennedy por unidad, día a día" subtitulo="Sube con el nivel del embalse (más salto). La separación entre unidades es la diferencia de rendimiento relativo (o de calibración del WK). Punteada: F.C. de la fórmula de Hidrometría.">
@@ -149,7 +151,7 @@ export default function Unidades({ T }) {
             <Tarjeta T={T} titulo="Q Winter-Kennedy / Q Hidrometría" subtitulo="1,00 = el WK coincide con P / F.C. El salto del 29-oct es el cambio de fórmula del F.C.">
               <GraficoSeries T={T} x={s.t} series={s.relWK} unidad="" ejeY="relación" decimales={3} grupo="unid" alto={220} nombreArchivo="relacion_wk_hidrometria" referencias={[{ y: 1, rotulo: "1,00", incluir: true }]} />
             </Tarjeta>
-            <Tarjeta T={T} titulo="Q modelo / Q Hidrometría" subtitulo="Colina común con el río colmatado (ASE) y el caudal descargado de cada hora.">
+            <Tarjeta T={T} titulo="Q modelo / Q Hidrometría" subtitulo={`Colina común con la condición de descarga de cada día: calibrada con Hidrometría${desdeCalibrada ? ` desde el ${fechaCorta(desdeCalibrada)}` : ""}; antes, la ASE 2026 (río colmatado) con el caudal descargado de cada hora. El salto del 29-oct es el cambio de fórmula del F.C.`}>
               <GraficoSeries T={T} x={s.t} series={s.relMod} unidad="" ejeY="relación" decimales={3} grupo="unid" alto={220} nombreArchivo="relacion_modelo_hidrometria" referencias={[{ y: 1, rotulo: "1,00", incluir: true }]} />
             </Tarjeta>
           </div>

@@ -150,7 +150,7 @@ function sostenibilidad({ nivel, caudalEntrada, qMedioAnual, capacidadMW }) {
     dorTotal: vAnual ? (vTotalNAMO / vAnual) * 100 : null, dorUtil: vAnual ? (volumenUtilHm3(NAMO) / vAnual) * 100 : null,
     residenciaDias: Number.isFinite(caudalEntrada) && caudalEntrada > 0 ? (vTotal * 1e6) / caudalEntrada / 86400 : null,
     residenciaMediaDias: qMedioAnual ? (vTotal * 1e6) / qMedioAnual.q / 86400 : null,
-    vTotalHm3: vTotal, qMedioAnual,
+    vTotalHm3: vTotal, vTotalNAMOHm3: vTotalNAMO, qMedioAnual,
   };
 }
 

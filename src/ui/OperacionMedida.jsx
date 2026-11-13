@@ -251,7 +251,7 @@ export default function OperacionMedida({ T, condDescarga }) {
     <div>
       <ChartHeader titulo="Operación medida (LoggerNet)" T={T}
         subtitulo="Generación por unidad (dato de cada minuto) y el caudal que reporta Hidrometría (potencia / F.C.), frente al caudal que da el modelo de la colina con la misma potencia."
-        tip={`El modelo busca la apertura hasta 105,9 % = 31,98° (máximo ensayado; 100 % = 30,2°) y sin el tope de 307 MW, para no recortar la potencia medida. El caudal por unidad de LoggerNet no es una medición: es la potencia dividida entre el F.C. de Hidrometría (1,62 hasta el 29-oct-2026 14:35; desde entonces 0,0119·nivel − 3,178 entre 390 y 420 msnm y 1,80 sin nivel válido). La app calcula el caudal de Hidrometría con esa regla y el nivel del radar, como la app de Hidrometría; la columna de LoggerNet se usa solo para verificar. El modelo pasa la potencia de bornes al eje con el rendimiento del generador y busca en la colina la apertura que la entrega, con el nivel del embalse y la condición de descarga de la pestaña Descarga.`} />
+        tip={`El modelo busca la apertura hasta 105,9 % = 31,98° (máximo ensayado; 100 % = 30,2°) y sin el tope de 307 MW, para no recortar la potencia medida. El caudal por unidad de LoggerNet no es una medición: es la potencia dividida entre el F.C. de Hidrometría (1,62 hasta el 29-oct-2026 14:35; desde entonces 0,0119·nivel − 3,178 desde 390 msnm, también sobre 420, y 1,80 sin nivel válido). La app calcula el caudal de Hidrometría con esa regla y el nivel del radar, como la app de Hidrometría; la columna de LoggerNet se usa solo para verificar. El modelo pasa la potencia de bornes al eje con el rendimiento del generador y busca en la colina la apertura que la entrega, con el nivel del embalse y la condición de descarga de la pestaña Descarga.`} />
 
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
         <button style={boton(fuente === "github")} onClick={() => setFuente("github")}>Repositorio de datos (GitHub)</button>
@@ -305,7 +305,7 @@ export default function OperacionMedida({ T, condDescarga }) {
               <div>
                 Columna QTurbinadoUx_FC de LoggerNet frente a la regla de Hidrometría (potencia / F.C. con el nivel del radar): coincide en {fmt((verif.coinciden / verif.minutos) * 100, 1)} % de los minutos con generación
                 {verif.noCoinciden > 0 && <>; no coincide en {verif.noCoinciden.toLocaleString("es-CO")}, entre {verif.primero} y {verif.ultimo}{verif.con162 === verif.noCoinciden ? ", donde todavía usaba 1,62" : verif.con162 > 0 ? ` (${verif.con162.toLocaleString("es-CO")} con 1,62)` : ""}</>}.
-                {" "}La app usa siempre la regla, como la app de Hidrometría.
+                {" "}La app usa siempre la regla (la misma de la columna, también sobre 420 msnm).
               </div>
             )}
             <div style={{ fontSize: 11.5, color: T.inkFaint }}>Modelo con la condición de descarga: {etiquetaCondicionDescarga(condDescarga)}. Unidad en línea: más de {P_EN_LINEA_MW} MW. Promedios de 15 minutos.</div>

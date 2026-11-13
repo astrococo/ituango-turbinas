@@ -10,6 +10,7 @@ import { useHorario, useHistoricoDiario } from "../datos/historico.js";
 import { decidirCanalYAperturas, caudalVertederoDetallado, caudalCompuerta, aperturaMax, qLibreTotal, ZV, A_MAX_ESTRUCTURAL, C1_MIN_OPERATIVO, UMBRAL_CANAL_IZQ_MAX, UMBRAL_CANAL_DER_MAX, NIVEL_MIN_TEC, NAME } from "../modelo.js";
 import { useVivo } from "../datos/vivo.jsx";
 import { unidadColumna } from "../operacion.js";
+import { validacionVertedero } from "../analitica.js";
 import { useDatos, useCargaPeriodica } from "../datos/fuentes.jsx";
 import { GraficoSeries, Estado, fmtNum } from "./graficos.jsx";
 import { Proposito, Tarjeta, Kpi, SelectorRango, fechaCorta } from "./comunes.jsx";
@@ -60,13 +61,8 @@ export default function Vertedero({ T }) {
     return { t, qC, aC, qTot: filas.map((r) => r.qVert), qCalc, enMetros };
   }, [vivo, porMinuto, rango.desde, rango.hasta, horario.datos, enMetros]);
   // Validación con el histórico: Tabla 10.6 con las aperturas medidas frente al caudal medido
-  const validacion = useMemo(() => {
-    const d = (hist.datos?.dias || []).filter((x) => x.calidad && x.calidad.vertedero);
-    if (!d.length) return null;
-    const min = d.reduce((a, x) => a + x.calidad.vertedero.minutos, 0);
-    const pond = d.reduce((a, x) => a + x.calidad.vertedero.errMedianaPct * x.calidad.vertedero.minutos, 0) / min;
-    return { dias: d.length, minutos: min, errMedio: pond, errMax: Math.max(...d.map((x) => x.calidad.vertedero.errMaxAbsPct)), ultimo: d[d.length - 1].dia, primero: d[0].dia };
-  }, [hist.datos]);
+  // (la misma cuenta que la pestaña Validación: días cerrados, todo el histórico)
+  const validacion = useMemo(() => validacionVertedero(hist.datos?.dias, vivo?.hoy), [hist.datos, vivo]);
   const sQ = useMemo(() => medido && [
     ...medido.qC.map((x, g) => ({ nombre: `C${g + 1}`, datos: x, indice: g, ancho: 1.6 })),
     { nombre: "Total medido", datos: medido.qTot, color: T.ink, ancho: 2.2 },

@@ -7,7 +7,7 @@ import { useCallback, useMemo, useState } from "react";
 import { textoHoraColombia } from "../modelo.js";
 import { useDatos, useCargaPeriodica } from "../datos/fuentes.jsx";
 import { useVivo } from "../datos/vivo.jsx";
-import { errorPronosticoHF } from "../analitica.js";
+import { errorPronosticoHF, validacionVertedero } from "../analitica.js";
 import { useHistoricoDiario } from "../datos/historico.js";
 import { GraficoSeries, Estado, fmtNum } from "./graficos.jsx";
 import { Proposito, Tarjeta, Kpi, RequiereConexion, SelectorRango, rangoUltimos, fechaCorta } from "./comunes.jsx";
@@ -33,25 +33,21 @@ export default function Confiabilidad({ T }) {
     const completos = conCal.filter((x) => x.calidad.minutosGen >= 0.95 * 1440 && x.calidad.minutosNivel >= 0.95 * 1440);
     const huecoMax = Math.max(0, ...conCal.filter((x) => x.dia < (vivo?.hoy || "9999")).map((x) => x.calidad.maxHuecoMin));
     const congelado = Math.max(0, ...conCal.map((x) => x.calidad.nivelCongeladoMin));
-    const difS = conCal.map((x) => x.nivel.difSensores).filter((x) => x != null);
     const col = conCal.filter((x) => x.calidad.columnaFC && x.dia >= "2026-10-31");
     const colMin = col.reduce((a, x) => a + x.calidad.columnaFC.minutos, 0), colOk = col.reduce((a, x) => a + x.calidad.columnaFC.coinciden, 0);
-    const vert = conCal.filter((x) => x.calidad.vertedero);
-    const vMin = vert.reduce((a, x) => a + x.calidad.vertedero.minutos, 0);
-    const vErr = vMin ? vert.reduce((a, x) => a + x.calidad.vertedero.errMedianaPct * x.calidad.vertedero.minutos, 0) / vMin : null;
     const rel = conCal.map((x) => x.calidad.modeloVsHidrometria).filter((x) => x != null);
     const relDesde = conCal.filter((x) => x.dia >= "2026-10-30").map((x) => x.calidad.modeloVsHidrometria).filter((x) => x != null);
     const val = cerrados.map((x) => x.validacion).filter(Boolean);
     const eAyer = val.map((x) => x.errCmEntradaAyer).filter((x) => x != null), eMismo = val.map((x) => x.errCmMismoDia);
     return {
       nDias: cerrados.length, completos: completos.length, huecoMax, congelado,
-      difSensores: difS.length ? mediana(difS) : null,
       columna: colMin ? { pct: (100 * colOk) / colMin, minutos: colMin } : null,
-      vertedero: vMin ? { err: vErr, minutos: vMin, dias: vert.length, errMax: Math.max(...vert.map((x) => x.calidad.vertedero.errMaxAbsPct)) } : null,
+      // todo el histórico (igual que en la pestaña Vertedero), no solo el periodo elegido
+      vertedero: validacionVertedero(datos?.dias, vivo?.hoy),
       modelo: rel.length ? { med: mediana(rel), min: Math.min(...rel), max: Math.max(...rel), medDesde: mediana(relDesde) } : null,
       despacho: val.length ? { n: val.length, ayerMed: mediana(eAyer.map(Math.abs)), ayerP90: cuantil(eAyer.map(Math.abs), 0.9), mismoMed: mediana(eMismo.map(Math.abs)), mismoP90: cuantil(eMismo.map(Math.abs), 0.9), sesgoMismo: mediana(eMismo) } : null,
     };
-  }, [dias, vivo]);
+  }, [dias, vivo, datos]);
 
   // Pronóstico de HydroForecast: error a 1, 3 y 7 días con las emisiones archivadas y el observado diario
   const pron = useMemo(() => {
@@ -92,10 +88,9 @@ export default function Confiabilidad({ T }) {
   const filas = m ? [
     fila("Datos de LoggerNet completos", "1.440 minutos por día (generación y nivel)", `${m.completos} de ${m.nDias} días ≥ 95 %; hueco máximo ${fmtNum(m.huecoMax, 0)} min`, "≥ 95 % de los minutos", m.completos >= 0.95 * m.nDias ? NIVEL.alta : NIVEL.media),
     fila("Nivel del radar sin congelarse", "Cambios del valor minuto a minuto", `Máximo ${fmtNum(m.congelado, 0)} min seguidos con el mismo valor`, "< 3 h", m.congelado < 180 ? NIVEL.alta : NIVEL.media),
-    fila("Segundo sensor de nivel", "Radar", m.difSensores != null ? `Diferencia mediana ${fmtNum(m.difSensores, 2)} m${Math.abs(m.difSensores) > 5 ? " (otra referencia o sensor fuera de servicio: la app usa solo el radar)" : ""}` : "Sin dato", "< 0,5 m", m.difSensores == null ? NIVEL.sin : Math.abs(m.difSensores) < 0.5 ? NIVEL.alta : NIVEL.baja),
     fila("Caudal regulado (P / F.C.)", "Columna QTurbinadoUx_FC de LoggerNet (Hidrometría), desde el 31-oct", m.columna ? `${fmtNum(m.columna.pct, 2)} % de ${m.columna.minutos.toLocaleString("es-CO")} minutos coinciden (±0,2 %)` : "Sin datos", "100 %", m.columna ? (m.columna.pct > 99.5 ? NIVEL.alta : NIVEL.media) : NIVEL.sin),
     fila("Regla operativa diaria", "Recálculo independiente (pandas) y tablero de Hidrometría", "Mismo estado en todos los días revisados y diferencias de redondeo (3-nov-2026); promedio y banda iguales a los del tablero de Hidrometría", "Mismo estado todos los días", NIVEL.alta),
-    fila("Caudal del vertedero", "Tabla 10.6 de calibración con las aperturas medidas", m.vertedero ? `Diferencia media ${fmtNum(m.vertedero.err, 2)} %, máx. ${fmtNum(m.vertedero.errMax, 1)} % (${m.vertedero.minutos.toLocaleString("es-CO")} min en ${m.vertedero.dias} días)` : "Sin vertimiento en el rango", "< 1 %", m.vertedero ? (Math.abs(m.vertedero.err) < 1 ? NIVEL.alta : NIVEL.media) : NIVEL.sin),
+    fila("Caudal del vertedero", "Tabla 10.6 de calibración con las aperturas medidas", m.vertedero ? `Diferencia media ${fmtNum(m.vertedero.errMedio, 2)} %, máx. ${fmtNum(m.vertedero.errMax, 1)} % en un minuto (${m.vertedero.minutos.toLocaleString("es-CO")} min con vertimiento en ${m.vertedero.dias} días, ${fechaCorta(m.vertedero.primero)} – ${fechaCorta(m.vertedero.ultimo)}; todo el histórico)` : "Sin vertimiento en el histórico", "< 1 %", m.vertedero ? (Math.abs(m.vertedero.errMedio) < 1 ? NIVEL.alta : NIVEL.media) : NIVEL.sin),
     fila("Modelo de la turbina", "Caudal de Hidrometría (P / F.C.), central completa", m.modelo ? `Q modelo / Q Hidrometría entre ${fmtNum(m.modelo.min, 3)} y ${fmtNum(m.modelo.max, 3)}${m.modelo.medDesde != null ? `; desde el F.C. por nivel, ${fmtNum(m.modelo.medDesde, 3)}` : ""}` : "Sin datos", "±3 %", m.modelo ? (Math.abs((m.modelo.medDesde ?? m.modelo.med) - 1) <= 0.03 ? NIVEL.media : NIVEL.baja) : NIVEL.sin),
     fila("Nivel proyectado a 24 h (Despacho)", "Nivel medido del radar a las 24 h, días sin vertimiento", m.despacho ? `Con la entrada de ayer: ${fmtNum(m.despacho.ayerMed, 1)} cm (P90 ${fmtNum(m.despacho.ayerP90, 0)} cm). Solo el modelo: ${fmtNum(m.despacho.mismoMed, 1)} cm (P90 ${fmtNum(m.despacho.mismoP90, 0)} cm). ${m.despacho.n} días` : "Sin días evaluables", "< 10 cm (mediana)", m.despacho ? (m.despacho.ayerMed < 10 ? NIVEL.media : NIVEL.baja) : NIVEL.sin),
     fila("Pronóstico de HydroForecast (Sitio Presa)", "Observado diario", pron ? pron.map((p) => `${p.L} d: ${p.mape != null ? `${fmtNum(p.mape, 1)} % (${p.n} día${p.n === 1 ? "" : "s"})` : "aún sin días"}`).join(" · ") : "Sin emisiones archivadas", "Indicativo con pocas emisiones", pron && pron.some((p) => p.n >= 10) ? NIVEL.media : NIVEL.relativa),
@@ -143,7 +138,7 @@ export default function Confiabilidad({ T }) {
               <Kpi T={T} rotulo="Error típico del nivel a 24 h" valor={m.despacho.ayerMed} unidad="cm" nota="Mediana del error absoluto usando como entrada la del día anterior: es lo que verá el operador con un pronóstico sencillo" />
               <Kpi T={T} rotulo="Error del modelo de la turbina en el nivel" valor={m.despacho.mismoMed} unidad="cm" nota={`Con la entrada correcta; sesgo mediano ${fmtNum(m.despacho.sesgoMismo, 1)} cm. Mide el modelo frente al caudal de Hidrometría`} />
               {m.modelo && <Kpi T={T} rotulo="Q modelo / Q Hidrometría" valor={m.modelo.medDesde ?? m.modelo.med} decimales={3} nota="Mediana diaria. Las dos son estimaciones: la fórmula del F.C. no es una medición del caudal" />}
-              {m.vertedero && <Kpi T={T} rotulo="Vertedero: Tabla 10.6 frente a LoggerNet" valor={m.vertedero.err} decimales={2} unidad="%" nota="LoggerNet calcula el caudal con la apertura: la coincidencia confirma que usan la misma calibración" />}
+              {m.vertedero && <Kpi T={T} rotulo="Vertedero: Tabla 10.6 frente a LoggerNet" valor={m.vertedero.errMedio} decimales={2} unidad="%" nota={`Todo el histórico (${m.vertedero.dias} días con vertimiento). LoggerNet calcula el caudal con la apertura: la coincidencia confirma que usan la misma calibración`} />}
             </div>
           )}
           <Tarjeta T={T} titulo="Error del nivel proyectado a 24 h, día a día" subtitulo="Positivo = la app proyectó más alto que lo medido. La entrada al embalse es lo que más pesa: 10 m³/s sostenidos 24 h son unos 2,5 cm.">

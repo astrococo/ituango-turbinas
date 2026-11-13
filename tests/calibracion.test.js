@@ -21,12 +21,14 @@ describe("condición de descarga calibrada", () => {
     expect(Math.abs(c.hidrometria.sesgo)).toBeLessThan(0.05);
     expect(Math.abs(c.wk.sesgo)).toBeLessThan(0.05);
   });
-  it("con referencias que discrepan toma el punto medio", () => {
+  it("se ajusta solo a Hidrometría; el WK se informa como comparación", () => {
     const c = calibrarDescarga(horasSinteticas(221, { sesgoWK: 1.2 }));
-    expect(c.nivelHidrometria).toBeCloseTo(221, 1);
-    expect(c.nivelWK).toBeGreaterThan(c.nivelHidrometria); // a igual potencia, más caudal medido → menos salto → almenara más alta
-    expect(c.nivelAlmenara).toBeCloseTo((c.nivelHidrometria + c.nivelWK) / 2, 1);
-    expect(c.hidrometria.sesgo).toBeCloseTo(-c.wk.sesgo, 0);
+    expect(c.nivelAlmenara).toBeCloseTo(221, 1);
+    expect(c.nivelAlmenara).toBe(c.nivelHidrometria);
+    expect(Math.abs(c.hidrometria.sesgo)).toBeLessThan(0.05);
+    expect(c.wk.sesgo).toBeCloseTo(-100 * (1 - 1 / 1.012), 1); // el WK mide 1,2 % más
+    expect(c.nivelWK).toBeGreaterThan(c.nivelHidrometria);
+    expect(c.referencias).toEqual(["hidrometria"]);
   });
   it("sin horas de Hidrometría con la fórmula vigente no calibra (el WK solo no basta)", () => {
     expect(calibrarDescarga(horasSinteticas(221, { desde: "2026-10-20" }))).toBeNull();
@@ -42,7 +44,7 @@ describe("condición de descarga calibrada", () => {
     const cond = condicionCalibrada(cal);
     expect(cond.modo).toBe("manual");
     expect(cond.almManual.norte).toBe(cond.almManual.sur);
-    expect(etiquetaCondicionDescarga(cond)).toMatch(/calibrada con Hidrometría y Winter-Kennedy: almenara equivalente 220,5\d msnm/);
+    expect(etiquetaCondicionDescarga(cond)).toMatch(/calibrada con Hidrometría: almenara equivalente 220,5\d msnm/);
     expect(condicionVigente({ condicionModelo: cond })).toBe(cond);
     expect(condicionVigente({ condicionModelo: CONDICION_DESCARGA_DEFECTO })).toBe(CONDICION_DESCARGA_DEFECTO);
     expect(condicionVigente(null)).toBe(CONDICION_DESCARGA_DEFECTO);
