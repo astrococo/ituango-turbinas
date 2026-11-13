@@ -27,6 +27,7 @@ import Unidades from "./ui/Unidades.jsx";
 import Hidrologia from "./ui/Hidrologia.jsx";
 import Vertedero from "./ui/Vertedero.jsx";
 import Confiabilidad from "./ui/Confiabilidad.jsx";
+import Indicadores from "./ui/Indicadores.jsx";
 import {
   ASE_Q_RIO_MAX,
   ASE_Q_RIO_MIN,
@@ -2395,7 +2396,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
    - Ingeniería de la máquina: el modelo (colina, curvas, almenaras, referencia). */
 const GRUPOS = [
   { k: "vivo", nombre: "Operación en vivo", tabs: [["tablero", "Tablero"], ["despacho", "Despacho"], ["buscador", "Buscador"], ["vertedero", "Vertedero"], ["asistente", "Asistente (IA)"]] },
-  { k: "analitica", nombre: "Analítica", tabs: [["regla", "Regla 1891 y ANLA"], ["unidades", "Unidades"], ["hidrologia", "Hidrología y pronóstico"], ["operacion", "Operación medida"], ["confiabilidad", "Validación"]] },
+  { k: "analitica", nombre: "Analítica", tabs: [["indicadores", "Indicadores de la central"], ["regla", "Regla 1891 y ANLA"], ["unidades", "Unidades"], ["hidrologia", "Hidrología y pronóstico"], ["operacion", "Operación medida"], ["confiabilidad", "Validación"]] },
   { k: "ingenieria", nombre: "Ingeniería", tabs: [["colina", "Colina"], ["curvas", "Curvas y F.C."], ["descarga", "Descarga"], ["referencia", "Referencia"]] },
 ];
 const PESTANAS = [...GRUPOS.flatMap((g) => g.tabs), ["datos", "Conexión de datos"], ["usuarios", "Usuarios"]];
@@ -2514,6 +2515,7 @@ function Aplicacion() {
         {tab === "unidades" && <Unidades T={T} />}
         {tab === "hidrologia" && <Hidrologia T={T} />}
         {tab === "confiabilidad" && <Confiabilidad T={T} />}
+        {tab === "indicadores" && <Indicadores T={T} />}
         {tab === "usuarios" && <Usuarios T={T} />}
         {tab === "datos" && (
           <>

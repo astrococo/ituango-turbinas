@@ -101,6 +101,11 @@ export default function Confiabilidad({ T }) {
     fila("Pronóstico de HydroForecast (Sitio Presa)", "Observado diario", pron ? pron.map((p) => `${p.L} d: ${p.mape != null ? `${fmtNum(p.mape, 1)} % (${p.n} día${p.n === 1 ? "" : "s"})` : "aún sin días"}`).join(" · ") : "Sin emisiones archivadas", "Indicativo con pocas emisiones", pron && pron.some((p) => p.n >= 10) ? NIVEL.media : NIVEL.relativa),
     fila("Colina (diagrama de la turbina)", "186 puntos del ensayo de modelo (2013) y 35 BEP fuera de muestra", "Error medio 0,035 % en Q y 0,06 % en P; 0,08 pp en η (pruebas automáticas en cada publicación)", "< 0,5 %", NIVEL.alta),
     fila("Winter-Kennedy por unidad", "Sin referencia: no está calibrado", "Se usa solo para comparar unidades y ver tendencias", "Calibración pendiente", NIVEL.relativa),
+    fila("Factor de planta y horas equivalentes (Indicadores)", "Energía medida (LoggerNet) y capacidad nominal 4 × 300 MW", "Mismo dato de energía que la regla y las unidades; solo días completos", "Días completos", NIVEL.alta),
+    fila("Energía embalsada útil (Indicadores)", "EPM: 408→420 msnm ≈ 400 hm³ y 187 GWh", "Curva de la app: 424 hm³ y ≈ 206 GWh en esa franja (mismo orden, +6 % y +10 %)", "Mismo orden de magnitud", NIVEL.media),
+    fila("Energía equivalente del agua vertida (Indicadores)", "Caudal del vertedero (Tabla 10.6) × F.C. del día", "Hereda la confianza del caudal del vertedero; es una oportunidad, no una pérdida contable", "< 1 % en el caudal", NIVEL.alta),
+    fila("Aportes frente a la media (Indicadores)", "Olaya, histórico de HydroForecast desde 2015", "Media del mismo mes en los años anteriores con ≥ 25 días; Olaya está aguas arriba del embalse", "Meses completos", NIVEL.media),
+    fila("Densidad de potencia y grado de regulación (Indicadores)", "Área = dV/dH de la curva cota-volumen", "Área del espejo calculada, no medida", "Indicativo", NIVEL.relativa),
   ] : [];
 
   return (

@@ -6,6 +6,8 @@ import { useMemo, useState } from "react";
 import { useHorario } from "../datos/historico.js";
 import { useVivo } from "../datos/vivo.jsx";
 import { useDatos } from "../datos/fuentes.jsx";
+import { useAportes } from "../datos/aportes.js";
+import { energiaEmbalsada, capacidadNominalMW } from "../indicadores.js";
 import { ETIQUETA_ESTADO_REGLA, NAMO, repartoPorUnidad, CONDICION_DESCARGA_DEFECTO, factorConversionHidrometria, pctFromDeg } from "../modelo.js";
 import { minutosDe, tramosCumplimiento, aperturaIntervalos } from "../analitica.js";
 import { GraficoSeries, Estado, BarraBanda, fmtNum, colorSerie, aSeg } from "./graficos.jsx";
@@ -25,6 +27,11 @@ export default function Tablero({ T, condDescarga }) {
   const { vivo, cargando, error, recargar, cuando } = useVivo();
   const datos = useDatos();
   const v = vivo;
+  // Indicadores de la central: energía embalsada útil y aportes del mes frente a la media histórica
+  const aportes = useAportes();
+  const nivelAhora = v && v.actual ? v.actual.nivel : null;
+  const emb = useMemo(() => energiaEmbalsada(nivelAhora, v && v.ultima ? v.ultima.t : null), [nivelAhora, v]);
+  const apMes = aportes.datos && aportes.datos.olaya.length ? aportes.datos.olaya[aportes.datos.olaya.length - 1] : null;
 
   // Rango de los gráficos: hasta 2 días con el dato de cada minuto (hoy y ayer,
   // ya cargados); más días, con los promedios horarios del histórico más las
@@ -242,6 +249,13 @@ export default function Tablero({ T, condDescarga }) {
             nota={a.aComp ? `Aperturas: ${a.aComp.map((x, g) => `C${g + 1} ${fmtNum(x, 2)}`).join(" · ")}` : undefined} />
           <Kpi T={T} grande rotulo="Total descargado" actualizado={a.t} valor={a.qDesc} decimales={1} unidad="m³/s" nota="Turbinado (Hidrometría) + vertedero" />
           {v.resHoy && <Kpi T={T} grande rotulo="Entrada al embalse hoy" actualizado={v.resHoy.ultimo} valor={v.resHoy.balance.qEntrada} decimales={0} unidad="m³/s" nota={v.resHoy.balance.qEntrada != null ? `Balance de masa en ${fmtNum(v.resHoy.balance.horas, 1)} h: descargado + cambio de volumen` : "Faltan al menos 6 h de datos de hoy"} />}
+          {emb && (() => { const cap = capacidadNominalMW(v.hoy); return <Kpi T={T} grande rotulo="Energía embalsada útil" actualizado={a.t} valor={emb.gwh} decimales={0} unidad="GWh"
+            tip="El agua entre el nivel mínimo técnico (390 msnm) y el nivel actual, convertida con el F.C. de Hidrometría. Detalle en Analítica → Indicadores de la central."
+            nota={`${fmtNum(emb.pctUtil, 1)} % del volumen útil · ≈ ${fmtNum((emb.gwh * 1000) / cap, 0)} h a ${fmtNum(cap, 0)} MW`} />; })()}
+          {apMes && apMes.pct != null && <Kpi T={T} grande rotulo="Aportes del mes (Olaya)" valor={apMes.pct} decimales={0} unidad="% de la media"
+            tip="Caudal medio del mes en Olaya frente a la media del mismo mes en los años anteriores, como XM reporta los aportes hídricos. Detalle en Analítica → Indicadores de la central."
+            estado={<Estado T={T} compacto tipo={apMes.pct >= 90 ? "bien" : apMes.pct >= 60 ? "aviso" : "serio"}>{apMes.pct >= 100 ? "Sobre la media" : "Bajo la media"}</Estado>}
+            nota={`${fmtNum(apMes.q, 0)} m³/s en ${apMes.dias} días frente a ${fmtNum(apMes.media, 0)} m³/s de media`} />}
         </div>
       )}
 

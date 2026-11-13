@@ -208,7 +208,9 @@ function pluginFranjas(tramos) {
      (p. ej. apertura en % → grados): eje derecho, tooltip, tabla y CSV.
      Debe ser un objeto estable (constante de módulo). Una serie con
      sinEquiv: true no la muestra. */
-function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales = 1, alto = 260, ejeY, ejeX, bandas = [], referencias = [], verticales = [], grupo, nombreArchivo = "serie", yMin, yMax, incluirCero = false, escalones = false, barras = false, tramos = null, leyendaTramos = null, equivalente = null, ejeY2 = null, unidad2 = null, incluirCero2 = false, mensajeVacio = null }) {
+function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales = 1, alto = 260, ejeY, ejeX, bandas = [], referencias = [], verticales = [], grupo, nombreArchivo = "serie", yMin, yMax, incluirCero = false, escalones = false, barras = false, tramos = null, leyendaTramos = null, equivalente = null, ejeY2 = null, unidad2 = null, incluirCero2 = false, mensajeVacio = null, categorias = null }) {
+  // categorias: rótulos del eje X (p. ej. meses); x = 0, 1, 2… Las barras de varias series van lado a lado.
+  const esCat = Array.isArray(categorias) && categorias.length > 0;
   const esHora = tipoX === "hora";
   const conY2 = series.some((s) => s.eje === "derecho");
   const caja = useRef(null);
@@ -222,14 +224,17 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
   const sinDatos = series.every((s) => !s.datos.some((v) => v != null && Number.isFinite(v)));
   const fmtX = useMemo(() => (tipoX === "tiempo"
     ? (s) => { const d = new Date(s * 1000); return esDiario ? `${d.getUTCDate()} ${MESES[d.getUTCMonth()]} ${d.getUTCFullYear()}` : `${d.getUTCDate()} ${MESES[d.getUTCMonth()]} ${d.getUTCFullYear()} · ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`; }
+    : esCat ? (v) => categorias[Math.round(v)] ?? ""
     : esHora ? (v) => `${ejeX ? ejeX + " " : ""}${hhmm(v)}`
-    : (v) => `${ejeX || ""} ${fmtNum(v, Number.isInteger(v) ? 0 : 2)}`), [tipoX, ejeX, esHora, esDiario]);
+    : (v) => `${ejeX || ""} ${fmtNum(v, Number.isInteger(v) ? 0 : 2)}`), [tipoX, ejeX, esHora, esDiario, esCat, categorias]);
   const colores = series.map((s, i) => s.color || colorSerie(T, s.indice ?? i));
 
   useEffect(() => {
     if (!caja.current) return undefined;
     const ancho = caja.current.clientWidth || 600;
     const datos = [xs, ...series.map((s) => s.datos.map((v) => (v == null || !Number.isFinite(v) ? null : v)))];
+    const conBarra = series.map((s, i) => (barras || s.barras ? i : null)).filter((i) => i != null);
+    const nBarras = conBarra.length, idxBarra = new Map(conBarra.map((i, k) => [i, k]));
     const ejeComun = { stroke: T.inkFaint, grid: { stroke: T.lineSoft, width: 1 }, ticks: { stroke: T.lineSoft, width: 1 }, font: `11px ${FONT_BODY}`, labelFont: `600 12px ${FONT_BODY}` };
     const opts = {
       width: ancho, height: alto,
@@ -246,6 +251,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
           return [yMin ?? a - (incluirCero && a === 0 ? 0 : pad), yMax ?? b + pad];
         } },
         ...(esHora ? { x: { time: false, range: (u, mn, mx) => [Math.min(0, mn), Math.max(24, mx)] } } : {}),
+        ...(esCat ? { x: { time: false, range: () => [-0.5, categorias.length - 0.5] } } : {}),
         ...(conY2 ? { y2: { range: (u, mn, mx) => {
           let a = mn, b = mx;
           if (a == null || b == null) return [0, 1];
@@ -256,7 +262,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
         } } } : {}),
       },
       axes: [
-        { ...ejeComun, label: tipoX === "tiempo" ? undefined : ejeX, ...(esDiario ? { incrs: [86400, 2 * 86400, 3 * 86400, 7 * 86400, 14 * 86400, 28 * 86400, 2 * 28 * 86400, 3 * 28 * 86400, 6 * 28 * 86400, 365 * 86400] } : {}), ...(esHora ? { incrs: [1, 2, 3, 4, 6], splits: (u, ax, mn, mx, incr) => { const out = []; for (let h = Math.ceil(mn / incr) * incr; h <= mx + 1e-9; h += incr) out.push(h); return out; } } : {}), values: tipoX === "tiempo" ? etiquetasTiempo : esHora ? (u, v) => v.map((n) => hhmm(n)) : (u, v, a, e, incr) => v.map((n) => fmtNum(n, decimalesPaso(incr))) },
+        { ...ejeComun, label: tipoX === "tiempo" ? undefined : ejeX, ...(esDiario ? { incrs: [86400, 2 * 86400, 3 * 86400, 7 * 86400, 14 * 86400, 28 * 86400, 2 * 28 * 86400, 3 * 28 * 86400, 6 * 28 * 86400, 365 * 86400] } : {}), ...(esHora ? { incrs: [1, 2, 3, 4, 6], splits: (u, ax, mn, mx, incr) => { const out = []; for (let h = Math.ceil(mn / incr) * incr; h <= mx + 1e-9; h += incr) out.push(h); return out; } } : {}), ...(esCat ? { splits: () => categorias.map((_, i) => i), grid: { show: false } } : {}), values: tipoX === "tiempo" ? etiquetasTiempo : esCat ? (u, v) => v.map((n) => categorias[Math.round(n)] ?? "") : esHora ? (u, v) => v.map((n) => hhmm(n)) : (u, v, a, e, incr) => v.map((n) => fmtNum(n, decimalesPaso(incr))) },
         { ...ejeComun, label: ejeY, size: 62, values: (u, v, a, e, incr) => v.map((n) => fmtNum(n, decimalesPaso(incr))) },
         ...(conY2 ? [{ ...ejeComun, scale: "y2", side: 1, grid: { show: false }, label: ejeY2, size: 62, values: (u, v, a, e, incr) => v.map((n) => fmtNum(n, decimalesPaso(incr))) }] : []),
         ...(equivalente && !conY2 ? [{ ...ejeComun, scale: "y", side: 1, grid: { show: false }, label: equivalente.rotulo, size: 58, values: (u, v) => v.map((n) => fmtNum(equivalente.f(n), equivalente.decimalesEje ?? 1)) }] : []),
@@ -270,7 +276,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
           label: s.nombre, show: !ocultas.has(i), stroke: colores[i], scale: s.eje === "derecho" ? "y2" : "y", width: s.ancho ?? 2, dash: s.dash ? [6, 4] : undefined,
           fill: s.area ? colores[i] + "22" : barras || s.barras ? colores[i] + "cc" : undefined, spanGaps: !!s.unirHuecos,
           points: { show: s.puntos ?? (aislado && !s.unirHuecos && !(barras || s.barras)), size: s.soloPuntos ? 8 : 6, fill: colores[i], stroke: s.soloPuntos ? T.panel : colores[i] },
-          paths: s.soloPuntos ? () => null : barras || s.barras ? uPlot.paths.bars({ size: [0.7, 40] }) : escalones || s.escalones ? uPlot.paths.stepped({ align: 1 }) : undefined,
+          paths: s.soloPuntos ? () => null : (barras || s.barras) && esCat && nBarras === 2 ? uPlot.paths.bars({ size: [0.38, 70], align: idxBarra.get(i) === 0 ? -1 : 1 }) : barras || s.barras ? uPlot.paths.bars({ size: [0.7, 40] }) : escalones || s.escalones ? uPlot.paths.stepped({ align: 1 }) : undefined,
           _color: colores[i], _dash: s.dash, _unidad: s.unidad ?? (s.eje === "derecho" ? unidad2 : undefined), _dec: s.decimales, _sinEquiv: s.sinEquiv, _nulos: s.nulos,
         }); }),
       ],
@@ -288,7 +294,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
     ro.observe(caja.current);
     return () => { ro.disconnect(); u.destroy(); plot.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [xs, series, T, alto, tipoX, ejeY, ejeX, unidad, decimales, grupo, JSON.stringify(referencias), JSON.stringify(bandas), JSON.stringify(verticales), JSON.stringify(tramos), yMin, yMax, incluirCero, escalones, barras, equivalente, ejeY2, unidad2, incluirCero2]);
+  }, [xs, series, T, alto, tipoX, ejeY, ejeX, unidad, decimales, grupo, esCat, JSON.stringify(referencias), JSON.stringify(bandas), JSON.stringify(verticales), JSON.stringify(tramos), yMin, yMax, incluirCero, escalones, barras, equivalente, ejeY2, unidad2, incluirCero2]);
 
   function alternar(i) {
     setOcultas((prev) => {
@@ -307,7 +313,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
   }
   const valEq = (v) => (equivalente && v != null && Number.isFinite(v) ? +equivalente.f(v).toFixed(equivalente.decimales ?? 2) : null);
   const unidadDe = (s) => s.unidad ?? (s.eje === "derecho" ? unidad2 : null) ?? unidad;
-  const filasCSV = () => x.map((t, k) => Object.fromEntries([[tipoX === "tiempo" ? "fecha_hora" : esHora ? "hora" : (ejeX || "x"), esHora ? hhmm(t) : t], ...series.flatMap((s) => {
+  const filasCSV = () => x.map((t, k) => Object.fromEntries([[tipoX === "tiempo" ? "fecha_hora" : esHora ? "hora" : esCat ? (ejeX || "categoria") : (ejeX || "x"), esHora ? hhmm(t) : esCat ? categorias[k] : t], ...series.flatMap((s) => {
     const col = [`${s.nombre}${unidadDe(s) ? ` (${unidadDe(s)})` : ""}`, s.datos[k]];
     const cols = equivalente && !s.sinEquiv ? [col, [`${s.nombre} (${equivalente.unidad})`, valEq(s.datos[k])]] : [col];
     if (s.nulos) cols.push([`${s.nombre} (estado)`, s.datos[k] == null ? s.nulos[k] || "" : ""]);
@@ -337,7 +343,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
       </div>
       {sinDatos && !verTabla && <div style={{ padding: "26px 12px", textAlign: "center", fontSize: 12.5, color: T.inkFaint, border: `1px dashed ${T.line}`, borderRadius: 8 }}>{mensajeVacio || "Sin datos para graficar en este periodo."}</div>}
       <div ref={caja} style={{ width: "100%", display: verTabla || sinDatos ? "none" : "block", touchAction: "pan-y" }} />
-      {verTabla && <TablaSeries T={T} x={x} series={series} unidad={unidad} unidad2={unidad2} decimales={decimales} tipoX={tipoX} ejeX={ejeX} fmtX={fmtX} xs={xs} equivalente={equivalente} />}
+      {verTabla && <TablaSeries T={T} x={esCat ? categorias : x} series={series} unidad={unidad} unidad2={unidad2} decimales={decimales} tipoX={tipoX} ejeX={ejeX} fmtX={fmtX} xs={xs} equivalente={equivalente} />}
       {!verTabla && leyendaTramos && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", marginTop: 6, fontSize: 12, color: T.inkMuted }}>
           {leyendaTramos.map((l) => (
@@ -365,7 +371,7 @@ function TablaSeries({ T, x, series, unidad, unidad2, decimales, tipoX, ejeX, fm
         </tr></thead>
         <tbody>{filas.map((k) => (
           <tr key={k} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
-            <td style={{ padding: "4px 8px", color: T.inkMuted }}>{tipoX === "hora" ? hhmm(xs[k]) : fmtX(xs[k])}</td>
+            <td style={{ padding: "4px 8px", color: T.inkMuted }}>{tipoX === "hora" ? hhmm(xs[k]) : typeof x[k] === "string" && tipoX !== "tiempo" ? x[k] : fmtX(xs[k])}</td>
             {series.map((s, i) => <td key={i} style={{ textAlign: "right", padding: "4px 8px", color: T.ink }}>{s.datos[k] == null && s.nulos && s.nulos[k] ? <span style={{ color: T.inkFaint }}>{s.nulos[k]}</span> : fmtNum(s.datos[k], s.decimales ?? decimales)}{equivalente && !s.sinEquiv && s.datos[k] != null && Number.isFinite(s.datos[k]) ? <span style={{ color: T.inkFaint }}> ({fmtNum(equivalente.f(s.datos[k]), equivalente.decimales ?? 2)}{equivalente.unidad})</span> : null}</td>)}
           </tr>
         ))}</tbody>
