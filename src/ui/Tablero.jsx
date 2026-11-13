@@ -23,7 +23,7 @@ function Frescura({ T, edadMin, ultimo }) {
   return <Estado T={T} tipo={tipo}>Último dato {fechaCorta(ultimo)} · {hace(edadMin)}</Estado>;
 }
 
-const fmtSesgo = (e) => (e && Number.isFinite(e.sesgo) ? `${e.sesgo >= 0 ? "+" : "−"}${fmtNum(Math.abs(e.sesgo), 1)} %` : "—");
+const fmtSesgo = (e) => { if (!e || !Number.isFinite(e.sesgo)) return "—"; const v = Math.round(e.sesgo * 10) / 10; return v === 0 ? "0,0 %" : `${v > 0 ? "+" : "−"}${fmtNum(Math.abs(v), 1)} %`; };
 
 export default function Tablero({ T, condDescarga }) {
   const { vivo, cargando, error, recargar, cuando } = useVivo();

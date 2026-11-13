@@ -113,7 +113,7 @@ export default function Vertedero({ T }) {
       {validacion && (
         <Tarjeta T={T} titulo="¿Qué tan confiable es el caudal del vertedero?" subtitulo="LoggerNet no mide el caudal del vertedero directamente: lo calcula con la apertura de cada compuerta y el nivel. Por eso se compara con la Tabla 10.6 de calibración (la que usa esta app) con las mismas aperturas medidas.">
           <div className="itu-kpis">
-            <Kpi T={T} rotulo="Diferencia media (Tabla 10.6 − LoggerNet)" valor={validacion.errMedio} decimales={2} unidad="%" estado={<Estado T={T} compacto tipo={Math.abs(validacion.errMedio) < 1 ? "bien" : "aviso"}>{Math.abs(validacion.errMedio) < 1 ? "Coinciden (< 1 %)" : "Revisar"}</Estado>} nota={`${validacion.minutos.toLocaleString("es-CO")} minutos con vertimiento en ${validacion.dias} días (${fechaCorta(validacion.primero)} – ${fechaCorta(validacion.ultimo)})`} />
+            <Kpi T={T} rotulo="Diferencia media (Tabla 10.6 − LoggerNet)" valor={validacion.errMedio} decimales={2} unidad="%" estado={<Estado T={T} compacto tipo={Math.abs(validacion.errMedio) < 1 ? "bien" : "aviso"}>{Math.abs(validacion.errMedio) < 1 ? "Coinciden (< 1 %)" : "Revisar"}</Estado>} nota={`${validacion.minutos.toLocaleString("es-CO")} minutos con vertimiento en ${validacion.dias} días (${fechaCorta(validacion.primero)} – ${fechaCorta(validacion.ultimo)}; todo el histórico, igual que en Validación)`} />
             <Kpi T={T} rotulo="Diferencia máxima en un minuto" valor={validacion.errMax} decimales={1} unidad="%" nota="Suele darse en los minutos en que se mueve la compuerta" />
           </div>
         </Tarjeta>

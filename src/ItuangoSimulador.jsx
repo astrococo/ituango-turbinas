@@ -336,7 +336,7 @@ function PanelCondicionDescarga({ cond, setCond, T, nivelEmbalse, nUnidades, gam
   // Cualquier cambio manual deja de ser la condición calibrada
   const set = (cambios) => { const { calibrada, ...resto } = cond; setCond({ ...resto, ...cambios }); }; // eslint-disable-line no-unused-vars
   const cal = cond.calibrada || (condCalibrada && condCalibrada.calibrada) || null;
-  const pct = (e) => (e && Number.isFinite(e.sesgo) ? `${e.sesgo >= 0 ? "+" : "−"}${fx(Math.abs(e.sesgo), 2)} %` : "—");
+  const pct = (e) => { if (!e || !Number.isFinite(e.sesgo)) return "—"; const v = Math.round(e.sesgo * 100) / 100; return v === 0 ? "0,00 %" : `${v > 0 ? "+" : "−"}${fx(Math.abs(v), 2)} %`; };
   const mae = (e) => (e && Number.isFinite(e.mae) ? `${fx(e.mae, 2)} %` : "—");
   const manual = typeof cond.almManual === "object" && cond.almManual ? cond.almManual : { norte: 224.3, sur: 224.3 };
   const rep = unidadesPorAlmenara(nUnidades, cond);
@@ -375,10 +375,10 @@ function PanelCondicionDescarga({ cond, setCond, T, nivelEmbalse, nUnidades, gam
         ]} />
       {cal && (
         <div style={{ fontSize: 12.5, color: T.inkMuted, fontFamily: FONT_BODY, margin: "4px 0 10px", lineHeight: 1.55, padding: "8px 10px", border: `1px solid ${T.line}`, borderRadius: 8 }}>
-          <b style={{ color: T.ink }}>Calibración automática{cond.calibrada ? " (en uso)" : ""}:</b> almenara equivalente <b style={{ color: T.ink }}>{fx((cond.calibrada ? cond : condCalibrada).almManual.norte, 2)} msnm</b> (igual en N°1 y N°2): el nivel con el que el caudal del modelo iguala en promedio al de Hidrometría, sin promediar con otra referencia. Calculado con {cal.horas} horas estables entre {cal.desde} y {cal.hasta}.
+          <b style={{ color: T.ink }}>Calibración automática{cond.calibrada ? " (en uso)" : ""}:</b> almenara equivalente <b style={{ color: T.ink }}>{fx((cond.calibrada ? cond : condCalibrada).almManual.norte, 2)} msnm</b> (igual en N°1 y N°2): el nivel con el que el caudal del modelo iguala en promedio al de Hidrometría, sin promediar con otra referencia. Calculado con {cal.horas} horas{cal.horasEstables > cal.horas ? <> (muestra pareja de {cal.horasEstables} horas estables)</> : " estables"} entre {cal.desde} y {cal.hasta}.
           Diferencia media del caudal del modelo frente a Hidrometría: {pct(cal.hidrometria)} (error horario medio {mae(cal.hidrometria)}). Como comparación, frente a Winter-Kennedy: {pct(cal.wk)} ({mae(cal.wk)}).
           {cal.comparacion && cal.comparacion.hidrometria && <> Con la ASE 2026 y el río = caudal descargado, en las mismas horas: {pct(cal.comparacion.hidrometria)} frente a Hidrometría.</>}
-          <br />Es un nivel <b>equivalente</b>, no medido: además del nivel real de la almenara absorbe pequeños errores de la colina y de las pérdidas. Se recalcula con los últimos 7 días, incluido hoy (cada día del histórico, con sus 7 días anteriores); solo se usan horas con la fórmula vigente del F.C. de Hidrometría (desde {FC_HIDROMETRIA_POR_NIVEL.desde}). El WK no está calibrado: no entra en el ajuste.
+          <br />Es un nivel <b>equivalente</b>, no medido: además del nivel real de la almenara absorbe pequeños errores de la colina y de las pérdidas. Se recalcula con los últimos 7 días, incluido hoy (cada día del histórico, con sus 7 días anteriores); solo se usan horas en que la columna de Hidrometría de LoggerNet ya aplica la fórmula del F.C. por nivel (desde el 30-oct-2026 11:34). El WK no está calibrado: no entra en el ajuste.
         </div>
       )}
       {cond.modo === "ase" && (

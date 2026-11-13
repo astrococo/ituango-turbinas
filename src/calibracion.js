@@ -5,8 +5,8 @@
    de la ASE (río colmatado) y del diseño (río dragado) lo estiman. Aquí se
    busca el nivel de almenara EQUIVALENTE con el que el caudal del modelo
    coincide en promedio con el caudal de Hidrometría (P / F.C., columna de
-   LoggerNet), con la fórmula vigente desde el 29-oct-2026
-   (FC_HIDROMETRIA_POR_NIVEL.desde). Es el nivel que anula la diferencia
+   LoggerNet), con la fórmula del F.C. por nivel (en la columna, desde el
+   30-oct-2026 11:34). Es el nivel que anula la diferencia
    media con Hidrometría, sin promediar con otra referencia (el sesgo crece
    casi en línea recta con el nivel de la almenara: secante). El
    Winter-Kennedy (WK) no está calibrado: no entra en el ajuste; solo se
@@ -14,9 +14,14 @@
    además del nivel real absorbe pequeños errores de la colina y de las
    pérdidas. Se calibra con horas estables (unidades en línea toda la hora).
    ============================================================ */
-import { repartoPorUnidad, FC_HIDROMETRIA_POR_NIVEL, GAMMA_ENSAYADO_MAX } from "./modelo.js";
+import { repartoPorUnidad, GAMMA_ENSAYADO_MAX } from "./modelo.js";
 
-const VERSION_CALIBRACION = 3; // cambia si cambia el método (invalida lo guardado)
+const VERSION_CALIBRACION = 5; // cambia si cambia el método (invalida lo guardado)
+/* La columna QTurbinadoUx_FC de LoggerNet (el caudal de Hidrometría por
+   unidad) aplicó la fórmula del F.C. por nivel desde el 30-oct-2026 11:34;
+   antes seguía en 1,62 aunque la fórmula rige desde el 29-oct 14:35 (ver
+   src/modelo.js). Solo se calibra con horas posteriores. */
+const COLUMNA_FC_FORMULA_DESDE = "2026-10-30 12:00"; // primera hora completa
 const VENTANA_DIAS = 7;
 const MAX_HORAS = 48;          // muestra pareja de la ventana (el modelo es costoso)
 const MIN_HORAS = 12;          // menos horas estables: no se calibra
@@ -36,7 +41,7 @@ function horasEstables(horas) {
     out.push({
       t: h.t, nivel: h.nivel, p: h.p.map((p, k) => (on[k] ? p : 0)), on,
       qWK: qWK.every((q, k) => !on[k] || q > 0) ? qWK.reduce((a, q) => a + (q || 0), 0) : null,
-      qHidro: h.t >= FC_HIDROMETRIA_POR_NIVEL.desde && qFC.every((q, k) => !on[k] || q > 0) ? qFC.reduce((a, q) => a + (q || 0), 0) : null,
+      qHidro: h.t >= COLUMNA_FC_FORMULA_DESDE && qFC.every((q, k) => !on[k] || q > 0) ? qFC.reduce((a, q) => a + (q || 0), 0) : null,
     });
   }
   return out;
@@ -63,8 +68,10 @@ function estadisticas(qMod, horas, ref) {
 function calibrarDescarga(horasFuente, { maxHoras = MAX_HORAS, condReferencia = null } = {}) {
   let horas = horasEstables(horasFuente);
   const conWK = horas.filter((h) => h.qWK != null).length, conH = horas.filter((h) => h.qHidro != null).length;
-  // Sin horas de Hidrometría con la fórmula vigente del F.C. no se calibra
+  // Sin horas de Hidrometría con la fórmula del F.C. por nivel no se calibra;
+  // solo se usan esas horas (el WK se compara en las mismas)
   if (conH < MIN_HORAS) return null;
+  horas = horas.filter((h) => h.qHidro != null);
   const horasTotales = horas.length;
   if (horas.length > maxHoras) { const paso = horas.length / maxHoras; horas = Array.from({ length: maxHoras }, (_, i) => horas[Math.floor(i * paso)]); }
   const cache = new Map();
@@ -103,7 +110,7 @@ function calibrarDescarga(horasFuente, { maxHoras = MAX_HORAS, condReferencia = 
 /* Condición de descarga a partir de una calibración (o null) */
 function condicionCalibrada(cal) {
   if (!cal || !Number.isFinite(cal.nivelAlmenara)) return null;
-  return { modo: "manual", almManual: { norte: cal.nivelAlmenara, sur: cal.nivelAlmenara }, calibrada: { desde: cal.desde, hasta: cal.hasta, horas: cal.horas, referencias: cal.referencias, nivelHidrometria: cal.nivelHidrometria, nivelWK: cal.nivelWK, hidrometria: cal.hidrometria, wk: cal.wk, comparacion: cal.comparacion || null } };
+  return { modo: "manual", almManual: { norte: cal.nivelAlmenara, sur: cal.nivelAlmenara }, calibrada: { desde: cal.desde, hasta: cal.hasta, horas: cal.horas, horasEstables: cal.horasEstables, referencias: cal.referencias, nivelHidrometria: cal.nivelHidrometria, nivelWK: cal.nivelWK, hidrometria: cal.hidrometria, wk: cal.wk, comparacion: cal.comparacion || null } };
 }
 
-export { VERSION_CALIBRACION, VENTANA_DIAS, MAX_HORAS, MIN_HORAS, filasHorario, horasEstables, calibrarDescarga, condicionCalibrada, estadisticas };
+export { COLUMNA_FC_FORMULA_DESDE, VERSION_CALIBRACION, VENTANA_DIAS, MAX_HORAS, MIN_HORAS, filasHorario, horasEstables, calibrarDescarga, condicionCalibrada, estadisticas };
