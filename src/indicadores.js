@@ -9,7 +9,7 @@
    HydroForecast. Funciones puras: las usan la pestaña Indicadores, el
    Tablero y el asistente.
    ============================================================ */
-import { volumenHm3, volumenUtilHm3, factorConversionHidrometria, NAMO, NIVEL_MIN_TEC, UNIDADES_DISPONIBLES_HOY } from "./modelo.js";
+import { volumenHm3, volumenUtilHm3, areaEmbalseKm2, factorConversionHidrometria, NAMO, NIVEL_MIN_TEC, UNIDADES_DISPONIBLES_HOY } from "./modelo.js";
 
 /* Capacidad nominal: 300 MW por unidad. En operación hoy UG1–UG4 (1.200 MW);
    UG5–UG8 entran a finales de 2027 / comienzos de 2028 (diseño: 2.400 MW).
@@ -133,10 +133,10 @@ function caudalMedioAnual(diarios) {
    - Grado de regulación DOR (%) = volumen del embalse / volumen medio anual del río × 100
      (Lehner et al., 2011): ≥ 2 % = río regulado; ≥ 100 % = guarda un año de caudal.
    - Tiempo de residencia (días) = volumen embalsado / caudal de entrada.
-   El área sale de la curva cota-volumen (dV/dH), no de una medición. */
+   El área sale de la curva cota-área vigente del CGI (Tabla 3 de la memoria
+   I-M-2194-044-HID-VC-CVE-001, LIDAR 2012), interpolada cada 5 m. */
 function areaEspejoKm2(nivel) {
-  const h = Math.min(NAMO - 0.25, Math.max(NIVEL_MIN_TEC + 0.25, nivel));
-  return (volumenHm3(h + 0.25) - volumenHm3(h - 0.25)) / 0.5; // hm³ por m = km²
+  return areaEmbalseKm2(nivel);
 }
 function sostenibilidad({ nivel, caudalEntrada, qMedioAnual, capacidadMW }) {
   if (!Number.isFinite(nivel)) return null;

@@ -17,7 +17,13 @@
      la almenara recibe la suma real de caudales de sus unidades) y 1 es
      el criterio de desempate (antes 8 unidades con η 66 %, ahora 3 con
      η 93,7 %, mismo caudal). Colina, almenaras, inversos, vertedero y
-     volúmenes, idénticos. */
+     volúmenes, idénticos.
+   - curva del embalse oficial (nov-2026): el volumen sale de la Ec.2 de la
+     memoria CGI I-M-2194-044-HID-VC-CVE-001 (antes, tabla cada 0,25 m de
+     DatosAplicación.xlsx calculada con la misma Ec.2). Entre 390 y 420 msnm
+     solo cambia el redondeo (≤ 0,004 hm³); sobre 420 se usa la curva hasta
+     460 en vez de una recta: 425 → +6,2 hm³, 432 → +36,7 hm³. Solo cambia
+     "volumen". */
 import { it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import * as m from "../src/modelo.js";

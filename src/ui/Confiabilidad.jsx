@@ -105,7 +105,9 @@ export default function Confiabilidad({ T }) {
     fila("Energía embalsada útil (Indicadores)", "EPM: 408→420 msnm ≈ 400 hm³ y 187 GWh", "Curva de la app: 424 hm³ y ≈ 206 GWh en esa franja (mismo orden, +6 % y +10 %)", "Mismo orden de magnitud", NIVEL.media),
     fila("Energía equivalente del agua vertida (Indicadores)", "Caudal del vertedero (Tabla 10.6) × F.C. del día", "Hereda la confianza del caudal del vertedero; es una oportunidad, no una pérdida contable", "< 1 % en el caudal", NIVEL.alta),
     fila("Aportes frente a la media (Indicadores)", "Olaya, histórico de HydroForecast desde 2015", "Media del mismo mes en los años anteriores con ≥ 25 días; Olaya está aguas arriba del embalse", "Meses completos", NIVEL.media),
-    fila("Densidad de potencia y grado de regulación (Indicadores)", "Área = dV/dH de la curva cota-volumen", "Área del espejo calculada, no medida", "Indicativo", NIVEL.relativa),
+    fila("Curva cota-volumen del embalse", "Tabla 3 de la memoria CGI I-M-2194-044-HID-VC-CVE-001 (LIDAR 2012, 46 cotas)", "Ec.2 de la memoria: diferencia máxima 0,009 hm³ en los 46 puntos; la hoja del Excel es la misma ecuación (≤ 0,000001 hm³)", "Error 0,00 % (Tabla 5)", NIVEL.alta),
+    fila("Curva cota-área del embalse", "Tabla 3 de la memoria (área) y su volumen por trapecios", "Interpolada en línea recta cada 5 m: reproduce el volumen de la tabla con ≤ 0,005 hm³ y la pendiente de la Ec.2 con ±1,1 %", "Coherente con el volumen", NIVEL.alta),
+    fila("Densidad de potencia y grado de regulación (Indicadores)", "Área de la Tabla 3 de la memoria y volumen de la Ec.2", "Curvas del LIDAR de 2012: no incluyen la sedimentación posterior", "Indicativo", NIVEL.media),
   ] : [];
 
   return (

@@ -1,7 +1,8 @@
 /* ============================================================
    Analítica — Hidrología y pronóstico: caudales observados (Olaya,
    Sitio Presa, La Pintada), pronóstico vigente y cómo ha cambiado
-   de una emisión a otra, aguas arriba y lluvia. Fuente:
+   de una emisión a otra, aguas arriba y lluvia; y el embalse (volumen
+   útil, volumen total y área ocupada; ver Embalse.jsx). Fuente:
    HydroForecast Ituango (en vivo) y su archivo en el repositorio.
    ============================================================ */
 import { useCallback, useMemo, useState } from "react";
@@ -10,14 +11,15 @@ import { useVivo } from "../datos/vivo.jsx";
 import { errorPronosticoHF } from "../analitica.js";
 import { GraficoSeries, Estado, fmtNum } from "./graficos.jsx";
 import { Proposito, Tarjeta, SelectorRango, rangoUltimos, fechaCorta, Nota } from "./comunes.jsx";
+import Embalse from "./Embalse.jsx";
 
 const dia = (x) => String(x).slice(0, 10);
 
 function leerCSVHistorico(texto) {
   const l = texto.trim().split(/\r?\n/); const cab = l[0].split(",");
   const ix = (c) => cab.indexOf(c);
-  const iF = ix("Fecha"), iO = ix("CaudalOlaya_mean"), iP = ix("CaudalPintada_mean"), iS = ix("CaudalSitioPresa_mean"), iN = ix("NivelEmbalse_mean");
-  return l.slice(1).map((r) => { const f = r.split(","); const n = (i) => (i < 0 || f[i] === "" ? null : +f[i]); return { d: f[iF].slice(0, 10), ol: n(iO), pi: n(iP), sp: n(iS), niv: n(iN) }; });
+  const iF = ix("Fecha"), iO = ix("CaudalOlaya_mean"), iP = ix("CaudalPintada_mean"), iS = ix("CaudalSitioPresa_mean"), iN = ix("NivelEmbalse_mean"), iNmin = ix("NivelEmbalse_min"), iNmax = ix("NivelEmbalse_max");
+  return l.slice(1).map((r) => { const f = r.split(","); const n = (i) => (i < 0 || f[i] === "" ? null : +f[i]); return { d: f[iF].slice(0, 10), ol: n(iO), pi: n(iP), sp: n(iS), niv: n(iN), nmin: n(iNmin), nmax: n(iNmax) }; });
 }
 
 export default function Hidrologia({ T }) {
@@ -100,10 +102,10 @@ export default function Hidrologia({ T }) {
   const pluv = extra.datos?.pluv;
   return (
     <>
-      <Proposito T={T} id="hidrologia" titulo="Hidrología y pronóstico" fuente="HydroForecast Ituango (en vivo; si no responde, el archivo diario del repositorio)"
-        para="Ver qué agua viene: caudal observado en Olaya, Sitio Presa y La Pintada, el pronóstico de 90 días y cómo cambia de una emisión a otra, las estaciones aguas arriba con su tiempo de viaje y la lluvia."
-        logras="Anticipar el caudal de entrada para planear el despacho y la regla operativa de los próximos días, y saber cuánto confiar en el pronóstico según su acierto reciente."
-        resultados="Pronóstico vigente con su rango, comparación de las últimas emisiones con lo observado, error medio a 1, 3 y 7 días, histórico desde 2015, aguas arriba y lluvia observada y pronosticada por zona." />
+      <Proposito T={T} id="hidrologia" titulo="Hidrología, embalse y pronóstico" fuente="HydroForecast Ituango (en vivo; si no responde, el archivo diario del repositorio), radar de nivel (LoggerNet) y curvas oficiales del embalse (CGI, I-M-2194-044-HID-VC-CVE-001)"
+        para="Ver qué agua viene y cuánta hay: caudal observado en Olaya, Sitio Presa y La Pintada, el pronóstico de 90 días y cómo cambia de una emisión a otra, el volumen y el área del embalse, las estaciones aguas arriba con su tiempo de viaje y la lluvia."
+        logras="Anticipar el caudal de entrada para planear el despacho y la regla operativa de los próximos días, saber cuánto confiar en el pronóstico según su acierto reciente y seguir el almacenamiento del embalse con curvas respaldadas por el documento técnico."
+        resultados="Pronóstico vigente con su rango, comparación de las últimas emisiones con lo observado, error medio a 1, 3 y 7 días, histórico desde 2015, volumen útil, volumen total y área del embalse (continuo, horario y diario desde 2018) con sus curvas de respaldo, aguas arriba y lluvia observada y pronosticada por zona." />
       {sPron && (
         <Tarjeta T={T} titulo={`Pronóstico vigente (${horizonte} días)`} accion={<div style={{ display: "inline-flex", border: `1px solid ${T.line}`, borderRadius: 8, overflow: "hidden" }}>{[15, 30, 90].map((n) => <button key={n} onClick={() => setHorizonte(n)} aria-pressed={horizonte === n} style={{ padding: "6px 11px", fontSize: 12.5, border: "none", borderRight: `1px solid ${T.line}`, background: horizonte === n ? T.accentSoft : T.panel, color: horizonte === n ? T.teal : T.inkMuted, fontWeight: horizonte === n ? 700 : 500, cursor: "pointer" }}>{n} días</button>)}</div>} subtitulo={`Emitido ${fechaCorta(String(pron.generated_at).slice(0, 16).replace("T", " "))} · ${vivo.hf.pronostico.origen}. Franja = mínimo y máximo de Sitio Presa.`}>
           <GraficoSeries T={T} x={sPron.t} series={sPron.s} unidad="m³/s" ejeY="m³/s" decimales={0} nombreArchivo={`pronostico_${horizonte}d`} bandas={[{ desde: 1, hasta: 2 }]} />
@@ -128,6 +130,7 @@ export default function Hidrologia({ T }) {
           <GraficoSeries T={T} x={hist.t} series={hist.s} unidad="m³/s" ejeY="m³/s" decimales={0} nombreArchivo="caudal_observado_diario" />
         </Tarjeta>
       )}
+      <Embalse T={T} historicoHF={extra.datos?.historico || null} />
       {sAA && (
         <Tarjeta T={T} titulo="Aguas arriba (horario)" subtitulo={aa.nota} accion={<SelectorRango T={T} min={sAA.min} max={sAA.max} valor={sAA.rango} onChange={setRangoAA} atajos={[["1", "Hoy"], ["3", "3 días"], ["7", "7 días"], ["todo", "30 días"]]} />}>
           <GraficoSeries T={T} x={sAA.t} series={sAA.s} unidad="m³/s" ejeY="m³/s" decimales={0} nombreArchivo="aguas_arriba_horario" />

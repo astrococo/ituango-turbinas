@@ -265,7 +265,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
         { ...ejeComun, label: tipoX === "tiempo" ? undefined : ejeX, ...(esDiario ? { incrs: [86400, 2 * 86400, 3 * 86400, 7 * 86400, 14 * 86400, 28 * 86400, 2 * 28 * 86400, 3 * 28 * 86400, 6 * 28 * 86400, 365 * 86400] } : {}), ...(esHora ? { incrs: [1, 2, 3, 4, 6], splits: (u, ax, mn, mx, incr) => { const out = []; for (let h = Math.ceil(mn / incr) * incr; h <= mx + 1e-9; h += incr) out.push(h); return out; } } : {}), ...(esCat ? { splits: () => categorias.map((_, i) => i), grid: { show: false } } : {}), values: tipoX === "tiempo" ? etiquetasTiempo : esCat ? (u, v) => v.map((n) => categorias[Math.round(n)] ?? "") : esHora ? (u, v) => v.map((n) => hhmm(n)) : (u, v, a, e, incr) => v.map((n) => fmtNum(n, decimalesPaso(incr))) },
         { ...ejeComun, label: ejeY, size: 62, values: (u, v, a, e, incr) => v.map((n) => fmtNum(n, decimalesPaso(incr))) },
         ...(conY2 ? [{ ...ejeComun, scale: "y2", side: 1, grid: { show: false }, label: ejeY2, size: 62, values: (u, v, a, e, incr) => v.map((n) => fmtNum(n, decimalesPaso(incr))) }] : []),
-        ...(equivalente && !conY2 ? [{ ...ejeComun, scale: "y", side: 1, grid: { show: false }, label: equivalente.rotulo, size: 58, values: (u, v) => v.map((n) => fmtNum(equivalente.f(n), equivalente.decimalesEje ?? 1)) }] : []),
+        ...(equivalente && !conY2 ? [{ ...ejeComun, scale: "y", side: 1, grid: { show: false }, label: equivalente.rotulo, size: 58, values: (u, v, a, e, incr) => { const dec = equivalente.decimalesEje ?? decimalesPaso(Math.abs(equivalente.f(incr) - equivalente.f(0))); return v.map((n) => fmtNum(equivalente.f(n), dec)); } }] : []),
       ],
       series: [
         {},

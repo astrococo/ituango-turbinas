@@ -8,9 +8,47 @@
    ============================================================ */
 
 /* ============================================================
-   CURVAS TÉCNICAS (DatosAplicación.xlsx, validadas contra datos reales)
+   CURVAS DEL EMBALSE — fuente: Consorcio Generación Ituango (CGI),
+   «Memoria de cálculo de verificación y actualización de la curva cota
+   volumen del embalse», I-M-2194-044-HID-VC-CVE-001, rev. 0, 29-jul-2022.
+   - Curva vigente: chequeo 2015 con curvas de nivel cada 5 m del LIDAR de
+     2012, cotas 219 a 460 msnm (Tabla 3: área y volumen).
+   - Volumen: ecuación por tramos de 2021 («Ec.2», 10 tramos), que según la
+     Tabla 5 del documento reproduce la curva vigente con error 0,00 %.
+   - Área: la memoria no trae ecuación; se interpola en línea recta entre
+     los puntos de la Tabla 3 (cada 5 m), coherente con su método de volumen
+     (trapecios: promedio de áreas × ΔH, nota de la Tabla 3).
+   Las curvas inicial (restituciones 1997 y 2009) y de DatosAplicación.xlsx
+   «Datos Técnicos» (p. ej. 2.720 hm³ a 420) quedan reemplazadas.
    ============================================================ */
-const COTA_VOLUMEN = [[390.0,1595.974],[390.25,1602.7772],[390.5,1609.5998],[390.75,1616.4417],[391.0,1623.303],[391.25,1630.1836],[391.5,1637.0834],[391.75,1644.0026],[392.0,1650.941],[392.25,1657.8986],[392.5,1664.8754],[392.75,1671.8715],[393.0,1678.8867],[393.25,1685.9211],[393.5,1692.9746],[393.75,1700.0473],[394.0,1707.139],[394.25,1714.2499],[394.5,1721.3798],[394.75,1728.5288],[395.0,1735.6968],[395.25,1742.8839],[395.5,1750.09],[395.75,1757.3151],[396.0,1764.5591],[396.25,1771.8222],[396.5,1779.1042],[396.75,1786.4051],[397.0,1793.725],[397.25,1801.0638],[397.5,1808.4215],[397.75,1815.798],[398.0,1823.1935],[398.25,1830.6078],[398.5,1838.041],[398.75,1845.493],[399.0,1852.9639],[399.25,1860.4536],[399.5,1867.9621],[399.75,1875.4894],[400.0,1883.0354],[400.25,1890.5829],[400.5,1898.1551],[400.75,1905.7518],[401.0,1913.373],[401.25,1921.0186],[401.5,1928.6886],[401.75,1936.3828],[402.0,1944.1012],[402.25,1951.8437],[402.5,1959.6102],[402.75,1967.4007],[403.0,1975.215],[403.25,1983.0532],[403.5,1990.915],[403.75,1998.8005],[404.0,2006.7096],[404.25,2014.6422],[404.5,2022.5981],[404.75,2030.5774],[405.0,2038.5799],[405.25,2046.6057],[405.5,2054.6545],[405.75,2062.7263],[406.0,2070.8211],[406.25,2078.9387],[406.5,2087.0791],[406.75,2095.2423],[407.0,2103.428],[407.25,2111.6364],[407.5,2119.8672],[407.75,2128.1204],[408.0,2136.3959],[408.25,2144.6937],[408.5,2153.0136],[408.75,2161.3556],[409.0,2169.7196],[409.25,2178.1056],[409.5,2186.5134],[409.75,2194.943],[410.0,2203.3944],[410.25,2211.8673],[410.5,2220.3618],[410.75,2228.8777],[411.0,2237.415],[411.25,2245.9737],[411.5,2254.5536],[411.75,2263.1546],[412.0,2271.7768],[412.25,2280.4199],[412.5,2289.084],[412.75,2297.7689],[413.0,2306.4746],[413.25,2315.201],[413.5,2323.9479],[413.75,2332.7155],[414.0,2341.5035],[414.25,2350.3119],[414.5,2359.1405],[414.75,2367.9895],[415.0,2376.8585],[415.25,2385.7643],[415.5,2394.7014],[415.75,2403.6695],[416.0,2412.6682],[416.25,2421.6971],[416.5,2430.7559],[416.75,2439.8441],[417.0,2448.9616],[417.25,2458.1079],[417.5,2467.283],[417.75,2476.4865],[418.0,2485.7182],[418.25,2494.978],[418.5,2504.2657],[418.75,2513.5811],[419.0,2522.9242],[419.25,2532.2948],[419.5,2541.6929],[419.75,2551.1185],[420.0,2560.5715]];
+/* [cota msnm, área ha, volumen hm³] — Tabla 3 de la memoria */
+const CURVA_EMBALSE_CGI = [[219,0.00,0.000],[220,2.34,0.008],[225,13.34,0.400],[230,26.18,1.388],[235,43.83,3.138],[240,54.60,5.599],[245,78.49,8.926],[250,116.49,13.801],[255,149.21,20.443],[260,194.55,29.037],[265,234.85,39.772],[270,275.66,52.535],[275,331.79,67.721],[280,391.23,85.796],[285,458.51,107.040],[290,520.00,131.502],[295,590.14,159.256],[300,662.51,190.572],[305,723.57,225.224],[310,799.91,263.311],[315,886.95,305.483],[320,982.31,352.214],[325,1084.02,403.872],[330,1189.17,460.702],[335,1283.68,522.523],[340,1395.72,589.508],[345,1505.39,662.036],[350,1617.34,740.104],[355,1744.85,824.158],[360,1852.66,914.096],[365,2002.06,1010.464],[370,2117.59,1113.456],[375,2277.03,1223.321],[380,2390.44,1340.008],[385,2569.76,1464.013],[390,2708.67,1595.974],[395,2880.24,1735.697],[400,3013.31,1883.035],[405,3208.47,2038.580],[410,3384.10,2203.394],[415,3554.46,2376.859],[420,3794.05,2560.571],[430,4256.26,2963.087],[440,5107.65,3431.283],[450,6248.48,3999.090],[460,7389.67,4680.998]];
+/* Ec.2 (2021): [cota máxima del tramo, coeficientes de mayor a menor grado] */
+const VOLUMEN_EC2 = [
+  [220, [0.00780877133333302, -1.71012092199999]],
+  [225, [0.0784321009999996, -17.2472534486666]],
+  [255, [-1.15745572487613e-07, 0.000165784073892616, -0.0988872554503033, 31.4421434304663, -5620.64153727714, 535600.032173824, -21255360.9138381]],
+  [295, [2.01293562374083e-08, -0.0000335666405214541, 0.0233047285262049, -8.62244992567893, 1793.03177259931, -198698.573072594, 9167385.87841528]],
+  [330, [3.15793817762255e-08, -0.0000596604753066998, 0.0469443109764223, -19.6919837546219, 4644.35526928116, -583934.662257994, 30576843.1623096]],
+  [350, [-0.0000254082001092115, 0.034806383798184, -17.7678957900385, 4019.83580040591, -340677.094486544]],
+  [380, [-6.88699657303005e-08, 0.000150892266731262, -0.137737884559272, 67.0503452861608, -18358.296361552, 2680541.53210783, -163065102.396029]],
+  [400, [0.0000031728976210843, -0.00517641703822846, 3.31598252297727, -950.145700728721, 101448.623411728]],
+  [415, [-0.000826881561522441, 1.19005955889861, -525.00393618369, 74395.5004368759]],
+  [460, [-2.99151855109869e-06, 0.00650033627593238, -5.64348110225939, 2447.40575479374, -530205.608608134, 45906589.5601145]],
+];
+const COTA_MIN_CURVA = 219, COTA_MAX_CURVA = 460;
+/* Volumen total (hm³) según la Ec.2, entre 219 y 460 msnm (fuera, el extremo) */
+function volumenTotalHm3(H) {
+  const h = Math.max(COTA_MIN_CURVA, Math.min(COTA_MAX_CURVA, H));
+  if (h <= COTA_MIN_CURVA) return 0;
+  const tramo = VOLUMEN_EC2.find(([hasta]) => h <= hasta) || VOLUMEN_EC2[VOLUMEN_EC2.length - 1];
+  return Math.max(0, tramo[1].reduce((acc, c) => acc * h + c, 0)); // Horner
+}
+/* Área del espejo de agua (km²), Tabla 3 interpolada en línea recta */
+const COTA_AREA_KM2 = CURVA_EMBALSE_CGI.map(([c, a]) => [c, a / 100]);
+function areaEmbalseKm2(H) { return interp1(H, COTA_AREA_KM2); }
+/* Tabla cada 0,25 m (390 a 420) con la Ec.2, por compatibilidad */
+const COTA_VOLUMEN = Array.from({ length: 121 }, (_, i) => { const c = 390 + i * 0.25; return [c, volumenTotalHm3(c)]; });
 
 /* ============================================================
    CONSTANTES FÍSICAS Y GEOMÉTRICAS (Datos Técnicos)
@@ -55,38 +93,40 @@ function interp1(x, pairs) {
   return y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
 }
 
+/* Volumen total entre el mínimo técnico y el NAMO (390–420 msnm, topado) */
 function volumenHm3(H) {
-  return interp1(Math.max(390, Math.min(420, H)), COTA_VOLUMEN);
+  return volumenTotalHm3(Math.max(NIVEL_MIN_TEC, Math.min(NAMO, H)));
 }
-/* Volumen CON extrapolación lineal por encima de 420 msnm (la curva
-   Cota-Volumen del proyecto solo llega hasta ahí). Se usa en TODO cálculo
-   de balance de continuidad que pueda involucrar niveles sobre el NAMO —
-   antes esto solo se hacía al resolver H2 dentro de la bisección, pero NO
-   al calcular S1 (el volumen de partida de cada paso), lo que producía un
-   desbalance artificial que "congelaba" el nivel apenas superaba 420,
-   incluso con un desequilibrio enorme entre caudal de entrada y salida. */
+/* Volumen total SIN topar en 420 (balance de continuidad con niveles sobre
+   el NAMO; antes se extrapolaba en línea recta porque la tabla usada llegaba
+   solo a 420). Ec.2 entre 219 y 460 msnm; sobre 460, recta con la pendiente
+   del último metro. */
 function volumenExtrapolado(H) {
-  if (H <= 420) return volumenHm3(H);
-  const pendiente = (volumenHm3(420) - volumenHm3(419.5)) / 0.5;
-  return volumenHm3(420) + (H - 420) * pendiente;
+  if (H <= COTA_MAX_CURVA) return volumenTotalHm3(H);
+  const pendiente = volumenTotalHm3(COTA_MAX_CURVA) - volumenTotalHm3(COTA_MAX_CURVA - 1);
+  return volumenTotalHm3(COTA_MAX_CURVA) + (H - COTA_MAX_CURVA) * pendiente;
 }
-const VOL_EN_390 = COTA_VOLUMEN[0][1];
+const VOL_EN_390 = volumenTotalHm3(NIVEL_MIN_TEC);
 function volumenUtilHm3(H) {
   return Math.max(0, volumenHm3(H) - VOL_EN_390);
 }
-function nivelDesdeVolumen(Shm3) {
-  const inv = COTA_VOLUMEN.map(([c, v]) => [v, c]);
-  return interp1(Shm3, inv);
+/* Inversa de la Ec.2 por bisección (la curva es creciente) */
+function nivelDesdeVolumenTotal(Shm3) {
+  if (Shm3 <= 0) return COTA_MIN_CURVA;
+  let lo = COTA_MIN_CURVA, hi = COTA_MAX_CURVA;
+  if (Shm3 >= volumenTotalHm3(hi)) return hi;
+  for (let i = 0; i < 60; i++) { const mid = (lo + hi) / 2; if (volumenTotalHm3(mid) < Shm3) lo = mid; else hi = mid; }
+  return (lo + hi) / 2;
 }
-/* Inversa de volumenExtrapolado: convierte volumen a nivel, extrapolando
-   linealmente por encima del volumen correspondiente a 420 msnm (con la
-   misma pendiente), en vez de quedar topada en 420 como nivelDesdeVolumen
-   puro — necesaria en el mismo lugar donde se usa volumenExtrapolado. */
+/* Nivel desde volumen, topado entre 390 y 420 msnm (como volumenHm3) */
+function nivelDesdeVolumen(Shm3) {
+  return Math.max(NIVEL_MIN_TEC, Math.min(NAMO, nivelDesdeVolumenTotal(Shm3)));
+}
+/* Inversa de volumenExtrapolado */
 function nivelDesdeVolumenExtrapolado(Shm3) {
-  const volEn420 = volumenHm3(420);
-  if (Shm3 <= volEn420) return nivelDesdeVolumen(Shm3);
-  const pendiente = (volumenHm3(420) - volumenHm3(419.5)) / 0.5; // Hm3 por metro
-  return 420 + (Shm3 - volEn420) / pendiente;
+  const vMax = volumenTotalHm3(COTA_MAX_CURVA);
+  if (Shm3 <= vMax) return nivelDesdeVolumenTotal(Shm3);
+  return COTA_MAX_CURVA + (Shm3 - vMax) / (vMax - volumenTotalHm3(COTA_MAX_CURVA - 1));
 }
 const FACTOR_UNIDADES_C = Math.sqrt(3.28084); // C está en unidades inglesas (pie^0.5); Le y hvert en metros
 function qLibreTotal(H) {
@@ -1633,6 +1673,11 @@ export {
   programaDespacho,
   resumenEnergiaDespacho,
   COTA_VOLUMEN,
+  CURVA_EMBALSE_CGI,
+  VOLUMEN_EC2,
+  volumenTotalHm3,
+  areaEmbalseKm2,
+  nivelDesdeVolumenTotal,
   ZV,
   A_MAX_ESTRUCTURAL,
   K_AMAX,

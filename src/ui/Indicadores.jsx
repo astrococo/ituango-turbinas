@@ -179,7 +179,7 @@ export default function Indicadores({ T }) {
           <Nota T={T} rotulo="Cómo se valida">Con la curva cota-volumen de la app, subir de 408 a 420 msnm agrega 424 hm³ (≈ 206 GWh); EPM publicó para esa misma franja «cerca de 400 millones de m³» y «unos 187 GWh». El orden coincide; la diferencia sale de la curva y del F.C. usado.</Nota>
         </Tarjeta>
 
-        <Tarjeta T={T} titulo="Sostenibilidad del embalse" subtitulo="Indicadores de referencia internacional calculados con la curva cota-volumen y el histórico de caudales.">
+        <Tarjeta T={T} titulo="Sostenibilidad del embalse" subtitulo="Indicadores de referencia internacional calculados con las curvas oficiales del embalse (CGI, LIDAR 2012: volumen con la Ec.2 y área con la Tabla 3) y el histórico de caudales.">
           {sost ? (
             <div className="itu-tabla"><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
               <tbody>
@@ -198,7 +198,7 @@ export default function Indicadores({ T }) {
               </tbody>
             </table></div>
           ) : <div style={{ fontSize: 13, color: T.inkFaint }}>Sin nivel en vivo.</div>}
-          <Nota T={T} rotulo="Qué no se incluye y por qué">Huella hídrica (falta la evaporación medida sobre el embalse), disponibilidad e indisponibilidad forzada (falta el registro de indisponibilidades) y emisiones de gases de efecto invernadero (requieren un estudio G-res del embalse). El área del espejo sale de la curva cota-volumen (dV/dH), no de una medición.</Nota>
+          <Nota T={T} rotulo="Qué no se incluye y por qué">Huella hídrica (falta la evaporación medida sobre el embalse), disponibilidad e indisponibilidad forzada (falta el registro de indisponibilidades) y emisiones de gases de efecto invernadero (requieren un estudio G-res del embalse). El área del espejo sale de la Tabla 3 de la memoria del CGI (curvas de nivel del LIDAR de 2012), sin la sedimentación posterior.</Nota>
         </Tarjeta>
       </div>
     </>

@@ -10,8 +10,7 @@
    ============================================================ */
 import {
   NAMO, CONDICION_DESCARGA_DEFECTO, etiquetaCondicionDescarga, pctFromDeg, GAMMA_ENSAYADO_MAX, P_MAXIMO_ESPERADO_MW,
-  factorConversionHidrometria, simularDespachoHorario, unidadesMinimasParaPotencia, repartoPorUnidad,
-} from "./modelo.js";
+  factorConversionHidrometria, simularDespachoHorario, unidadesMinimasParaPotencia, repartoPorUnidad, volumenTotalHm3, areaEmbalseKm2 } from "./modelo.js";
 import { evaluarAlertas } from "./alertas.js";
 import { resumenIndicadores, capacidadDemostrada, capacidadNominalMW, energiaEmbalsada } from "./indicadores.js";
 
@@ -85,6 +84,7 @@ function estadoActual({ vivo: v }) {
     } : null,
     nivel_estimado_24h_msnm: r(v.nivelFinDia, 3),
     condicion_descarga_modelo: (() => { const c = condDe(v); const k = c.calibrada; return { descripcion: etiquetaCondicionDescarga(c), ...(k ? { ventana: `${k.desde} a ${k.hasta}`, sesgo_vs_hidrometria_pct: r(k.hidrometria && k.hidrometria.sesgo, 2), sesgo_vs_wk_pct: r(k.wk && k.wk.sesgo, 2), nota: "nivel de almenara equivalente (no medido) que iguala en promedio el caudal del modelo con Hidrometría y WK en los 7 días anteriores" } : {}) }; })(),
+    embalse: (() => { if (!Number.isFinite(a.nivel)) return null; const vt = volumenTotalHm3(a.nivel), v390 = volumenTotalHm3(390), vNamo = volumenTotalHm3(420); return { volumen_total_hm3: r(vt, 1), pct_volumen_total_al_namo: r((vt / vNamo) * 100, 1), volumen_util_hm3: r(Math.max(0, vt - v390), 1), pct_volumen_util: r((Math.max(0, vt - v390) / (vNamo - v390)) * 100, 1), area_km2: r(areaEmbalseKm2(a.nivel), 2), espacio_hasta_namo_hm3: r(vNamo - vt, 1), fuente: "curvas oficiales CGI I-M-2194-044-HID-VC-CVE-001 (LIDAR 2012): volumen Ec.2, área Tabla 3" }; })(),
     energia_embalsada_util: (() => { const e = energiaEmbalsada(a.nivel, v.ultima.t); return e ? { gwh: r(e.gwh, 0), pct_volumen_util: r(e.pctUtil, 1), horas_a_capacidad_nominal: r((e.gwh * 1000) / capacidadNominalMW(v.hoy), 0), nota: "volumen útil sobre 390 msnm × F.C. de Hidrometría" } : null; })(),
     hydroforecast_hoy: hfHoy ? { sitio_presa_media: r(hfHoy.QSitioPresa_pred_mean, 0), sitio_presa_min: r(hfHoy.QSitioPresa_pred_min, 0), sitio_presa_max: r(hfHoy.QSitioPresa_pred_max, 0), olaya_media: r(hfHoy.QOlaya_pred_mean, 0) } : null,
     alertas: evaluarAlertas(v).map((x) => ({ nivel: x.nivel, titulo: x.titulo, detalle: x.detalle })),
