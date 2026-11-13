@@ -9,7 +9,7 @@
    para pruebas.
    ============================================================ */
 import {
-  NAMO, CONDICION_DESCARGA_DEFECTO, pctFromDeg, GAMMA_ENSAYADO_MAX, P_MAXIMO_ESPERADO_MW,
+  NAMO, CONDICION_DESCARGA_DEFECTO, etiquetaCondicionDescarga, pctFromDeg, GAMMA_ENSAYADO_MAX, P_MAXIMO_ESPERADO_MW,
   factorConversionHidrometria, simularDespachoHorario, unidadesMinimasParaPotencia, repartoPorUnidad,
 } from "./modelo.js";
 import { evaluarAlertas } from "./alertas.js";
@@ -84,6 +84,7 @@ function estadoActual({ vivo: v }) {
       ...(v.resHoy.regla.estado === "excepcion" ? { nota_excepcion: "Hubo vertimiento > 1 m³/s en el día: la regla queda en excepción TODO el día aunque el vertimiento pare; la banda y lo requerido son solo referencia." } : {}),
     } : null,
     nivel_estimado_24h_msnm: r(v.nivelFinDia, 3),
+    condicion_descarga_modelo: (() => { const c = condDe(v); const k = c.calibrada; return { descripcion: etiquetaCondicionDescarga(c), ...(k ? { ventana: `${k.desde} a ${k.hasta}`, sesgo_vs_hidrometria_pct: r(k.hidrometria && k.hidrometria.sesgo, 2), sesgo_vs_wk_pct: r(k.wk && k.wk.sesgo, 2), nota: "nivel de almenara equivalente (no medido) que iguala en promedio el caudal del modelo con Hidrometría y WK en los 7 días anteriores" } : {}) }; })(),
     energia_embalsada_util: (() => { const e = energiaEmbalsada(a.nivel, v.ultima.t); return e ? { gwh: r(e.gwh, 0), pct_volumen_util: r(e.pctUtil, 1), horas_a_capacidad_nominal: r((e.gwh * 1000) / capacidadNominalMW(v.hoy), 0), nota: "volumen útil sobre 390 msnm × F.C. de Hidrometría" } : null; })(),
     hydroforecast_hoy: hfHoy ? { sitio_presa_media: r(hfHoy.QSitioPresa_pred_mean, 0), sitio_presa_min: r(hfHoy.QSitioPresa_pred_min, 0), sitio_presa_max: r(hfHoy.QSitioPresa_pred_max, 0), olaya_media: r(hfHoy.QOlaya_pred_mean, 0) } : null,
     alertas: evaluarAlertas(v).map((x) => ({ nivel: x.nivel, titulo: x.titulo, detalle: x.detalle })),
@@ -221,10 +222,11 @@ function simularNivel({ vivo: v }, { potencias_mw, caudal_entrada_m3s, nivel_ini
   const qIn = Number.isFinite(caudal_entrada_m3s) ? caudal_entrada_m3s : v && v.resHoy ? v.resHoy.balance.qEntrada : null;
   if (nivel == null) return { error: "Falta el nivel inicial (no hay dato en vivo)." };
   if (qIn == null) return { error: "Falta el caudal de entrada (no hay balance de hoy): páselo en caudal_entrada_m3s." };
-  const sim = simularDespachoHorario({ nivelInicial: nivel, qEntrada: qIn, cond: CONDICION_DESCARGA_DEFECTO, horas: potencias_mw.map((P) => ({ potenciaMW: P, unidades: unidadesMinimasParaPotencia(P, 4) })) });
+  const cond = condDe(v);
+  const sim = simularDespachoHorario({ nivelInicial: nivel, qEntrada: qIn, cond, horas: potencias_mw.map((P) => ({ potenciaMW: P, unidades: unidadesMinimasParaPotencia(P, 4) })) });
   const t0 = v && v.ultima ? v.ultima.t : null;
   return {
-    supuestos: { nivel_inicial_msnm: r(nivel, 3), caudal_entrada_m3s: r(qIn, 1), desde: t0, condicion_descarga: "río colmatado (ASE)", techo_apertura: "100 % (30,2°) y 307 MW en el eje por unidad", sin_vertimiento: true },
+    supuestos: { nivel_inicial_msnm: r(nivel, 3), caudal_entrada_m3s: r(qIn, 1), desde: t0, condicion_descarga: etiquetaCondicionDescarga(cond), techo_apertura: "100 % (30,2°) y 307 MW en el eje por unidad", sin_vertimiento: true },
     nivel_final_msnm: r(sim.Hfinal, 3), cambio_cm: r(sim.deltaH * 100, 1),
     horas_simuladas: potencias_mw.length,
     columnas: ["hora", "potencia_mw", "unidades", "apertura_pct", "q_turbinado_m3s", "q_regulado_hidrometria_m3s", "nivel_fin_msnm", "alcanzable"],
@@ -234,11 +236,16 @@ function simularNivel({ vivo: v }, { potencias_mw, caudal_entrada_m3s, nivel_ini
   };
 }
 
-function puntoOperacion(_, { nivel_msnm, potencias_unidad_mw }) {
+/* Condición de descarga del modelo: la de la operación en vivo (calibrada con
+   Hidrometría y WK); sin ella, la de la ASE. */
+const condDe = (v) => (v && v.condicion ? v.condicion : CONDICION_DESCARGA_DEFECTO);
+
+function puntoOperacion({ vivo: v } = {}, { nivel_msnm, potencias_unidad_mw }) {
   if (!Number.isFinite(nivel_msnm) || !Array.isArray(potencias_unidad_mw) || !potencias_unidad_mw.length || potencias_unidad_mw.length > 4) return { error: "nivel_msnm y de 1 a 4 potencias por unidad." };
-  const res = repartoPorUnidad(nivel_msnm, potencias_unidad_mw, { cond: CONDICION_DESCARGA_DEFECTO, gammaMax: GAMMA_ENSAYADO_MAX, potenciaMaxMW: null });
+  const cond = condDe(v);
+  const res = repartoPorUnidad(nivel_msnm, potencias_unidad_mw, { cond, gammaMax: GAMMA_ENSAYADO_MAX, potenciaMaxMW: null });
   return {
-    nota: `Colina común (ensayo 2013), río colmatado (ASE). Límite garantizado ${P_MAXIMO_ESPERADO_MW} MW en el eje por unidad; apertura hasta el máximo ensayado.`,
+    nota: `Colina común (ensayo 2013); condición de descarga: ${etiquetaCondicionDescarga(cond)}. Límite garantizado ${P_MAXIMO_ESPERADO_MW} MW en el eje por unidad; apertura hasta el máximo ensayado.`,
     unidades: res.porUnidad.filter((u) => u.pBornes > 0).map((u) => ({ unidad: `U${u.id}`, p_bornes_mw: u.pBornes, p_eje_mw: r(u.pEje, 2), apertura_pct: pct(u.gamma), apertura_grados: r(u.gamma, 2), q_m3s: r(u.q, 1), eficiencia_pct: r(u.eta, 2), salto_neto_m: r(u.saltoNeto, 2), alcanzable: u.alcanzable })),
     q_total_m3s: r(res.qTotal, 1), fc_modelo: r(res.fc, 4),
   };

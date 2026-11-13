@@ -2,7 +2,7 @@
    de ayer, histórico diario). Puro: lo usan la app y el proceso automático
    (hechos para el agente). */
 import { resumenDia, indiceRelativoUnidades, requeridoRestoDelDia, cierreProyectado, minutosDe } from "../analitica.js";
-import { CONDICION_DESCARGA_DEFECTO, factorConversionHidrometria, bandaReglaOperativa, NAMO, volumenExtrapolado, nivelDesdeVolumenExtrapolado, potenciaBornesDesdeEje, P_MAXIMO_ESPERADO_MW } from "../modelo.js";
+import { condicionVigente, factorConversionHidrometria, bandaReglaOperativa, NAMO, volumenExtrapolado, nivelDesdeVolumenExtrapolado, potenciaBornesDesdeEje, P_MAXIMO_ESPERADO_MW } from "../modelo.js";
 import { ahoraColombia } from "./tiempo.js";
 const P_LINEA = 20;
 
@@ -35,6 +35,8 @@ function calcularVivo(c) {
   if (!c) return null;
   const { hoy, ayer, filas = [], diario = [] } = c;
   const v = { ...c };
+  // Condición de descarga del modelo: la calibrada con Hidrometría y WK (o la de la ASE si no hay)
+  v.condicion = condicionVigente(c.estadoProceso);
   const filaAyer = diario.find((d) => d.dia === ayer) || null;
   v.filaAyer = filaAyer;
   // Índice relativo por unidad con los últimos 30 días cerrados
@@ -83,7 +85,7 @@ function calcularVivo(c) {
         qRegAnterior = resumenDia(ayer, ph, { conModelo: false }).regla.qReg;
       }
     }
-    v.resHoy = resumenDia(hoy, porHora, { qRegAnterior, cond: CONDICION_DESCARGA_DEFECTO });
+    v.resHoy = resumenDia(hoy, porHora, { qRegAnterior, cond: v.condicion });
     const banda = qRegAnterior != null ? bandaReglaOperativa(qRegAnterior) : null;
     v.banda = banda;
     // Minutos que faltan del día desde el último dato (el promedio final se hace con los minutos con dato)

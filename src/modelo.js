@@ -591,6 +591,15 @@ const ASE_Q_RIO_MAX = 2660;
 const CONDICION_DESCARGA_DISENO = Object.freeze({ modo: "diseno" });
 const CONDICION_DESCARGA_DEFECTO = Object.freeze({ modo: "ase", qRio: 400, almManual: Object.freeze({ norte: 224.3, sur: 224.3 }) });
 
+/* Condición vigente para el modelo: la calibrada por el proceso automático
+   (derivados/estado.json → condicionModelo, ver src/calibracion.js); si no
+   hay calibración, la de la ASE. */
+function condicionVigente(estadoProceso) {
+  const c = estadoProceso && estadoProceso.condicionModelo;
+  if (c && c.modo === "manual" && c.calibrada && c.almManual && Number.isFinite(c.almManual.norte) && Number.isFinite(c.almManual.sur)) return c;
+  return CONDICION_DESCARGA_DEFECTO;
+}
+
 /* Tabla completa (regla b): cada celda lleva su origen ("ase" o "completada"). */
 function completarTablaASE(filas) {
   return filas.map(([qRio, niveles], i) => {
@@ -676,6 +685,10 @@ function nivelAlmenaraSegunCondicion(cond, zona, nAlmenara, qUnidad) {
 }
 function etiquetaCondicionDescarga(cond) {
   const c = cond || CONDICION_DESCARGA_DISENO;
+  if (c.modo === "manual" && c.calibrada) {
+    const n = c.almManual && Number(c.almManual.norte);
+    return `calibrada con Hidrometría y Winter-Kennedy: almenara equivalente ${Number.isFinite(n) ? n.toFixed(2).replace(".", ",") : "—"} msnm`;
+  }
   if (c.modo === "manual") {
     const m = c.almManual || {};
     return typeof m === "number" ? `almenaras manual ${m.toFixed(2)} msnm` : `almenaras manual N°1 ${Number(m.norte).toFixed(2)} / N°2 ${Number(m.sur).toFixed(2)} msnm`;
@@ -1659,6 +1672,7 @@ export {
   GAMMA_AMPLIADO_MAX,
   FACTOR_HIDROMETRIA_MW_POR_M3S,
   FC_HIDROMETRIA_POR_NIVEL,
+  condicionVigente,
   textoHoraColombia,
   factorConversionHidrometria,
   REGLA_OPERATIVA_RES1891,

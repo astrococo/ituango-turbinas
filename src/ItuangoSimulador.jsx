@@ -32,6 +32,7 @@ import {
   ASE_Q_RIO_MAX,
   ASE_Q_RIO_MIN,
   CONDICION_DESCARGA_DEFECTO,
+  FC_HIDROMETRIA_POR_NIVEL,
   CONDICION_DESCARGA_DISENO,
   ESCENARIOS_2023_EPM_GE,
   GAMMAS_HILL,
@@ -331,8 +332,12 @@ function ChartFamilia({ ejeX, ejeY, xLabel, yLabel, xDomain, yDomain, waeCampoX,
 /* Panel de la condición de descarga: define el nivel de la almenara que
    usa todo el módulo y muestra, para el punto explorado, la diferencia
    frente a la condición de diseño. */
-function PanelCondicionDescarga({ cond, setCond, T, nivelEmbalse, nUnidades, gamma }) {
-  const set = (cambios) => setCond({ ...cond, ...cambios });
+function PanelCondicionDescarga({ cond, setCond, T, nivelEmbalse, nUnidades, gamma, condCalibrada }) {
+  // Cualquier cambio manual deja de ser la condición calibrada
+  const set = (cambios) => { const { calibrada, ...resto } = cond; setCond({ ...resto, ...cambios }); }; // eslint-disable-line no-unused-vars
+  const cal = cond.calibrada || (condCalibrada && condCalibrada.calibrada) || null;
+  const pct = (e) => (e && Number.isFinite(e.sesgo) ? `${e.sesgo >= 0 ? "+" : "−"}${fx(Math.abs(e.sesgo), 2)} %` : "—");
+  const mae = (e) => (e && Number.isFinite(e.mae) ? `${fx(e.mae, 2)} %` : "—");
   const manual = typeof cond.almManual === "object" && cond.almManual ? cond.almManual : { norte: 224.3, sur: 224.3 };
   const rep = unidadesPorAlmenara(nUnidades, cond);
   const conCond = evaluarTurbinaUnidad(nivelEmbalse, gamma, nUnidades, cond);
@@ -360,13 +365,22 @@ function PanelCondicionDescarga({ cond, setCond, T, nivelEmbalse, nUnidades, gam
       <div style={{ fontSize: 12.5, color: T.inkMuted, fontFamily: FONT_BODY, marginBottom: 10, lineHeight: 1.5 }}>
         Operación conjunta: las unidades 1-4 descargan en la <b>almenara N°1 (norte)</b>, hoy en operación; las unidades 5-8 descargan en la <b>almenara N°2 (sur)</b>, que operará a partir de inicios de 2028. Con n unidades activas se despachan en orden 1 → 8: la N°1 recibe hasta 4 y la N°2 el resto. Cada almenara solo recibe el caudal de sus unidades; el caudal del río es uno solo.
       </div>
-      <BotonGrupo T={T} label="Condición" value={cond.modo} onChange={(v) => set({ modo: v })}
-        tip="Actual: tablas HEC-RAS de la Asesoría (ASE, 2026), río colmatado. Diseño: niveles del pliego (Tabla 7.5.2), los únicos con los que GE tiene datos. Manual: niveles medidos (p. ej. Hidrometría)."
+      <BotonGrupo T={T} label="Condición" value={cond.calibrada ? "auto" : cond.modo} onChange={(v) => (v === "auto" ? setCond("auto") : set({ modo: v }))}
+        tip="Automática (por defecto): nivel de almenara equivalente con el que el caudal del modelo coincide, en promedio de los últimos 7 días, con Hidrometría y con Winter-Kennedy. Actual: tablas HEC-RAS de la Asesoría (ASE, 2026), río colmatado. Diseño: niveles del pliego (Tabla 7.5.2), los únicos con los que GE tiene datos. Manual: niveles medidos (p. ej. Hidrometría)."
         options={[
+          ...(condCalibrada || cond.calibrada ? [{ value: "auto", label: "Automática (calibrada con Hidrometría y WK)" }] : []),
           { value: "ase", label: "Actual: río colmatado (ASE 2026)" },
           { value: "diseno", label: "Diseño GE / pliego (río dragado)" },
           { value: "manual", label: "Manual (niveles medidos)" },
         ]} />
+      {cal && (
+        <div style={{ fontSize: 12.5, color: T.inkMuted, fontFamily: FONT_BODY, margin: "4px 0 10px", lineHeight: 1.55, padding: "8px 10px", border: `1px solid ${T.line}`, borderRadius: 8 }}>
+          <b style={{ color: T.ink }}>Calibración automática{cond.calibrada ? " (en uso)" : ""}:</b> almenara equivalente <b style={{ color: T.ink }}>{fx((cond.calibrada ? cond : condCalibrada).almManual.norte, 2)} msnm</b> (igual en N°1 y N°2; punto medio entre {fx(cal.nivelHidrometria, 2)} msnm, que anula la diferencia con Hidrometría{Number.isFinite(cal.nivelWK) ? <>, y {fx(cal.nivelWK, 2)} msnm, que la anula con WK</> : ""}), con {cal.horas} horas estables entre {cal.desde} y {cal.hasta}.
+          Diferencia media del caudal del modelo: {pct(cal.hidrometria)} frente a Hidrometría (error horario medio {mae(cal.hidrometria)}) y {pct(cal.wk)} frente a Winter-Kennedy ({mae(cal.wk)}).
+          {cal.comparacion && cal.comparacion.hidrometria && <> Con la ASE y el río = caudal descargado, en las mismas horas: {pct(cal.comparacion.hidrometria)} y {pct(cal.comparacion.wk)}.</>}
+          <br />Es un nivel <b>equivalente</b>, no medido: además del nivel real de la almenara absorbe pequeños errores de la colina y de las pérdidas. Se recalcula a diario con los 7 días anteriores; para Hidrometría solo se usan horas con la fórmula vigente del F.C. (desde {FC_HIDROMETRIA_POR_NIVEL.desde}). El WK aún no está calibrado: se usa como segunda referencia, no como verdad.
+        </div>
+      )}
       {cond.modo === "ase" && (
         <Slider T={T} label="Caudal del río Cauca en D4'" value={qRio} min={150} max={ASE_Q_RIO_MAX} step={10} unit=" m³/s"
           onChange={(v) => set({ qRio: v })}
@@ -1167,7 +1181,7 @@ function PanelDespachoIntradiario({ T, condDescarga, gammaMax, etiquetaTecho }) 
   );
 }
 
-function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
+function ColinaModulo({ T, tab, condDescarga, setCondDescarga, condCalibrada }) {
   const [gamma, setGamma] = useState(21.5);
   /* Nivel del embalse es la fuente de verdad; Salto neto (H) se deriva
      automáticamente de él (según γ y las unidades activas, usando el
@@ -1754,7 +1768,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga }) {
       {tab === "descarga" && (<>
       <Proposito T={T} id="descarga" titulo="Condición de descarga (almenaras)" fuente="Estudio ASE 2026 (río colmatado), diseño GE / pliego, o niveles medidos" para="Fijar la condición aguas abajo, es decir, el nivel de las almenaras, que usan todos los cálculos de la app." logras="Que el salto neto refleje el estado real del río: con el río colmatado la almenara sube y se pierde salto. A medida que avancen los dragados, la condición se acercará a la de diseño." resultados="Nivel de cada almenara (N°1: U1–U4; N°2: U5–U8 desde 2028) según el caudal del río y el turbinado, con avisos cuando se extrapola." />
       <div style={cardStyle}>
-        <PanelCondicionDescarga cond={condDescarga} setCond={setCondDescarga} T={T}
+        <PanelCondicionDescarga cond={condDescarga} setCond={setCondDescarga} T={T} condCalibrada={condCalibrada}
           nivelEmbalse={nivelEmbalseExploracion} nUnidades={nTurbActivasExploracion} gamma={gamma} />
       </div>
       </>)}
@@ -2443,14 +2457,23 @@ function Aplicacion() {
     const nombre = PESTANAS.find(([k]) => k === tab)?.[1];
     document.title = `${nombre} · Turbinas Ituango`;
   }, [tab]);
-  /* El caudal del río en D4' (condición ASE) se toma una vez del caudal total
-     descargado actual, si el usuario no lo ha cambiado. */
-  const [rioVivo, setRioVivo] = useState(false);
+  /* Condición automática (por defecto): la calibrada por el proceso con
+     Hidrometría y Winter-Kennedy (vivo.condicion). Si aún no hay calibración,
+     la ASE con el caudal del río = caudal total descargado actual. Deja de ser
+     automática cuando el usuario elige otra en el panel. */
+  const [condAuto, setCondAuto] = useState(true);
   useEffect(() => {
-    if (rioVivo || !vivo || !vivo.actual || !Number.isFinite(vivo.actual.qDesc)) return;
-    setCondDescarga((c) => (c === CONDICION_DESCARGA_DEFECTO ? { ...c, qRio: Math.round(vivo.actual.qDesc), origenQRio: "vivo" } : c));
-    setRioVivo(true);
-  }, [vivo, rioVivo]);
+    if (!condAuto || !vivo) return;
+    if (vivo.condicion && vivo.condicion.calibrada) setCondDescarga(vivo.condicion);
+    else if (vivo.actual && Number.isFinite(vivo.actual.qDesc)) setCondDescarga((c) => (c.modo === "ase" && c.origenQRio === "vivo" ? c : { ...CONDICION_DESCARGA_DEFECTO, qRio: Math.round(vivo.actual.qDesc), origenQRio: "vivo" }));
+  }, [vivo, condAuto]);
+  const elegirCondDescarga = (c) => {
+    if (c === "auto") { setCondAuto(true); if (vivo && vivo.condicion && vivo.condicion.calibrada) setCondDescarga(vivo.condicion); return; }
+    setCondAuto(false);
+    // Al pasar a la ASE sin caudal del río: el descargado actual (o el de la condición por defecto)
+    if (c && c.modo === "ase" && !Number.isFinite(c.qRio)) c = { ...c, qRio: vivo && vivo.actual && Number.isFinite(vivo.actual.qDesc) ? Math.round(vivo.actual.qDesc) : CONDICION_DESCARGA_DEFECTO.qRio };
+    setCondDescarga(c);
+  };
   const grupo = GRUPOS.find((g) => g.tabs.some(([k]) => k === tab)) || null;
   const edad = vivo && vivo.edadMin;
   const estadoDatos = !datos.conectado ? { c: T.amber, txt: "Sin datos de operación" } : edad == null ? (cargandoVivo && !vivo ? { c: T.inkFaint, txt: "Conectando…" } : { c: "#d03b3b", txt: errorVivo ? "Error de datos" : "Sin datos de hoy" }) : edad <= 90 ? { c: "#0ca30c", txt: `Datos ${vivo.ultima.t.slice(11)}` } : { c: "#d03b3b", txt: `Datos con ${Math.round(edad / 60)} h de atraso` };
@@ -2481,8 +2504,8 @@ function Aplicacion() {
                 <span className="lbl">{estadoDatos.txt}</span>
               </a>
               <a className="itu-pill" href="#descarga" title="Condición de descarga (nivel de las almenaras) que usan todos los cálculos">
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: condDescarga.modo === "ase" ? T.teal : T.amber }} />
-                <span className="lbl">{condDescarga.modo === "ase" ? `Río ${Math.round(condDescarga.qRio)} m³/s` : condDescarga.modo === "manual" ? "Almenaras manual" : "Diseño"}</span>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: condDescarga.calibrada || condDescarga.modo === "ase" ? T.teal : T.amber }} />
+                <span className="lbl">{condDescarga.calibrada ? `Calibrada ${fx(condDescarga.almManual.norte, 2)} msnm` : condDescarga.modo === "ase" ? `Río ${Math.round(condDescarga.qRio)} m³/s` : condDescarga.modo === "manual" ? "Almenaras manual" : "Diseño"}</span>
               </a>
               <button className="itu-pill" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title={theme === "dark" ? "Tema claro" : "Tema oscuro"} aria-label="Cambiar tema">{theme === "dark" ? "☀" : "🌙"}</button>
               <button className="itu-pill" onClick={() => setAltoContraste((v) => !v)} title="Alto contraste" aria-pressed={altoContraste} style={altoContraste ? { borderColor: T.teal, color: T.teal } : undefined}>
@@ -2527,7 +2550,7 @@ function Aplicacion() {
             </div>
           </>
         )}
-        {MODULO_COLINA.has(tab) && <ColinaModulo T={T} tab={tab} condDescarga={condDescarga} setCondDescarga={setCondDescarga} />}
+        {MODULO_COLINA.has(tab) && <ColinaModulo T={T} tab={tab} condDescarga={condDescarga} setCondDescarga={elegirCondDescarga} condCalibrada={vivo && vivo.condicion && vivo.condicion.calibrada ? vivo.condicion : null} />}
         <footer style={{ marginTop: 24, fontSize: 12, color: T.inkFaint, lineHeight: 1.6 }}>
           Modelo de colina del ensayo de 2013 transpuesto al prototipo (IEC 60193), con datos del fabricante, de los estudios hidráulicos y de Hidrometría. Datos de operación: LoggerNet (vía relay) y HydroForecast Ituango. Resultados de apoyo a la operación: no reemplazan los procedimientos de EPM.
         </footer>

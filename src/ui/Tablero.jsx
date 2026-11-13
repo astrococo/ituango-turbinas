@@ -8,7 +8,7 @@ import { useVivo } from "../datos/vivo.jsx";
 import { useDatos } from "../datos/fuentes.jsx";
 import { useAportes } from "../datos/aportes.js";
 import { energiaEmbalsada, capacidadNominalMW } from "../indicadores.js";
-import { ETIQUETA_ESTADO_REGLA, NAMO, repartoPorUnidad, CONDICION_DESCARGA_DEFECTO, factorConversionHidrometria, pctFromDeg } from "../modelo.js";
+import { ETIQUETA_ESTADO_REGLA, NAMO, repartoPorUnidad, etiquetaCondicionDescarga, factorConversionHidrometria, pctFromDeg } from "../modelo.js";
 import { minutosDe, tramosCumplimiento, aperturaIntervalos } from "../analitica.js";
 import { GraficoSeries, Estado, BarraBanda, fmtNum, colorSerie, aSeg } from "./graficos.jsx";
 import { Proposito, Tarjeta, Kpi, PanelConexion, hace, fechaCorta, SelectorRango, rangoUltimos, Nota } from "./comunes.jsx";
@@ -22,6 +22,8 @@ function Frescura({ T, edadMin, ultimo }) {
   const tipo = edadMin == null ? "neutro" : edadMin <= 90 ? "bien" : edadMin <= 180 ? "aviso" : "critico";
   return <Estado T={T} tipo={tipo}>Último dato {fechaCorta(ultimo)} · {hace(edadMin)}</Estado>;
 }
+
+const fmtSesgo = (e) => (e && Number.isFinite(e.sesgo) ? `${e.sesgo >= 0 ? "+" : "−"}${fmtNum(Math.abs(e.sesgo), 1)} %` : "—");
 
 export default function Tablero({ T, condDescarga }) {
   const { vivo, cargando, error, recargar, cuando } = useVivo();
@@ -77,7 +79,7 @@ export default function Tablero({ T, condDescarga }) {
     const pTot = filas.map((_, i) => pU.reduce((a, s) => a + (s[i] || 0), 0));
     const qReg = filas.map((r) => r.qReg), qVert = filas.map((r) => (r.qVert != null ? Math.max(0, r.qVert) : null));
     return { paso: "hora", t, nU, pTot, qReg, qVert, qDesc: qReg.map((q, i) => (q == null ? null : q + (qVert[i] || 0))), acum: acumular(t, qReg), bMin: t.map((x) => bandaDe(x.slice(0, 10))?.min ?? null), bMax: t.map((x) => bandaDe(x.slice(0, 10))?.max ?? null), nivel: filas.map((r) => r.nivel), p: pU };
-  }, [v, porMinuto, rango.desde, rango.hasta, horario.datos]);
+  }, [v, porMinuto, rango.desde, rango.hasta, horario.datos, condDescarga]);
 
   // Franja de cumplimiento: promedio acumulado de cada día frente a su banda
   const cumplimiento = useMemo(() => {
@@ -135,7 +137,7 @@ export default function Tablero({ T, condDescarga }) {
       const f = v.filas.filter((r) => r.t.slice(0, 10) >= rango.desde && r.t.slice(0, 10) <= rango.hasta);
       if (!f.length) return null;
       const nU = f[0].p.length;
-      const iv = aperturaIntervalos(f, nU, { minutos: 15, cond: CONDICION_DESCARGA_DEFECTO });
+      const iv = aperturaIntervalos(f, nU, { minutos: 15, cond: condDescarga || v.condicion });
       return { paso: "15 min", t: iv.map((x) => x.t), filas: iv.map((x) => x.gamma), lineas: iv.map((x) => x.linea), pasoH: iv.map((x) => x.min / 60), nU };
     }
     const h = horario.datos;
@@ -148,13 +150,15 @@ export default function Tablero({ T, condDescarga }) {
     if (!filas.length) return null;
     const nU = filas.reduce((k, r) => Math.max(k, r.g ? r.g.length : 0), 0);
     return { paso: "hora", t: filas.map((r) => r.t), filas: filas.map((r) => r.g), lineas: filas.map((r) => r.l), pasoH: 1, nU };
-  }, [v, porMinuto, rango.desde, rango.hasta, horario.datos]);
+  }, [v, porMinuto, rango.desde, rango.hasta, horario.datos, condDescarga]);
 
   // Modelo por unidad con el promedio de los últimos 15 min
   const modelo = useMemo(() => {
     if (!v || !v.actual || v.actual.nivel == null) return null;
     const pb = Array.from({ length: 8 }, (_, i) => (v.actual.p[i] != null && v.actual.p[i] > P_LINEA ? v.actual.p[i] : 0));
-    const cond = { ...(condDescarga && condDescarga.modo === "ase" ? condDescarga : CONDICION_DESCARGA_DEFECTO), qRio: v.actual.qDesc };
+    // Condición de la app (por defecto, la calibrada con Hidrometría y WK); con la ASE, el río = descargado actual
+    const base = condDescarga || v.condicion;
+    const cond = base.modo === "ase" ? { ...base, qRio: v.actual.qDesc } : base;
     const fact = v.indiceUnidades ? Array.from({ length: 8 }, (_, i) => v.indiceUnidades[i]?.factor ?? null) : null;
     return { comun: repartoPorUnidad(v.actual.nivel, pb, { cond, gammaMax: 31.98, potenciaMaxMW: null }), wk: fact ? repartoPorUnidad(v.actual.nivel, pb, { cond, gammaMax: 31.98, potenciaMaxMW: null, factores: fact }) : null, cond };
   }, [v, condDescarga]);
@@ -280,7 +284,7 @@ export default function Tablero({ T, condDescarga }) {
       )}
 
       {a && modelo && (
-        <Tarjeta T={T} titulo="Unidades ahora" subtitulo={`Promedio de los últimos 15 min. El caudal de Hidrometría por unidad es la columna de LoggerNet (P / F.C., el mismo factor para todas); el Winter-Kennedy (WK) es la medición de cada máquina, aún sin calibrar: sirve para comparar unidades, no como caudal absoluto. Modelo: colina común con la condición de descarga ${modelo.cond.modo === "ase" ? `ASE y río ${fmtNum(modelo.cond.qRio, 0)} m³/s` : "elegida"}.`}>
+        <Tarjeta T={T} titulo="Unidades ahora" subtitulo={`Promedio de los últimos 15 min. El caudal de Hidrometría por unidad es la columna de LoggerNet (P / F.C., el mismo factor para todas); el Winter-Kennedy (WK) es la medición de cada máquina, aún sin calibrar: sirve para comparar unidades, no como caudal absoluto. Modelo: colina común con la condición de descarga ${etiquetaCondicionDescarga(modelo.cond)}${modelo.cond.calibrada ? ` (últimos 7 días: sesgo ${fmtSesgo(modelo.cond.calibrada.hidrometria)} frente a Hidrometría y ${fmtSesgo(modelo.cond.calibrada.wk)} frente a WK)` : ""}.`}>
           <div className="itu-tabla">
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, fontVariantNumeric: "tabular-nums" }}>
               <thead><tr style={{ color: T.inkFaint, textAlign: "right" }}>
