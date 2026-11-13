@@ -16,6 +16,7 @@ import { leerLoggerNet } from "../operacion.js";
 import { volumenTotalHm3, areaEmbalseKm2, CURVA_EMBALSE_CGI, NAMO, NAME, NIVEL_MIN_TEC } from "../modelo.js";
 import { GraficoSeries, Estado, fmtNum } from "./graficos.jsx";
 import { Tarjeta, Kpi, SelectorRango, rangoUltimos, fechaCorta, Nota } from "./comunes.jsx";
+import AnimacionEmbalse from "./AnimacionEmbalse.jsx";
 
 const NIVEL_MIN_FISICO = 350; // toma de la estructura de captación (Figura 4 de la memoria)
 const V_NAMO = volumenTotalHm3(NAMO);
@@ -210,6 +211,8 @@ export default function Embalse({ T, historicoHF }) {
           referencias={[{ y: A_NAMO, rotulo: "NAMO (420 msnm)", color: T.inkFaint, dash: true }]} nombreArchivo={`area_embalse_${escala}`} mensajeVacio={vacio} />
         <Nota T={T}>Para cada nivel del radar: volumen total con la Ec.2 de la memoria (10 tramos polinómicos, 219–460 msnm); volumen útil = volumen total − {fmtNum(V_390, 3)} hm³ (volumen a 390 msnm), en cero por debajo del mínimo técnico; área con la Tabla 3 interpolada en línea recta entre cotas cada 5 m. En la escala diaria la línea es la media del día y la franja, el volumen o el área con el nivel mínimo y máximo del día. Los porcentajes del eje derecho son sobre los valores al NAMO.</Nota>
       </Tarjeta>
+
+      <AnimacionEmbalse T={T} />
 
       <Tarjeta T={T} titulo="Curvas del embalse (respaldo técnico)"
         subtitulo="Curva vigente del Consorcio Generación Ituango: chequeo 2015 con curvas de nivel cada 5 m del LIDAR de 2012 (Tabla 3) y ecuación de volumen de 2021 (Ec.2). Memoria I-M-2194-044-HID-VC-CVE-001, rev. 0, 29-jul-2022.">

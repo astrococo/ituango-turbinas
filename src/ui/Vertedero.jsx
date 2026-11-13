@@ -13,6 +13,7 @@ import { unidadColumna } from "../operacion.js";
 import { useDatos, useCargaPeriodica } from "../datos/fuentes.jsx";
 import { GraficoSeries, Estado, fmtNum } from "./graficos.jsx";
 import { Proposito, Tarjeta, Kpi, SelectorRango, fechaCorta } from "./comunes.jsx";
+import AnimacionEmbalse from "./AnimacionEmbalse.jsx";
 
 export default function Vertedero({ T }) {
   const { vivo } = useVivo();
@@ -121,6 +122,7 @@ export default function Vertedero({ T }) {
           </div>
         </Tarjeta>
       )}
+      {d.conectado && vivo && <AnimacionEmbalse T={T} vistaInicial="vertedero" />}
       {d.conectado && vivo && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", margin: "4px 0 14px" }}>
           <b style={{ fontSize: 13.5, color: T.ink }}>Gráficos:</b>
