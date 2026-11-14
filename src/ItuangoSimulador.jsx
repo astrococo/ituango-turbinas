@@ -18,7 +18,7 @@ import { ProveedorSesion, useSesion } from "./datos/sesion.jsx";
 import { pantallaDeAcceso, PantallaNuevaClave, MenuUsuario } from "./ui/Ingreso.jsx";
 import Usuarios from "./ui/Usuarios.jsx";
 import { Proposito, PanelConexion, Nota, Kpi } from "./ui/comunes.jsx";
-import { GraficoSeries, unirCurvas } from "./ui/graficos.jsx";
+import { GraficoSeries, unirCurvas, limiteInferiorEje } from "./ui/graficos.jsx";
 import { EQUIV_APERTURA, referenciasApertura, NOTA_APERTURA, motivoSinApertura } from "./ui/Apertura.jsx";
 import Tablero from "./ui/Tablero.jsx";
 import Asistente from "./ui/Asistente.jsx";
@@ -1709,7 +1709,9 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga, condCalibrada }) 
   }, []);
   const dominioY = (campoIdx) => {
     const vs = HILL_PROTO_186.map((r) => r[campoIdx]);
-    return [0, Math.ceil(Math.max(...vs) * 1.05)];
+    // parte de cero solo si los datos llegan a cero o cerca (misma regla de los demás gráficos)
+    const mn = Math.min(...vs), mx = Math.max(...vs);
+    return [limiteInferiorEje(mn, mx), Math.ceil(mx * 1.05)];
   };
 
   const curvasEficiencia = useMemo(() => H_REFERENCIA_MODELO.map((ref) => ({ ...ref, puntos: curvaEficienciaEnH(ref.H, 0.4) })), []);
@@ -2217,12 +2219,12 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga, condCalibrada }) 
 
       <div style={cardStyle}>
         <ChartHeader titulo="Caudal por apertura constante — variables reducidas" subtitulo={`Análogo a la Figura 4.1 (n₁₁-Q₁₁). Cada línea es una apertura γ realmente ensayada; la resaltada es la más cercana a tu selección (${fx(pctFromDeg(gammaCercana), 1)} % = ${fx(gammaCercana, 2)}°). Aperturas ensayadas: ${GAMMAS_HILL.map((g) => `${fx(pctFromDeg(g), 1)} %`).join(", ")} (100 % = 30,2°).`} T={T} />
-        <ChartFamilia csv={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ apertura_pct: +pctFromDeg(l.gamma).toFixed(2), gamma_grados: l.gamma, ...p })))} nombreArchivo="n11_q11" ejeX="n11" ejeY="Q11_m3s" xLabel="n₁₁ (rpm)" yLabel="Q₁₁ (m³/s)" xDomain={[n11min, n11max]} yDomain={[0, dominioY(2)[1] / 1000]} waeCampoX={0} waeCampoY={1} waeEscala={0.001} bepXY={[51.96, 0.63245]} grid={gridModeloQ} niveles={NIVELES_MODELO} puntoActualXY={puntoActual ? [puntoActual.n11, puntoActual.Q11 / 1000] : null} lineasPorGamma={lineasPorGamma} gammaCercana={gammaCercana} T={T} />
+        <ChartFamilia csv={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ apertura_pct: +pctFromDeg(l.gamma).toFixed(2), gamma_grados: l.gamma, ...p })))} nombreArchivo="n11_q11" ejeX="n11" ejeY="Q11_m3s" xLabel="n₁₁ (rpm)" yLabel="Q₁₁ (m³/s)" xDomain={[n11min, n11max]} yDomain={dominioY(2).map((v) => v / 1000)} waeCampoX={0} waeCampoY={1} waeEscala={0.001} bepXY={[51.96, 0.63245]} grid={gridModeloQ} niveles={NIVELES_MODELO} puntoActualXY={puntoActual ? [puntoActual.n11, puntoActual.Q11 / 1000] : null} lineasPorGamma={lineasPorGamma} gammaCercana={gammaCercana} T={T} />
       </div>
 
       <div style={cardStyle}>
         <ChartHeader titulo="Potencia por apertura constante — variables reducidas" subtitulo="Análogo a la Figura 4.2 (n₁₁-P₁₁)." T={T} />
-        <ChartFamilia csv={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ apertura_pct: +pctFromDeg(l.gamma).toFixed(2), gamma_grados: l.gamma, ...p })))} nombreArchivo="n11_p11" ejeX="n11" ejeY="P11_MW" xLabel="n₁₁ (rpm)" yLabel="P₁₁ (MW)" xDomain={[n11min, n11max]} yDomain={[0, dominioY(3)[1] / 1000]} waeCampoX={0} waeCampoY={2} waeEscala={0.001} bepXY={[51.96, 0.00595]} grid={gridModeloP} niveles={NIVELES_MODELO} puntoActualXY={puntoActual ? [puntoActual.n11, puntoActual.P11 / 1000] : null} lineasPorGamma={lineasPorGamma} gammaCercana={gammaCercana} T={T} />
+        <ChartFamilia csv={lineasPorGamma.flatMap((l) => l.puntos.map((p) => ({ apertura_pct: +pctFromDeg(l.gamma).toFixed(2), gamma_grados: l.gamma, ...p })))} nombreArchivo="n11_p11" ejeX="n11" ejeY="P11_MW" xLabel="n₁₁ (rpm)" yLabel="P₁₁ (MW)" xDomain={[n11min, n11max]} yDomain={dominioY(3).map((v) => v / 1000)} waeCampoX={0} waeCampoY={2} waeEscala={0.001} bepXY={[51.96, 0.00595]} grid={gridModeloP} niveles={NIVELES_MODELO} puntoActualXY={puntoActual ? [puntoActual.n11, puntoActual.P11 / 1000] : null} lineasPorGamma={lineasPorGamma} gammaCercana={gammaCercana} T={T} />
       </div>
 
             <div style={{ margin: "30px 4px 4px", fontFamily: FONT_BODY }}>
@@ -2282,7 +2284,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga, condCalibrada }) 
         <ChartHeader titulo="Eficiencia vs. caudal a salto fijo" subtitulo="Análogo a las Figuras 4.3/4.7, para los tres saltos de referencia del informe (Hmin-Hnom-Hmax)." T={T}
  />
         {(() => { const u = unirCurvas(curvasEficiencia.map((c) => ({ puntos: c.puntos.filter((p) => p.eta >= 0) })), "Q", "eta"); return (
-          <GraficoSeries T={T} tipoX="numero" ejeX="Caudal (m³/s)" x={u.x} unidad="%" ejeY="Eficiencia (%)" decimales={2} alto={300} yMin={0} yMax={100} nombreArchivo="eficiencia_vs_caudal"
+          <GraficoSeries T={T} tipoX="numero" ejeX="Caudal (m³/s)" x={u.x} unidad="%" ejeY="Eficiencia (%)" decimales={2} alto={300} incluirCero yMax={100} nombreArchivo="eficiencia_vs_caudal"
             series={curvasEficiencia.map((c, i) => ({ nombre: c.label, datos: u.datos[i], color: c.color, ancho: 2, unirHuecos: true }))} />
         ); })()}
       </div>
@@ -2291,7 +2293,7 @@ function ColinaModulo({ T, tab, condDescarga, setCondDescarga, condCalibrada }) 
         <ChartHeader titulo="Eficiencia vs. potencia a salto fijo" subtitulo="Análogo a las Figuras 4.4/4.8, para los tres saltos de referencia del informe." T={T}
  />
         {(() => { const u = unirCurvas(curvasEficiencia.map((c) => ({ puntos: c.puntos.filter((p) => p.eta >= 0) })), "P", "eta"); return (
-          <GraficoSeries T={T} tipoX="numero" ejeX="Potencia (MW)" x={u.x} unidad="%" ejeY="Eficiencia (%)" decimales={2} alto={300} yMin={0} yMax={100} nombreArchivo="eficiencia_vs_potencia"
+          <GraficoSeries T={T} tipoX="numero" ejeX="Potencia (MW)" x={u.x} unidad="%" ejeY="Eficiencia (%)" decimales={2} alto={300} incluirCero yMax={100} nombreArchivo="eficiencia_vs_potencia"
             series={curvasEficiencia.map((c, i) => ({ nombre: c.label, datos: u.datos[i], color: c.color, ancho: 2, unirHuecos: true }))} />
         ); })()}
       </div>

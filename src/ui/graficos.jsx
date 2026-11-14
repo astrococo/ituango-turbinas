@@ -208,6 +208,27 @@ function pluginFranjas(tramos) {
      (p. ej. apertura en % → grados): eje derecho, tooltip, tabla y CSV.
      Debe ser un objeto estable (constante de módulo). Una serie con
      sinEquiv: true no la muestra. */
+/* Eje Y y el cero. uPlot entrega el mínimo y el máximo de las series
+   VISIBLES en el tramo de X que se ve. Un gráfico que pide el cero
+   (incluirCero) solo lo muestra si alguna serie visible llega a cero o
+   cerca (mínimo ≤ 10 % del máximo); si no, el eje se ajusta a los datos
+   para verlos con detalle. Las barras siempre parten de cero (una barra
+   cortada engaña sobre su tamaño). Con datos no negativos el eje nunca
+   baja de cero. */
+const CERCA_DE_CERO = 0.1;
+function anclarEnCero(pideCero, hayBarras, mn, mx) {
+  if (hayBarras) return true;
+  if (!pideCero || mn == null || mx == null) return false;
+  return mn <= 0 || mn <= CERCA_DE_CERO * mx;
+}
+const piso = (a, pad, cero) => (cero && a === 0 ? 0 : a >= 0 ? Math.max(0, a - pad) : a - pad);
+/* Límite inferior de un eje con dominio fijo (gráficos de familia de curvas) */
+function limiteInferiorEje(mn, mx) {
+  if (!(mn > CERCA_DE_CERO * mx)) return 0;
+  const paso = 10 ** Math.floor(Math.log10((mx - mn) || 1));
+  return Math.max(0, Math.floor((mn - (mx - mn) * 0.05) / paso) * paso);
+}
+
 function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales = 1, alto = 260, ejeY, ejeX, bandas = [], referencias = [], verticales = [], grupo, nombreArchivo = "serie", yMin, yMax, incluirCero = false, escalones = false, barras = false, tramos = null, leyendaTramos = null, equivalente = null, ejeY2 = null, unidad2 = null, incluirCero2 = false, mensajeVacio = null, categorias = null }) {
   // categorias: rótulos del eje X (p. ej. meses); x = 0, 1, 2… Las barras de varias series van lado a lado.
   const esCat = Array.isArray(categorias) && categorias.length > 0;
@@ -234,6 +255,7 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
     const ancho = caja.current.clientWidth || 600;
     const datos = [xs, ...series.map((s) => s.datos.map((v) => (v == null || !Number.isFinite(v) ? null : v)))];
     const conBarra = series.map((s, i) => (barras || s.barras ? i : null)).filter((i) => i != null);
+    const hayBarras = conBarra.length > 0;
     const nBarras = conBarra.length, idxBarra = new Map(conBarra.map((i, k) => [i, k]));
     const ejeComun = { stroke: T.inkFaint, grid: { stroke: T.lineSoft, width: 1 }, ticks: { stroke: T.lineSoft, width: 1 }, font: `11px ${FONT_BODY}`, labelFont: `600 12px ${FONT_BODY}` };
     const opts = {
@@ -243,22 +265,24 @@ function GraficoSeries({ T, x, series, tipoX = "tiempo", unidad = "", decimales 
         x: { time: tipoX === "tiempo", ...(esDiario ? { range: (u, mn, mx) => [mn - 43200, mx + 43200] } : {}) },
         y: { range: (u, mn, mx) => {
           let a = yMin ?? mn, b = yMax ?? mx;
-          if (incluirCero) a = Math.min(0, a);
+          const cero = anclarEnCero(incluirCero, hayBarras, mn, mx);
+          if (cero) a = Math.min(0, a);
           for (const r of referencias) { if (r.y != null && r.incluir) { a = Math.min(a, r.y); b = Math.max(b, r.y); } }
           if (a == null || b == null) return [0, 1];
           if (a === b) { a -= 1; b += 1; }
           const pad = (b - a) * 0.06;
-          return [yMin ?? a - (incluirCero && a === 0 ? 0 : pad), yMax ?? b + pad];
+          return [yMin ?? piso(a, pad, cero), yMax ?? b + pad];
         } },
         ...(esHora ? { x: { time: false, range: (u, mn, mx) => [Math.min(0, mn), Math.max(24, mx)] } } : {}),
         ...(esCat ? { x: { time: false, range: () => [-0.5, categorias.length - 0.5] } } : {}),
         ...(conY2 ? { y2: { range: (u, mn, mx) => {
           let a = mn, b = mx;
           if (a == null || b == null) return [0, 1];
-          if (incluirCero2) a = Math.min(0, a);
+          const cero = anclarEnCero(incluirCero2, false, mn, mx);
+          if (cero) a = Math.min(0, a);
           if (a === b) { a -= 1; b += 1; }
           const pad = (b - a) * 0.06;
-          return [incluirCero2 && a === 0 ? 0 : a - pad, b + pad];
+          return [piso(a, pad, cero), b + pad];
         } } } : {}),
       },
       axes: [
@@ -423,4 +447,4 @@ function BarraBanda({ T, valor, min, max, rango, marcas = [], unidad = "m³/s", 
   );
 }
 
-export { unirCurvas, hhmm, COLOR_TRAMO, GraficoSeries, Estado, BarraBanda, colorSerie, ESTADO, SERIE, aSeg, deSeg, fmtNum, MESES };
+export { limiteInferiorEje, unirCurvas, hhmm, COLOR_TRAMO, GraficoSeries, Estado, BarraBanda, colorSerie, ESTADO, SERIE, aSeg, deSeg, fmtNum, MESES };
