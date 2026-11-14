@@ -105,6 +105,22 @@ export default function Tablero({ T, condDescarga }) {
     ...series.p.map((d, u) => ({ nombre: `U${u + 1}`, datos: d, indice: u, ancho: 1.6 })),
     { nombre: "Total", datos: series.pTot, color: T.ink, ancho: 2.2 },
   ], [series, T]);
+  /* Caudal por unidad con la misma regla del caudal regulado (P / F.C. de
+     Hidrometría): por minuto, P de la unidad / F.C.; por hora, el caudal
+     regulado de la hora repartido según la potencia de cada unidad. Así la
+     suma de las unidades es exactamente el caudal regulado. */
+  const sQU = useMemo(() => {
+    if (!series) return null;
+    const qU = series.p.map((pu) => pu.map((x, i) => {
+      const q = series.qReg[i], pt = series.pTot[i];
+      if (q == null || x == null) return null;
+      return pt > 0 ? (q * x) / pt : 0;
+    }));
+    return [
+      ...qU.map((d, u) => ({ nombre: `U${u + 1}`, datos: d, indice: u, ancho: 1.6 })),
+      { nombre: "Total (Q regulado)", datos: series.qReg, color: T.ink, ancho: 2.2 },
+    ];
+  }, [series, T]);
   // Vista de la gráfica de caudales: dos paneles (regla arriba, vertedero abajo) o un panel con dos ejes
   const [vistaQ, setVistaQ] = useState(() => { try { return localStorage.getItem("ituango-vista-caudales") || "paneles"; } catch { return "paneles"; } });
   const elegirVistaQ = (v) => { setVistaQ(v); try { localStorage.setItem("ituango-vista-caudales", v); } catch { /* sin almacenamiento */ } };
@@ -344,6 +360,9 @@ export default function Tablero({ T, condDescarga }) {
             <Tarjeta T={T} titulo="Nivel del embalse"><GraficoSeries T={T} x={series.t} series={sNivel} unidad="msnm" ejeY="msnm" decimales={3} grupo="vivo" alto={220} nombreArchivo={`nivel_${rango.desde}_${rango.hasta}`} referencias={[{ y: NAMO, rotulo: `NAMO ${NAMO}` }]} /></Tarjeta>
             <Tarjeta T={T} titulo="Potencia por unidad"><GraficoSeries T={T} x={series.t} series={sPot} unidad="MW" ejeY="MW" decimales={1} grupo="vivo" alto={220} nombreArchivo={`potencia_${rango.desde}_${rango.hasta}`} incluirCero /></Tarjeta>
           </div>
+          <Tarjeta T={T} titulo="Caudal por unidad" subtitulo="Caudal turbinado de cada unidad con la regla de Hidrometría (potencia / F.C. por nivel); la suma es el caudal regulado.">
+            <GraficoSeries T={T} x={series.t} series={sQU} unidad="m³/s" ejeY="m³/s" decimales={1} grupo="vivo" alto={220} nombreArchivo={`caudal_unidades_${rango.desde}_${rango.hasta}`} incluirCero />
+          </Tarjeta>
           {apertura && apertura.nU > 0 && (
             <Tarjeta T={T} titulo={`Apertura del distribuidor por unidad (${fechaCorta(rango.desde)} – ${fechaCorta(rango.hasta)})`}
               subtitulo={apertura.paso === "15 min" ? "Promedio de cada 15 minutos (la hora marca el inicio del intervalo), en % y su equivalente en grados (eje derecho y tooltip). Se cuenta la unidad si estuvo en línea al menos la mitad del intervalo." : "Promedio de cada hora, en % y su equivalente en grados (eje derecho y tooltip). Se cuenta la unidad si estuvo en línea al menos media hora."}>
