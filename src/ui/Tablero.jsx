@@ -356,13 +356,13 @@ export default function Tablero({ T, condDescarga }) {
               <GraficoSeries T={T} x={series.t} series={sQDosEjes} unidad="m³/s" ejeY="Q regulado (m³/s)" ejeY2="vertedero (m³/s)" unidad2="m³/s" incluirCero2 grupo="vivo" tramos={cumplimiento ? cumplimiento.tramos : null} leyendaTramos={cumplimiento ? cumplimiento.leyenda : null} nombreArchivo={`caudales_${rango.desde}_${rango.hasta}`} bandas={[{ desde: 3, hasta: 4, relleno: "rgba(12,163,12,0.08)" }]} />
             )}
           </Tarjeta>
+          <Tarjeta T={T} titulo="Nivel del embalse"><GraficoSeries T={T} x={series.t} series={sNivel} unidad="msnm" ejeY="msnm" decimales={3} grupo="vivo" alto={220} nombreArchivo={`nivel_${rango.desde}_${rango.hasta}`} referencias={[{ y: NAMO, rotulo: `NAMO ${NAMO}` }]} /></Tarjeta>
           <div className="itu-2col">
-            <Tarjeta T={T} titulo="Nivel del embalse"><GraficoSeries T={T} x={series.t} series={sNivel} unidad="msnm" ejeY="msnm" decimales={3} grupo="vivo" alto={220} nombreArchivo={`nivel_${rango.desde}_${rango.hasta}`} referencias={[{ y: NAMO, rotulo: `NAMO ${NAMO}` }]} /></Tarjeta>
-            <Tarjeta T={T} titulo="Potencia por unidad"><GraficoSeries T={T} x={series.t} series={sPot} unidad="MW" ejeY="MW" decimales={1} grupo="vivo" alto={220} nombreArchivo={`potencia_${rango.desde}_${rango.hasta}`} incluirCero /></Tarjeta>
+            <Tarjeta T={T} titulo="Potencia por unidad" subtitulo="Potencia de cada unidad registrada en LoggerNet (GeneracionU1..4, MW); el total es la suma de las unidades."><GraficoSeries T={T} x={series.t} series={sPot} unidad="MW" ejeY="MW" decimales={1} grupo="vivo" alto={220} nombreArchivo={`potencia_${rango.desde}_${rango.hasta}`} incluirCero /></Tarjeta>
+            <Tarjeta T={T} titulo="Caudal por unidad" subtitulo="Caudal turbinado de cada unidad con la regla de Hidrometría (potencia / F.C. por nivel); la suma es el caudal regulado.">
+              <GraficoSeries T={T} x={series.t} series={sQU} unidad="m³/s" ejeY="m³/s" decimales={1} grupo="vivo" alto={220} nombreArchivo={`caudal_unidades_${rango.desde}_${rango.hasta}`} incluirCero />
+            </Tarjeta>
           </div>
-          <Tarjeta T={T} titulo="Caudal por unidad" subtitulo="Caudal turbinado de cada unidad con la regla de Hidrometría (potencia / F.C. por nivel); la suma es el caudal regulado.">
-            <GraficoSeries T={T} x={series.t} series={sQU} unidad="m³/s" ejeY="m³/s" decimales={1} grupo="vivo" alto={220} nombreArchivo={`caudal_unidades_${rango.desde}_${rango.hasta}`} incluirCero />
-          </Tarjeta>
           {apertura && apertura.nU > 0 && (
             <Tarjeta T={T} titulo={`Apertura del distribuidor por unidad (${fechaCorta(rango.desde)} – ${fechaCorta(rango.hasta)})`}
               subtitulo={apertura.paso === "15 min" ? "Promedio de cada 15 minutos (la hora marca el inicio del intervalo), en % y su equivalente en grados (eje derecho y tooltip). Se cuenta la unidad si estuvo en línea al menos la mitad del intervalo." : "Promedio de cada hora, en % y su equivalente en grados (eje derecho y tooltip). Se cuenta la unidad si estuvo en línea al menos media hora."}>
